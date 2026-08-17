@@ -1,7 +1,7 @@
 use crate::bus::{
     Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS, ROM_END,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::fault::Fault;
@@ -12,6 +12,12 @@ const UART1_BASE: u32 = 0x4000_9000;
 const PWM_BASE: u32 = 0x4000_E000;
 const VECTOR_MIRROR_BYTES: u32 = 8;
 const THUMB_BX_LR: u16 = 0x4770;
+
+// Emulator-private MMIO cells used only by tiny ROM ABI thunks. Real firmware never sees
+// these addresses directly: the thunk bridges Cortex-M argument registers into DiscoveryBus
+// state without teaching the CPU executor about PHY6252 vendor functions.
+const EMU_SLEEP_ALLOWED: u32 = 0x5000_FF00;
+const EMU_SLEEP_MODE: u32 = 0x5000_FF04;
 
 const TIM_CURRENT: [u32; 6] = [
     0x4000_1004,
@@ -39,11 +45,69 @@ const KNOWN_STUB_REGS: &[(u32, &str)] = &[
     (0x4000_F03C, "PCRM.CLKSEL"),
 ];
 
-// Exact ROM ABI entry points that are intentionally replaced in the emulator.
-// drv_irq_init is a bootstrap IRQ-table initializer. Until IRQ delivery itself is modeled,
-// the host-side behavior is deliberately a no-op return instead of pretending the vendor ROM
-// body is present. The symbol is Thumb 0x0000_a9c9; the fetch address is 0x0000_a9c8.
-const ROM_NOOP_SHIMS: &[(u32, &str)] = &[(0x0000_A9C8, "drv_irq_init")];
+struct RomShim {
+    entry: u32,
+    name: &'static str,
+    behavior: &'static str,
+    code: &'static [u8],
+}
+
+// BX LR, padded so a 32-bit instruction fetch at the entry is still fully backed.
+const DRV_IRQ_INIT_CODE: &[u8] = &[0x70, 0x47, 0x70, 0x47];
+
+// enableSleep():
+//   movs r0, #1
+//   ldr  r1, [pc, #4]   ; literal at entry + 8
+//   str  r0, [r1]
+//   bx   lr
+//   .word EMU_SLEEP_ALLOWED
+const ENABLE_SLEEP_CODE: &[u8] = &[
+    0x01, 0x20, 0x01, 0x49, 0x08, 0x60, 0x70, 0x47, 0x00, 0xFF, 0x00, 0x50,
+];
+
+// disableSleep(): same thunk, writing zero.
+const DISABLE_SLEEP_CODE: &[u8] = &[
+    0x00, 0x20, 0x01, 0x49, 0x08, 0x60, 0x70, 0x47, 0x00, 0xFF, 0x00, 0x50,
+];
+
+// setSleepMode(Sleep_Mode mode): preserve r0, store it in the emulator power-state cell.
+//   ldr  r1, [pc, #4]   ; literal at entry + 8
+//   str  r0, [r1]
+//   bx   lr
+//   nop
+//   .word EMU_SLEEP_MODE
+const SET_SLEEP_MODE_CODE: &[u8] = &[
+    0x01, 0x49, 0x08, 0x60, 0x70, 0x47, 0x00, 0xBF, 0x04, 0xFF, 0x00, 0x50,
+];
+
+// Exact ROM ABI entry points observed in PHY62XX SDK 3.1.2 / Test-DPLS.
+// Addresses are fetch addresses (Thumb symbol address with bit 0 cleared).
+const ROM_SHIMS: &[RomShim] = &[
+    RomShim {
+        entry: 0x0000_A9C8,
+        name: "drv_irq_init",
+        behavior: "noop-return",
+        code: DRV_IRQ_INIT_CODE,
+    },
+    RomShim {
+        entry: 0x0000_A920,
+        name: "disableSleep",
+        behavior: "sleep-allowed=false",
+        code: DISABLE_SLEEP_CODE,
+    },
+    RomShim {
+        entry: 0x0000_AEAC,
+        name: "enableSleep",
+        behavior: "sleep-allowed=true",
+        code: ENABLE_SLEEP_CODE,
+    },
+    RomShim {
+        entry: 0x0001_6B44,
+        name: "setSleepMode",
+        behavior: "sleep-mode=r0",
+        code: SET_SLEEP_MODE_CODE,
+    },
+];
 
 pub struct DiscoveryBus {
     inner: Phy6252Bus,
@@ -52,6 +116,8 @@ pub struct DiscoveryBus {
     seen_unknown: RefCell<HashSet<u32>>,
     seen_rom: RefCell<HashSet<u32>>,
     seen_shims: RefCell<HashSet<u32>>,
+    sleep_allowed: Cell<bool>,
+    sleep_mode: Cell<u32>,
 }
 
 impl DiscoveryBus {
@@ -63,7 +129,17 @@ impl DiscoveryBus {
             seen_unknown: RefCell::new(HashSet::new()),
             seen_rom: RefCell::new(HashSet::new()),
             seen_shims: RefCell::new(HashSet::new()),
+            sleep_allowed: Cell::new(false),
+            sleep_mode: Cell::new(0),
         }
+    }
+
+    pub fn sleep_allowed(&self) -> bool {
+        self.sleep_allowed.get()
+    }
+
+    pub fn sleep_mode(&self) -> u32 {
+        self.sleep_mode.get()
     }
 
     fn is_mmio(addr: u32) -> bool {
@@ -77,19 +153,30 @@ impl DiscoveryBus {
         (VECTOR_MIRROR_BYTES..ROM_END).contains(&addr)
     }
 
-    fn rom_noop_shim(addr: u32) -> Option<&'static str> {
-        ROM_NOOP_SHIMS
-            .iter()
-            .find_map(|(entry, name)| (*entry == (addr & !1)).then_some(*name))
+    fn rom_shim_for_addr(addr: u32) -> Option<(&'static RomShim, usize)> {
+        ROM_SHIMS.iter().find_map(|shim| {
+            let offset = addr.checked_sub(shim.entry)? as usize;
+            (offset < shim.code.len()).then_some((shim, offset))
+        })
     }
 
-    fn rom_shim_read16(&self, addr: u32) -> Option<u16> {
-        let entry = addr & !1;
-        let name = Self::rom_noop_shim(entry)?;
-        if self.seen_shims.borrow_mut().insert(entry) {
-            eprintln!("ROM shim {name} entry={entry:#010x} behavior=noop-return");
+    fn rom_shim_byte(&self, addr: u32) -> Option<u8> {
+        let (shim, offset) = Self::rom_shim_for_addr(addr)?;
+        if self.seen_shims.borrow_mut().insert(shim.entry) {
+            eprintln!(
+                "ROM shim {} entry={:#010x} behavior={}",
+                shim.name, shim.entry, shim.behavior
+            );
         }
-        Some(THUMB_BX_LR)
+        Some(shim.code[offset])
+    }
+
+    fn rom_shim_read(&self, addr: u32, width: usize) -> Option<u32> {
+        let mut value = 0u32;
+        for i in 0..width {
+            value |= u32::from(self.rom_shim_byte(addr + i as u32)?) << (i * 8);
+        }
+        Some(value)
     }
 
     fn gpio_known(addr: u32, write: bool) -> bool {
@@ -143,6 +230,40 @@ impl DiscoveryBus {
         KNOWN_STUB_REGS
             .iter()
             .find_map(|(reg, name)| (*reg == aligned).then_some(*name))
+    }
+
+    fn emu_control_read(&self, addr: u32) -> Option<u32> {
+        match addr & !3 {
+            EMU_SLEEP_ALLOWED => Some(u32::from(self.sleep_allowed.get())),
+            EMU_SLEEP_MODE => Some(self.sleep_mode.get()),
+            _ => None,
+        }
+    }
+
+    fn emu_control_write(&self, addr: u32, value: u32) -> bool {
+        match addr & !3 {
+            EMU_SLEEP_ALLOWED => {
+                let new_value = value != 0;
+                if self.sleep_allowed.replace(new_value) != new_value {
+                    eprintln!("PWR sleep_allowed={new_value}");
+                }
+                true
+            }
+            EMU_SLEEP_MODE => {
+                let old = self.sleep_mode.replace(value);
+                if old != value {
+                    let name = match value {
+                        0 => "MCU_SLEEP_MODE",
+                        1 => "SYSTEM_SLEEP_MODE",
+                        2 => "SYSTEM_OFF_MODE",
+                        _ => "UNKNOWN",
+                    };
+                    eprintln!("PWR sleep_mode={value} ({name})");
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     fn sparse_read(&self, addr: u32) -> u32 {
@@ -213,9 +334,11 @@ impl DiscoveryBus {
 
 impl Bus for DiscoveryBus {
     fn read32(&mut self, addr: u32) -> Result<u32, Fault> {
-        if Self::rom_noop_shim(addr).is_some() {
-            let lo = u32::from(self.rom_shim_read16(addr).unwrap());
-            return Ok(lo | (u32::from(THUMB_BX_LR) << 16));
+        if let Some(value) = self.rom_shim_read(addr, 4) {
+            return Ok(value);
+        }
+        if let Some(value) = self.emu_control_read(addr) {
+            return Ok(value);
         }
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("read32", addr);
@@ -227,8 +350,11 @@ impl Bus for DiscoveryBus {
     }
 
     fn read16(&self, addr: u32) -> Result<u16, Fault> {
-        if let Some(value) = self.rom_shim_read16(addr) {
-            return Ok(value);
+        if let Some(value) = self.rom_shim_read(addr, 2) {
+            return Ok(value as u16);
+        }
+        if let Some(value) = self.emu_control_read(addr) {
+            return Ok((value >> ((addr & 3) * 8)) as u16);
         }
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("read16", addr);
@@ -241,9 +367,11 @@ impl Bus for DiscoveryBus {
     }
 
     fn read8(&self, addr: u32) -> Result<u8, Fault> {
-        if let Some(_) = Self::rom_noop_shim(addr) {
-            let bytes = THUMB_BX_LR.to_le_bytes();
-            return Ok(bytes[(addr & 1) as usize]);
+        if let Some(value) = self.rom_shim_byte(addr) {
+            return Ok(value);
+        }
+        if let Some(value) = self.emu_control_read(addr) {
+            return Ok((value >> ((addr & 3) * 8)) as u8);
         }
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("read8", addr);
@@ -256,6 +384,9 @@ impl Bus for DiscoveryBus {
     }
 
     fn write32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
+        if self.emu_control_write(addr, value) {
+            return Ok(());
+        }
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("write32", addr);
         }
@@ -361,10 +492,41 @@ mod tests {
     }
 
     #[test]
-    fn explicit_rom_shim_is_a_thumb_noop_return() {
+    fn drv_irq_init_shim_is_a_thumb_noop_return() {
         let bus = bus(true);
         assert_eq!(bus.read16(0x0000_A9C8).unwrap(), THUMB_BX_LR);
-        assert!(matches!(bus.read16(0x0000_A9CA), Err(Fault::DAccViol)));
+        assert!(matches!(bus.read16(0x0000_A9CC), Err(Fault::DAccViol)));
+    }
+
+    #[test]
+    fn sleep_rom_thunks_encode_real_state_updates() {
+        let mut bus = bus(true);
+
+        assert_eq!(bus.read16(0x0000_AEAC).unwrap(), 0x2001); // movs r0,#1
+        assert_eq!(bus.read16(0x0000_AEAE).unwrap(), 0x4901); // ldr r1,literal
+        assert_eq!(bus.read16(0x0000_AEB0).unwrap(), 0x6008); // str r0,[r1]
+        assert_eq!(bus.read16(0x0000_AEB2).unwrap(), THUMB_BX_LR);
+        assert_eq!(bus.read32(0x0000_AEB4).unwrap(), EMU_SLEEP_ALLOWED);
+
+        assert_eq!(bus.read16(0x0001_6B44).unwrap(), 0x4901);
+        assert_eq!(bus.read16(0x0001_6B46).unwrap(), 0x6008);
+        assert_eq!(bus.read16(0x0001_6B48).unwrap(), THUMB_BX_LR);
+        assert_eq!(bus.read32(0x0001_6B4C).unwrap(), EMU_SLEEP_MODE);
+    }
+
+    #[test]
+    fn emulator_power_cells_track_sleep_policy() {
+        let mut bus = bus(true);
+        assert!(!bus.sleep_allowed());
+        assert_eq!(bus.sleep_mode(), 0);
+
+        bus.write32(EMU_SLEEP_ALLOWED, 1).unwrap();
+        bus.write32(EMU_SLEEP_MODE, 1).unwrap();
+        assert!(bus.sleep_allowed());
+        assert_eq!(bus.sleep_mode(), 1);
+
+        bus.write32(EMU_SLEEP_ALLOWED, 0).unwrap();
+        assert!(!bus.sleep_allowed());
     }
 
     #[test]
