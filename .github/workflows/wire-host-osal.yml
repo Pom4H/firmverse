@@ -1,0 +1,36 @@
+name: Wire host OSAL
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/wire-host-osal.py
+      - .github/workflows/wire-host-osal.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Wire host OSAL bridge
+        run: |
+          python scripts/wire-host-osal.py
+          cargo fmt --check || cargo fmt
+          cargo test
+      - name: Commit generated source change
+        run: |
+          if git diff --quiet; then
+            echo "No source change required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/emu.rs
+          git commit -m "Wire generic host-backed OSAL bootstrap"
+          git push
