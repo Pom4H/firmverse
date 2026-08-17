@@ -42,6 +42,8 @@ pub struct GpioBank {
     pub dr: u32,
     pub ddr: u32,
     pub ctl: u32,
+    pub inten: u32,
+    pub intmask: u32,
     pub ext: u32,
 }
 
@@ -113,6 +115,8 @@ impl Phy6252Bus {
             GPIO_DR => gpio.dr,
             GPIO_DDR => gpio.ddr,
             GPIO_CTL => gpio.ctl,
+            0x30 => gpio.inten,
+            0x34 => gpio.intmask,
             GPIO_EXT => (gpio.dr & gpio.ddr) | (gpio.ext & !gpio.ddr),
             _ => 0,
         }
@@ -136,6 +140,8 @@ impl Phy6252Bus {
                 }
             }
             GPIO_CTL => gpio.ctl = masked,
+            0x30 => gpio.inten = masked,
+            0x34 => gpio.intmask = masked,
             _ => {}
         }
     }
@@ -483,6 +489,15 @@ fn read_le32(mem: &[u8], base: u32, addr: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gpio_irq_enable_and_mask_are_stateful() {
+        let mut bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]);
+        bus.write32(GPIO_BASE + 0x30, 0x15).unwrap();
+        bus.write32(GPIO_BASE + 0x34, 0x0a).unwrap();
+        assert_eq!(bus.read32(GPIO_BASE + 0x30).unwrap(), 0x15);
+        assert_eq!(bus.read32(GPIO_BASE + 0x34).unwrap(), 0x0a);
+    }
 
     #[test]
     fn uart_dlab_divisor_writes_do_not_leak_into_tx_log() {

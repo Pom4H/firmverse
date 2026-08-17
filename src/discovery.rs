@@ -448,7 +448,7 @@ impl DiscoveryBus {
     fn gpio_known(addr: u32, write: bool) -> bool {
         let aligned = addr & !3;
         match aligned.wrapping_sub(GPIO_BASE) {
-            0x00 | 0x04 | 0x08 => true,
+            0x00 | 0x04 | 0x08 | 0x30 | 0x34 => true,
             0x50 => !write,
             _ => false,
         }
