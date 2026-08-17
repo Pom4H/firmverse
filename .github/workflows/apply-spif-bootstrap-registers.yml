@@ -1,0 +1,36 @@
+name: Apply SPIF bootstrap registers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/apply-spif-bootstrap-registers.py
+      - .github/workflows/apply-spif-bootstrap-registers.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply exact SPIF bootstrap register writes
+        run: |
+          python scripts/apply-spif-bootstrap-registers.py
+          cargo fmt --check || cargo fmt
+          cargo test
+      - name: Commit generated source change
+        run: |
+          if git diff --quiet; then
+            echo "No source change required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/discovery.rs
+          git commit -m "Model observed SPIF bootstrap register writes"
+          git push
