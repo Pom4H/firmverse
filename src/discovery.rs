@@ -14,6 +14,9 @@ const VECTOR_MIRROR_BYTES: u32 = 8;
 const THUMB_BX_LR: u16 = 0x4770;
 const AON_XTAL_16M_CTRL: u32 = 0x4000_F0BC;
 const AON_SLEEP_R1: u32 = 0x4000_F0C4;
+const PCRM_EFUSE_CFG: u32 = 0x4000_F054;
+const PCRM_EFUSE_PROG0: u32 = 0x4000_F140;
+const PCRM_EFUSE_PROG1: u32 = 0x4000_F144;
 
 // Emulator-private MMIO cells used only by tiny ROM ABI thunks. Real firmware never sees
 // these addresses directly: the thunk bridges Cortex-M argument registers into DiscoveryBus
@@ -40,7 +43,7 @@ struct StubReg {
 // broad peripheral ranges would hide the next silicon behavior that real firmware needs.
 // Reset values are conservative emulator-visible values, not claims about undocumented
 // silicon bits. Registers whose startup code only writes before reading keep the historical
-// all-ones fallback; analog/tracking registers used via read-modify-write start clean.
+// all-ones fallback; analog/tracking/bootstrap registers used via read-modify-write start clean.
 const KNOWN_STUB_REGS: &[StubReg] = &[
     StubReg { addr: 0x4000_0000, name: "PCR.SW_RESET0", reset: 0xFFFF_FFFF },
     StubReg { addr: 0x4000_000C, name: "PCR.SW_RESET2", reset: 0xFFFF_FFFF },
@@ -54,9 +57,12 @@ const KNOWN_STUB_REGS: &[StubReg] = &[
     StubReg { addr: 0x4000_F000, name: "AON.PMCTL0", reset: 0xFFFF_FFFF },
     StubReg { addr: 0x4000_F03C, name: "PCRM.CLKSEL", reset: 0xFFFF_FFFF },
     StubReg { addr: AON_XTAL_16M_CTRL, name: "AON.XTAL_16M_CTRL", reset: 0 },
-    // PHY62XX hal_rc32k_clk_tracking_init() executes AON_CLEAR_XTAL_TRACKING_AND_CALIB,
-    // which writes zero to AP_AON->SLEEP_R[1] before the ROM/efuse bootstrap.
     StubReg { addr: AON_SLEEP_R1, name: "AON.SLEEP_R[1]", reset: 0 },
+    // efuse_init() in the SDK boot path clears the config and both programming words before
+    // calling the ROM efuse reader. These are exact PCRM registers, not a broad efuse window.
+    StubReg { addr: PCRM_EFUSE_CFG, name: "PCRM.efuse_cfg", reset: 0 },
+    StubReg { addr: PCRM_EFUSE_PROG0, name: "PCRM.EFUSE_PROG[0]", reset: 0 },
+    StubReg { addr: PCRM_EFUSE_PROG1, name: "PCRM.EFUSE_PROG[1]", reset: 0 },
 ];
 
 struct RomShim {
@@ -161,9 +167,6 @@ impl DiscoveryBus {
     }
 
     fn is_unmodeled_rom(addr: u32) -> bool {
-        // zmu owns the mirrored SP/reset pair at 0..8. Everything after that is vendor ROM,
-        // which the emulator does not have. In strict discovery, stop at the first access
-        // instead of executing the old all-zero ROM placeholder until 0x0002_0000.
         (VECTOR_MIRROR_BYTES..ROM_END).contains(&addr)
     }
 
@@ -459,11 +462,9 @@ mod tests {
     fn permissive_unknown_mmio_is_sparse_and_does_not_alias() {
         let mut bus = bus(false);
         let a = 0x4001_0000;
-        let b = 0x4001_1000; // These aliased in the old `% 1024` backing store.
-
+        let b = 0x4001_1000;
         bus.write32(a, 0x1122_3344).unwrap();
         bus.write32(b, 0xAABB_CCDD).unwrap();
-
         assert_eq!(bus.read32(a).unwrap(), 0x1122_3344);
         assert_eq!(bus.read32(b).unwrap(), 0xAABB_CCDD);
     }
@@ -472,21 +473,16 @@ mod tests {
     fn sparse_mmio_preserves_partial_writes() {
         let mut bus = bus(false);
         let addr = 0x4001_2000;
-
         bus.write32(addr, 0x1122_3344).unwrap();
         bus.write8(addr + 1, 0xAA).unwrap();
         bus.write16(addr + 2, 0xBEEF).unwrap();
-
         assert_eq!(bus.read32(addr).unwrap(), 0xBEEF_AA44);
     }
 
     #[test]
     fn strict_mode_faults_on_unmodeled_register() {
         let mut bus = bus(true);
-        assert!(matches!(
-            bus.write32(0x4001_0000, 1),
-            Err(Fault::DAccViol)
-        ));
+        assert!(matches!(bus.write32(0x4001_0000, 1), Err(Fault::DAccViol)));
     }
 
     #[test]
@@ -510,13 +506,11 @@ mod tests {
     #[test]
     fn xtal16m_ctrl_has_clean_modeled_fields_and_supports_sdk_rmw() {
         let mut bus = bus(true);
-
         assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0);
         let cap9 = (bus.read32(AON_XTAL_16M_CTRL).unwrap() & !0x1F) | 0x09;
         bus.write32(AON_XTAL_16M_CTRL, cap9).unwrap();
         let current3 = bus.read32(AON_XTAL_16M_CTRL).unwrap() | 0x60;
         bus.write32(AON_XTAL_16M_CTRL, current3).unwrap();
-
         assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0x69);
     }
 
@@ -528,6 +522,17 @@ mod tests {
         assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0x1234_0084);
         bus.write32(AON_SLEEP_R1, 0).unwrap();
         assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0);
+    }
+
+    #[test]
+    fn efuse_bootstrap_registers_are_exact_clean_stubs() {
+        let mut bus = bus(true);
+        for addr in [PCRM_EFUSE_CFG, PCRM_EFUSE_PROG0, PCRM_EFUSE_PROG1] {
+            assert_eq!(bus.read32(addr).unwrap(), 0);
+            bus.write32(addr, 0x55AA_1234).unwrap();
+            assert_eq!(bus.read32(addr).unwrap(), 0x55AA_1234);
+            bus.write32(addr, 0).unwrap();
+        }
     }
 
     #[test]
@@ -546,13 +551,11 @@ mod tests {
     #[test]
     fn sleep_rom_thunks_encode_real_state_updates() {
         let mut bus = bus(true);
-
-        assert_eq!(bus.read16(0x0000_AEAC).unwrap(), 0x2001); // movs r0,#1
-        assert_eq!(bus.read16(0x0000_AEAE).unwrap(), 0x4901); // ldr r1,literal
-        assert_eq!(bus.read16(0x0000_AEB0).unwrap(), 0x6008); // str r0,[r1]
+        assert_eq!(bus.read16(0x0000_AEAC).unwrap(), 0x2001);
+        assert_eq!(bus.read16(0x0000_AEAE).unwrap(), 0x4901);
+        assert_eq!(bus.read16(0x0000_AEB0).unwrap(), 0x6008);
         assert_eq!(bus.read16(0x0000_AEB2).unwrap(), THUMB_BX_LR);
         assert_eq!(bus.read32(0x0000_AEB4).unwrap(), EMU_SLEEP_ALLOWED);
-
         assert_eq!(bus.read16(0x0001_6B44).unwrap(), 0x4901);
         assert_eq!(bus.read16(0x0001_6B46).unwrap(), 0x6008);
         assert_eq!(bus.read16(0x0001_6B48).unwrap(), THUMB_BX_LR);
@@ -564,12 +567,10 @@ mod tests {
         let mut bus = bus(true);
         assert!(!bus.sleep_allowed());
         assert_eq!(bus.sleep_mode(), 0);
-
         bus.write32(EMU_SLEEP_ALLOWED, 1).unwrap();
         bus.write32(EMU_SLEEP_MODE, 1).unwrap();
         assert!(bus.sleep_allowed());
         assert_eq!(bus.sleep_mode(), 1);
-
         bus.write32(EMU_SLEEP_ALLOWED, 0).unwrap();
         assert!(!bus.sleep_allowed());
     }
