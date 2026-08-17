@@ -1,3 +1,4 @@
+use crate::aes::aes128_encrypt_block;
 use crate::bus::{
     Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS, ROM_END,
 };
@@ -19,10 +20,14 @@ const PCRM_EFUSE_PROG0: u32 = 0x4000_F140;
 const PCRM_EFUSE_PROG1: u32 = 0x4000_F144;
 
 // Emulator-private MMIO cells used only by tiny ROM ABI thunks. Real firmware never sees
-// these addresses directly: the thunk bridges Cortex-M argument registers into DiscoveryBus
+// these addresses directly: the thunks bridge Cortex-M argument registers into DiscoveryBus
 // state without teaching the CPU executor about PHY6252 vendor functions.
 const EMU_SLEEP_ALLOWED: u32 = 0x5000_FF00;
 const EMU_SLEEP_MODE: u32 = 0x5000_FF04;
+const EMU_AES_KEY_PTR: u32 = 0x5000_FF10;
+const EMU_AES_PLAINTEXT_PTR: u32 = 0x5000_FF14;
+const EMU_AES_CIPHERTEXT_PTR: u32 = 0x5000_FF18;
+const EMU_AES_TRIGGER: u32 = 0x5000_FF1C;
 
 const TIM_CURRENT: [u32; 6] = [
     0x4000_1004,
@@ -87,6 +92,23 @@ const EFUSE_READ_CODE: &[u8] = &[
     0x00, 0x22, 0x0A, 0x60, 0x4A, 0x60, 0x00, 0x20, 0x70, 0x47, 0x70, 0x47,
 ];
 
+// LL_ENC_AES128_Encrypt0(key, plaintext, ciphertext): capture the three Cortex-M ABI
+// pointers in a private control block, then trigger the host-side AES-128 implementation.
+//   ldr  r3, [pc, #12]  ; .word EMU_AES_KEY_PTR
+//   str  r0, [r3]
+//   str  r1, [r3, #4]
+//   str  r2, [r3, #8]
+//   movs r0, #1
+//   str  r0, [r3, #12]
+//   bx   lr
+//   nop
+//   .word EMU_AES_KEY_PTR
+const AES128_ENCRYPT0_CODE: &[u8] = &[
+    0x03, 0x4B, 0x18, 0x60, 0x59, 0x60, 0x9A, 0x60,
+    0x01, 0x20, 0xD8, 0x60, 0x70, 0x47, 0x00, 0xBF,
+    0x10, 0xFF, 0x00, 0x50,
+];
+
 // enableSleep():
 //   movs r0, #1
 //   ldr  r1, [pc, #4]   ; literal at entry + 8
@@ -115,6 +137,12 @@ const SET_SLEEP_MODE_CODE: &[u8] = &[
 // Exact ROM ABI entry points observed in PHY62XX SDK 3.1.2 / Test-DPLS.
 // Addresses are fetch addresses (Thumb symbol address with bit 0 cleared).
 const ROM_SHIMS: &[RomShim] = &[
+    RomShim {
+        entry: 0x0000_3FDC,
+        name: "LL_ENC_AES128_Encrypt0",
+        behavior: "host-aes128-key-plaintext-ciphertext",
+        code: AES128_ENCRYPT0_CODE,
+    },
     RomShim {
         entry: 0x0000_A9C8,
         name: "drv_irq_init",
@@ -156,6 +184,9 @@ pub struct DiscoveryBus {
     seen_shims: RefCell<HashSet<u32>>,
     sleep_allowed: Cell<bool>,
     sleep_mode: Cell<u32>,
+    aes_key_ptr: Cell<u32>,
+    aes_plaintext_ptr: Cell<u32>,
+    aes_ciphertext_ptr: Cell<u32>,
 }
 
 impl DiscoveryBus {
@@ -169,6 +200,9 @@ impl DiscoveryBus {
             seen_shims: RefCell::new(HashSet::new()),
             sleep_allowed: Cell::new(false),
             sleep_mode: Cell::new(0),
+            aes_key_ptr: Cell::new(0),
+            aes_plaintext_ptr: Cell::new(0),
+            aes_ciphertext_ptr: Cell::new(0),
         }
     }
 
@@ -271,22 +305,55 @@ impl DiscoveryBus {
             .unwrap_or(0xFFFF_FFFF)
     }
 
+    fn guest_read_block(&self, addr: u32) -> Result<[u8; 16], Fault> {
+        let mut out = [0u8; 16];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = self.inner.read8(addr.wrapping_add(i as u32))?;
+        }
+        Ok(out)
+    }
+
+    fn guest_write_block(&mut self, addr: u32, data: &[u8; 16]) -> Result<(), Fault> {
+        for (i, byte) in data.iter().copied().enumerate() {
+            self.inner.write8(addr.wrapping_add(i as u32), byte)?;
+        }
+        Ok(())
+    }
+
+    fn run_guest_aes128(&mut self) -> Result<(), Fault> {
+        let key_ptr = self.aes_key_ptr.get();
+        let plaintext_ptr = self.aes_plaintext_ptr.get();
+        let ciphertext_ptr = self.aes_ciphertext_ptr.get();
+        let key = self.guest_read_block(key_ptr)?;
+        let plaintext = self.guest_read_block(plaintext_ptr)?;
+        let ciphertext = aes128_encrypt_block(key, plaintext);
+        self.guest_write_block(ciphertext_ptr, &ciphertext)?;
+        eprintln!(
+            "ROM AES128 key={key_ptr:#010x} plaintext={plaintext_ptr:#010x} ciphertext={ciphertext_ptr:#010x}"
+        );
+        Ok(())
+    }
+
     fn emu_control_read(&self, addr: u32) -> Option<u32> {
         match addr & !3 {
             EMU_SLEEP_ALLOWED => Some(u32::from(self.sleep_allowed.get())),
             EMU_SLEEP_MODE => Some(self.sleep_mode.get()),
+            EMU_AES_KEY_PTR => Some(self.aes_key_ptr.get()),
+            EMU_AES_PLAINTEXT_PTR => Some(self.aes_plaintext_ptr.get()),
+            EMU_AES_CIPHERTEXT_PTR => Some(self.aes_ciphertext_ptr.get()),
+            EMU_AES_TRIGGER => Some(0),
             _ => None,
         }
     }
 
-    fn emu_control_write(&self, addr: u32, value: u32) -> bool {
+    fn emu_control_write(&mut self, addr: u32, value: u32) -> Result<bool, Fault> {
         match addr & !3 {
             EMU_SLEEP_ALLOWED => {
                 let new_value = value != 0;
                 if self.sleep_allowed.replace(new_value) != new_value {
                     eprintln!("PWR sleep_allowed={new_value}");
                 }
-                true
+                Ok(true)
             }
             EMU_SLEEP_MODE => {
                 let old = self.sleep_mode.replace(value);
@@ -299,9 +366,27 @@ impl DiscoveryBus {
                     };
                     eprintln!("PWR sleep_mode={value} ({name})");
                 }
-                true
+                Ok(true)
             }
-            _ => false,
+            EMU_AES_KEY_PTR => {
+                self.aes_key_ptr.set(value);
+                Ok(true)
+            }
+            EMU_AES_PLAINTEXT_PTR => {
+                self.aes_plaintext_ptr.set(value);
+                Ok(true)
+            }
+            EMU_AES_CIPHERTEXT_PTR => {
+                self.aes_ciphertext_ptr.set(value);
+                Ok(true)
+            }
+            EMU_AES_TRIGGER => {
+                if value != 0 {
+                    self.run_guest_aes128()?;
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 
@@ -427,7 +512,7 @@ impl Bus for DiscoveryBus {
     }
 
     fn write32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
-        if self.emu_control_write(addr, value) {
+        if self.emu_control_write(addr, value)? {
             return Ok(());
         }
         if self.strict && Self::is_unmodeled_rom(addr) {
@@ -467,7 +552,7 @@ impl Bus for DiscoveryBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::{SRAM_SIZE, XIP_SIZE};
+    use crate::bus::{SRAM_BASE, SRAM_SIZE, XIP_SIZE};
 
     fn bus(strict: bool) -> DiscoveryBus {
         DiscoveryBus::new(
@@ -569,12 +654,54 @@ mod tests {
     #[test]
     fn efuse_read_shim_is_a_blank_eight_byte_success_read() {
         let bus = bus(true);
-        assert_eq!(bus.read16(0x0000_ACE0).unwrap(), 0x2200); // movs r2,#0
-        assert_eq!(bus.read16(0x0000_ACE2).unwrap(), 0x600A); // str r2,[r1]
-        assert_eq!(bus.read16(0x0000_ACE4).unwrap(), 0x604A); // str r2,[r1,#4]
-        assert_eq!(bus.read16(0x0000_ACE6).unwrap(), 0x2000); // movs r0,#0
+        assert_eq!(bus.read16(0x0000_ACE0).unwrap(), 0x2200);
+        assert_eq!(bus.read16(0x0000_ACE2).unwrap(), 0x600A);
+        assert_eq!(bus.read16(0x0000_ACE4).unwrap(), 0x604A);
+        assert_eq!(bus.read16(0x0000_ACE6).unwrap(), 0x2000);
         assert_eq!(bus.read16(0x0000_ACE8).unwrap(), THUMB_BX_LR);
         assert!(matches!(bus.read16(0x0000_ACEC), Err(Fault::DAccViol)));
+    }
+
+    #[test]
+    fn aes128_rom_thunk_encodes_three_pointer_bridge() {
+        let bus = bus(true);
+        assert_eq!(bus.read16(0x0000_3FDC).unwrap(), 0x4B03);
+        assert_eq!(bus.read16(0x0000_3FDE).unwrap(), 0x6018);
+        assert_eq!(bus.read16(0x0000_3FE0).unwrap(), 0x6059);
+        assert_eq!(bus.read16(0x0000_3FE2).unwrap(), 0x609A);
+        assert_eq!(bus.read16(0x0000_3FE4).unwrap(), 0x2001);
+        assert_eq!(bus.read16(0x0000_3FE6).unwrap(), 0x60D8);
+        assert_eq!(bus.read16(0x0000_3FE8).unwrap(), THUMB_BX_LR);
+        assert_eq!(bus.read32(0x0000_3FEC).unwrap(), EMU_AES_KEY_PTR);
+    }
+
+    #[test]
+    fn aes128_bridge_encrypts_guest_memory() {
+        let mut bus = bus(true);
+        let key_addr = SRAM_BASE + 0x100;
+        let plaintext_addr = SRAM_BASE + 0x120;
+        let ciphertext_addr = SRAM_BASE + 0x140;
+        let key = [
+            0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+            0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,
+        ];
+        let plaintext = [
+            0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+            0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff,
+        ];
+        bus.inner.sram[0x100..0x110].copy_from_slice(&key);
+        bus.inner.sram[0x120..0x130].copy_from_slice(&plaintext);
+        bus.write32(EMU_AES_KEY_PTR, key_addr).unwrap();
+        bus.write32(EMU_AES_PLAINTEXT_PTR, plaintext_addr).unwrap();
+        bus.write32(EMU_AES_CIPHERTEXT_PTR, ciphertext_addr).unwrap();
+        bus.write32(EMU_AES_TRIGGER, 1).unwrap();
+        assert_eq!(
+            &bus.inner.sram[0x140..0x150],
+            &[
+                0x69,0xc4,0xe0,0xd8,0x6a,0x7b,0x04,0x30,
+                0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a,
+            ]
+        );
     }
 
     #[test]
