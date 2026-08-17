@@ -485,7 +485,6 @@ impl DiscoveryBus {
             0x50 => Some("SPIF.LOW_WR_PROTECTION"),
             0x54 => Some("SPIF.UP_WR_PROTECTION"),
             0x58 => Some("SPIF.WR_PROTECTION"),
-            0x7C => Some("SPIF.INDIRECT_WR_CNT"),
             _ => None,
         }
     }
@@ -868,13 +867,7 @@ mod tests {
     #[test]
     fn spif_bootstrap_accepts_only_observed_word_writes() {
         let mut bus = bus(true);
-        for (offset, value) in [
-            (0x38, 0xFF01_0005),
-            (0x50, 0),
-            (0x54, 0x10),
-            (0x58, 2),
-            (0x7C, 0x0004_0000),
-        ] {
+        for (offset, value) in [(0x38, 0xFF01_0005), (0x50, 0), (0x54, 0x10), (0x58, 2)] {
             let addr = SPIF_BASE + offset;
             bus.write32(addr, value).unwrap();
             assert_eq!(bus.sparse_mmio.borrow().get(&addr), Some(&value));

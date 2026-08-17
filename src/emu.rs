@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use zmu_cortex_m::core::fault::FaultTrapMode;
-use zmu_cortex_m::core::register::BaseReg;
+use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::core::reset::Reset;
 use zmu_cortex_m::executor::Executor;
 use zmu_cortex_m::Processor;
@@ -28,6 +28,7 @@ const CPU_THUNK_ENABLE_IRQ: u32 = 0x0000_00C4;
 const BOOT_FLASH_BYTES: usize = 0xC8;
 const ROM_DRV_DISABLE_IRQ: u32 = 0x0000_A974;
 const ROM_DRV_ENABLE_IRQ: u32 = 0x0000_A99C;
+const ROM_SPIF_READ_ID: u32 = 0x0001_7208;
 
 pub struct RunOpts {
     pub hex: PathBuf,
@@ -89,11 +90,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     }
 
     let ext_in = Arc::new(AtomicU32::new(0));
-    let cmd_rx = if live {
-        Some(spawn_cmd_reader())
-    } else {
-        None
-    };
+    let cmd_rx = if live { Some(spawn_cmd_reader()) } else { None };
 
     let mut processor = Processor::new();
     processor.fault_trap_mode(FaultTrapMode::hardfault());
@@ -130,7 +127,14 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
         apply_ext(&gpio, &ext_in);
         redirect_cpu_rom_abi(&mut processor, &mut cpu_rom_seen);
         if let Some(trap) = processor.take_pending_fault_trap() {
-            return report_stop(&mut processor, insn, live, raw, &gpio, &format!("fault {trap:?}"));
+            return report_stop(
+                &mut processor,
+                insn,
+                live,
+                raw,
+                &gpio,
+                &format!("fault {trap:?}"),
+            );
         }
         if !processor.running {
             return report_stop(&mut processor, insn, live, raw, &gpio, "halt");
@@ -180,9 +184,42 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
 
 fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8) {
     let pc = processor.get_pc();
+    if pc == ROM_SPIF_READ_ID {
+        let pid_ptr = processor.get_r(Reg::R0);
+        if pid_ptr != 0 {
+            if *seen & 4 == 0 {
+                eprintln!(
+                    "ROM CPU strict spif_read_id entry={pc:#010x} pid={pid_ptr:#010x} -- flash identity profile not configured"
+                );
+                *seen |= 4;
+            }
+            return;
+        }
+        if *seen & 8 == 0 {
+            eprintln!(
+                "ROM CPU shim spif_read_id entry={pc:#010x} behavior=NULL-probe-success (no JEDEC ID invented)"
+            );
+            *seen |= 8;
+        }
+        processor.set_r(Reg::R0, 0); // PPlus_SUCCESS
+        let lr = processor.get_r(Reg::LR);
+        processor.set_pc(lr & !1);
+        return;
+    }
+
     let (thunk, bit, name, behavior) = match pc {
-        ROM_DRV_DISABLE_IRQ => (CPU_THUNK_DISABLE_IRQ, 1u8, "drv_disable_irq", "CPSID i / PRIMASK=1"),
-        ROM_DRV_ENABLE_IRQ => (CPU_THUNK_ENABLE_IRQ, 2u8, "drv_enable_irq", "CPSIE i / PRIMASK=0"),
+        ROM_DRV_DISABLE_IRQ => (
+            CPU_THUNK_DISABLE_IRQ,
+            1u8,
+            "drv_disable_irq",
+            "CPSID i / PRIMASK=1",
+        ),
+        ROM_DRV_ENABLE_IRQ => (
+            CPU_THUNK_ENABLE_IRQ,
+            2u8,
+            "drv_enable_irq",
+            "CPSIE i / PRIMASK=0",
+        ),
         _ => return,
     };
     if *seen & bit == 0 {
@@ -459,7 +496,11 @@ fn report_stop(
         processor.lr,
         processor.msp
     );
-    Ok(ExitCode::from(if reason.starts_with("fault") { 2 } else { 0 }))
+    Ok(ExitCode::from(if reason.starts_with("fault") {
+        2
+    } else {
+        0
+    }))
 }
 
 #[cfg(test)]
@@ -475,7 +516,10 @@ mod tests {
         let (base, vectors) = locate_vector_table(&sram).unwrap();
         assert_eq!(base, SRAM_BASE);
         assert_eq!(vectors.len(), VECTOR_MIRROR_BYTES);
-        assert_eq!(u32::from_le_bytes(vectors[12..16].try_into().unwrap()), SRAM_BASE + 0x121);
+        assert_eq!(
+            u32::from_le_bytes(vectors[12..16].try_into().unwrap()),
+            SRAM_BASE + 0x121
+        );
     }
 
     #[test]
@@ -490,9 +534,18 @@ mod tests {
         let (base, vectors) = locate_vector_table(&sram).unwrap();
         assert_eq!(base, SRAM_BASE + offset as u32);
         assert_eq!(vectors.len(), VECTOR_MIRROR_BYTES);
-        assert_eq!(u32::from_le_bytes(vectors[4..8].try_into().unwrap()), 0x1FFF_19E1);
-        assert_eq!(u32::from_le_bytes(vectors[12..16].try_into().unwrap()), 0x0000_28F1);
-        assert_eq!(u32::from_le_bytes(vectors[0xBC..0xC0].try_into().unwrap()), 0x1FFF_2223);
+        assert_eq!(
+            u32::from_le_bytes(vectors[4..8].try_into().unwrap()),
+            0x1FFF_19E1
+        );
+        assert_eq!(
+            u32::from_le_bytes(vectors[12..16].try_into().unwrap()),
+            0x0000_28F1
+        );
+        assert_eq!(
+            u32::from_le_bytes(vectors[0xBC..0xC0].try_into().unwrap()),
+            0x1FFF_2223
+        );
     }
 
     #[test]
