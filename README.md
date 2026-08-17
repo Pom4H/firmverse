@@ -21,6 +21,7 @@ help
 ```sh
 phy6252 --help
 phy6252 firmware/kit-demo.hex
+phy6252 --tui                  # realtime pinout + logs dashboard
 phy6252 --raw                  # GPIO / UART / FRAME lines
 phy6252 --once path.hex        # no REPL, stop at halt / insn cap
 phy6252 --strict --once path.hex # stop on the first missing silicon behavior
@@ -29,6 +30,32 @@ phy6252 --strict --once path.hex # stop on the first missing silicon behavior
 `--strict-mmio` remains an alias for `--strict`.
 
 Install: `cargo install --path .` → `phy6252` on your PATH.
+
+## Realtime terminal dashboard
+
+`phy6252 --tui [firmware.hex]` runs the exact same emulator through its stable `--raw` protocol and renders a live terminal dashboard instead of creating a second execution path.
+
+The dashboard shows:
+
+- PB-03F silkscreen pin → `gpio_pin_e` mapping for P0, P2, P3, P7, P11, P14, P15, P16, P17, P18, P20, P23, P24, P31, P32, P33 and P34;
+- GPIO direction and current level (`OUT` reads DR, `IN` reads the externally driven level);
+- live ADC voltages for P20 / P15 / P24 / P23;
+- RGB/W LED levels and all six PWM channels;
+- BLE mailbox link + notify state;
+- a rolling log combining UART, ATT frames and emulator stderr, including strict discovery, ROM shims, power state and secure-boot diagnostics;
+- command history with Up/Down and the same commands as the normal REPL.
+
+Example commands can be typed directly into the TUI:
+
+```text
+connect
+notify on
+adc 3.3 1.65 2.5 3.3
+p34 on
+write 01020304
+```
+
+Esc or Ctrl-C exits. `--tui` is intentionally separate from `--raw`: automation keeps the line protocol, while humans get the dashboard.
 
 ## Firmware-driven silicon discovery
 
@@ -66,7 +93,7 @@ The repository does not contain the PHY6252 vendor ROM. In strict mode, executio
 ROM unknown read16 addr=0x0000abcd -- vendor ROM image/ABI not modeled; strict fault
 ```
 
-Known ROM ABI functions can be replaced by explicit, named shims. Shims are deliberately narrow and log when used. For example, the current bootstrap shim for `drv_irq_init` at Thumb symbol `0x0000a9c9` returns immediately (`BX LR`) while IRQ delivery itself is not yet modeled. This is an explicit emulator limitation, not an emulation claim.
+Known ROM ABI functions are replaced only when their semantics are identified. Current executable shims cover bootstrap IRQ init, sleep policy, eFuse reads, AES-128/secure identity checks, ARM EABI memory clearing, OSAL memory comparison and OSAL heap setup. The goal is to execute the SDK contract, not to hide unknown ROM behind blanket no-op returns.
 
 The intended workflow is iterative:
 
