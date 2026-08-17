@@ -6,6 +6,7 @@ mod bus;
 mod cmd;
 mod discovery;
 mod emu;
+mod hci_rom;
 mod hex;
 mod mailbox;
 mod osal;
