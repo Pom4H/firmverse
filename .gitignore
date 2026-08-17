@@ -1,0 +1,6 @@
+/target
+*.o
+*.elf
+.DS_Store
+/firmware/build/*
+!/firmware/build/.gitkeep

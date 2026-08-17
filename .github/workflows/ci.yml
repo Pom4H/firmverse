@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: ARM GCC
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - name: Demo HEX
+        run: make -C firmware
+      - name: Cargo test
+        run: cargo test
+      - name: Live smoke
+        run: |
+          cargo build --quiet
+          printf 'ADC 3300 1650 2500 3300\nIN 00400000\nCONNECT\nCCCD 1\nWRITE 4849\n' \
+            | timeout 3 ./target/debug/phy6252-emu --live firmware/build/kit-demo.hex \
+            | tee /tmp/emu.log || true
+          grep -q READY /tmp/emu.log
+          grep -q 'UART kit-demo boot' /tmp/emu.log
+          grep -q '^GPIO ' /tmp/emu.log
+          grep -q 'UART rx ' /tmp/emu.log
