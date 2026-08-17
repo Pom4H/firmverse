@@ -6,6 +6,7 @@ use zmu_cortex_m::Processor;
 
 const ROM_UIDIV: u32 = 0x0000_0E08;
 const ROM_IDIV: u32 = 0x0000_0E34;
+const ROM_HCI_INIT: u32 = 0x0000_183C;
 const ROM_LL_INIT: u32 = 0x0000_4EB0;
 const ROM_CLOCK: u32 = 0x0001_4948;
 const ROM_CLEAR_EVENT: u32 = 0x0001_4A88;
@@ -59,7 +60,7 @@ pub struct HostOsal {
     heap_next: Option<u32>, heap_end: u32,
     free: Vec<(u32, u32)>, allocs: HashMap<u32, u32>, messages: VecDeque<u32>,
     seen: HashSet<u32>, tasks: Option<u32>, events: Option<u32>, count: u8,
-    running: Option<u8>, started: bool, timers: Vec<Timer>, ll_task: Option<u8>,
+    running: Option<u8>, started: bool, timers: Vec<Timer>, ll_task: Option<u8>, hci_task: Option<u8>,
 }
 
 impl HostOsal {
@@ -71,7 +72,7 @@ impl HostOsal {
         let pc = cpu.get_pc();
         if pc == IDLE_BX_LR_ROM && self.started && self.running.is_none() { return self.dispatch(cpu); }
         match pc {
-            ROM_UIDIV => self.uidiv(cpu), ROM_IDIV => self.idiv(cpu), ROM_LL_INIT => self.ll_init(cpu),
+            ROM_UIDIV => self.uidiv(cpu), ROM_IDIV => self.idiv(cpu), ROM_HCI_INIT => self.hci_init(cpu), ROM_LL_INIT => self.ll_init(cpu),
             ROM_CLOCK => self.clock(cpu, now), ROM_CLEAR_EVENT => self.clear_event_call(cpu),
             ROM_GET_TIMEOUT => self.get_timeout(cpu, now), ROM_NEXT_TIMEOUT => self.next_timeout(cpu, now),
             ROM_TIMER_NUM_ACTIVE => self.timer_num_active(cpu),
@@ -92,42 +93,16 @@ impl HostOsal {
 
     fn once(&mut self, pc: u32, f: impl FnOnce()) { if self.seen.insert(pc) { f(); } }
 
-    fn uidiv(&mut self, cpu:&mut Processor)->bool {
-        let n=cpu.get_r(Reg::R0); let d=cpu.get_r(Reg::R1); let (q,r)=if d==0{(0,n)}else{(n/d,n%d)};
-        self.once(ROM_UIDIV,||eprintln!("EABI host uidiv/uidivmod")); cpu.set_r(Reg::R0,q); cpu.set_r(Reg::R1,r); ret(cpu); true
-    }
-    fn idiv(&mut self,cpu:&mut Processor)->bool {
-        let n=cpu.get_r(Reg::R0) as i32; let d=cpu.get_r(Reg::R1) as i32;
-        let (q,r)=if d==0{(0,n)}else if n==i32::MIN&&d==-1{(i32::MIN,0)}else{(n/d,n%d)};
-        self.once(ROM_IDIV,||eprintln!("EABI host idiv/idivmod")); cpu.set_r(Reg::R0,q as u32); cpu.set_r(Reg::R1,r as u32); ret(cpu); true
-    }
-    fn ll_init(&mut self,cpu:&mut Processor)->bool {
-        let task=cpu.get_r(Reg::R0) as u8;
-        self.ll_task=Some(task);
-        self.once(ROM_LL_INIT,||eprintln!("BLE host controller initialized by guest LL task={task}"));
-        ret(cpu); true
-    }
+    fn uidiv(&mut self, cpu:&mut Processor)->bool { let n=cpu.get_r(Reg::R0);let d=cpu.get_r(Reg::R1);let(q,r)=if d==0{(0,n)}else{(n/d,n%d)};self.once(ROM_UIDIV,||eprintln!("EABI host uidiv/uidivmod"));cpu.set_r(Reg::R0,q);cpu.set_r(Reg::R1,r);ret(cpu);true }
+    fn idiv(&mut self,cpu:&mut Processor)->bool { let n=cpu.get_r(Reg::R0)as i32;let d=cpu.get_r(Reg::R1)as i32;let(q,r)=if d==0{(0,n)}else if n==i32::MIN&&d==-1{(i32::MIN,0)}else{(n/d,n%d)};self.once(ROM_IDIV,||eprintln!("EABI host idiv/idivmod"));cpu.set_r(Reg::R0,q as u32);cpu.set_r(Reg::R1,r as u32);ret(cpu);true }
+    fn ll_init(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.ll_task=Some(task);self.once(ROM_LL_INIT,||eprintln!("BLE host controller initialized by guest LL task={task}"));ret(cpu);true }
+    fn hci_init(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.hci_task=Some(task);self.once(ROM_HCI_INIT,||eprintln!("BLE host HCI initialized by guest task={task}"));ret(cpu);true }
 
-    fn init(&mut self, cpu: &mut Processor) -> bool {
-        let entry = match cpu.read32(JT_INIT) { Ok(v) if v & 1 == 1 => v, Ok(v) => { eprintln!("OSAL strict init callback={v:#010x} is not Thumb"); return false; }, Err(e) => { eprintln!("OSAL strict init callback read: {e}"); return false; } };
-        self.once(ROM_INIT, || eprintln!("OSAL host init task_init={entry:#010x}")); cpu.set_pc(entry & !1); true
-    }
-    fn start(&mut self, cpu: &mut Processor) -> bool {
-        if self.running.is_some() { return self.finish(cpu); }
-        if !self.started { if !self.resolve(cpu) { return false; } self.started = true; self.once(ROM_START, || eprintln!("OSAL host cooperative scheduler started")); }
-        self.dispatch(cpu)
-    }
-    fn resolve(&mut self, cpu: &mut Processor) -> bool {
-        if self.tasks.is_some() && self.events.is_some() && self.count != 0 { return true; }
-        let tasks=match cpu.read32(JT_TASKS){Ok(v)if v!=0=>v,_=>return false}; let count_ptr=match cpu.read32(JT_COUNT_PTR){Ok(v)if v!=0=>v,_=>return false};
-        let events_ptr_ptr=match cpu.read32(JT_EVENTS_PTR){Ok(v)if v!=0=>v,_=>return false}; let count=match cpu.read8(count_ptr){Ok(v)if v>0&&v<=64=>v,_=>return false};
-        let events=match cpu.read32(events_ptr_ptr){Ok(v)if v!=0=>v,_=>return false}; self.tasks=Some(tasks);self.events=Some(events);self.count=count;
-        eprintln!("OSAL scheduler tasks={count} handlers={tasks:#010x} events={events:#010x}");true
-    }
-    fn finish(&mut self,cpu:&mut Processor)->bool { if let Some(task)=self.running.take(){let left=cpu.get_r(Reg::R0) as u16;if left!=0&&!self.post(cpu,task,left){return false;}}self.dispatch(cpu) }
-    fn dispatch(&mut self,cpu:&mut Processor)->bool {
-        let(Some(tasks),Some(events))=(self.tasks,self.events)else{return false;};for task in 0..self.count{let event_addr=events.wrapping_add(u32::from(task)*2);let bits=match cpu.read16(event_addr){Ok(v)=>v,Err(_)=>return false};if bits==0{continue;}let handler=match cpu.read32(tasks.wrapping_add(u32::from(task)*4)){Ok(v)if v&1==1=>v,_=>return false};if cpu.write16(event_addr,0).is_err(){return false;}self.running=Some(task);cpu.set_r(Reg::R0,u32::from(task));cpu.set_r(Reg::R1,u32::from(bits));cpu.set_r(Reg::LR,ROM_START|1);cpu.set_pc(handler&!1);return true;}cpu.set_r(Reg::LR,IDLE_BX_LR_ROM|1);cpu.set_pc(IDLE_BX_LR_ROM);true
-    }
+    fn init(&mut self,cpu:&mut Processor)->bool { let entry=match cpu.read32(JT_INIT){Ok(v)if v&1==1=>v,Ok(v)=>{eprintln!("OSAL strict init callback={v:#010x} is not Thumb");return false;},Err(e)=>{eprintln!("OSAL strict init callback read: {e}");return false;}};self.once(ROM_INIT,||eprintln!("OSAL host init task_init={entry:#010x}"));cpu.set_pc(entry&!1);true }
+    fn start(&mut self,cpu:&mut Processor)->bool { if self.running.is_some(){return self.finish(cpu);}if !self.started{if !self.resolve(cpu){return false;}self.started=true;self.once(ROM_START,||eprintln!("OSAL host cooperative scheduler started"));}self.dispatch(cpu) }
+    fn resolve(&mut self,cpu:&mut Processor)->bool { if self.tasks.is_some()&&self.events.is_some()&&self.count!=0{return true;}let tasks=match cpu.read32(JT_TASKS){Ok(v)if v!=0=>v,_=>return false};let count_ptr=match cpu.read32(JT_COUNT_PTR){Ok(v)if v!=0=>v,_=>return false};let events_ptr_ptr=match cpu.read32(JT_EVENTS_PTR){Ok(v)if v!=0=>v,_=>return false};let count=match cpu.read8(count_ptr){Ok(v)if v>0&&v<=64=>v,_=>return false};let events=match cpu.read32(events_ptr_ptr){Ok(v)if v!=0=>v,_=>return false};self.tasks=Some(tasks);self.events=Some(events);self.count=count;eprintln!("OSAL scheduler tasks={count} handlers={tasks:#010x} events={events:#010x}");true }
+    fn finish(&mut self,cpu:&mut Processor)->bool { if let Some(task)=self.running.take(){let left=cpu.get_r(Reg::R0)as u16;if left!=0&&!self.post(cpu,task,left){return false;}}self.dispatch(cpu) }
+    fn dispatch(&mut self,cpu:&mut Processor)->bool { let(Some(tasks),Some(events))=(self.tasks,self.events)else{return false;};for task in 0..self.count{let event_addr=events.wrapping_add(u32::from(task)*2);let bits=match cpu.read16(event_addr){Ok(v)=>v,Err(_)=>return false};if bits==0{continue;}let handler=match cpu.read32(tasks.wrapping_add(u32::from(task)*4)){Ok(v)if v&1==1=>v,_=>return false};if cpu.write16(event_addr,0).is_err(){return false;}self.running=Some(task);cpu.set_r(Reg::R0,u32::from(task));cpu.set_r(Reg::R1,u32::from(bits));cpu.set_r(Reg::LR,ROM_START|1);cpu.set_pc(handler&!1);return true;}cpu.set_r(Reg::LR,IDLE_BX_LR_ROM|1);cpu.set_pc(IDLE_BX_LR_ROM);true }
     fn event_addr(&self,task:u8)->Option<u32>{if task>=self.count{return None;}self.events.map(|p|p+u32::from(task)*2)}
     fn post(&self,cpu:&mut Processor,task:u8,event:u16)->bool{let Some(addr)=self.event_addr(task)else{return false;};let current=match cpu.read16(addr){Ok(v)=>v,Err(_)=>return false};cpu.write16(addr,current|event).is_ok()}
     fn set_event_call(&mut self,cpu:&mut Processor)->bool{if !self.resolve(cpu){return false;}let task=cpu.get_r(Reg::R0)as u8;let event=cpu.get_r(Reg::R1)as u16;if !self.post(cpu,task,event){return false;}self.once(ROM_SET_EVENT,||eprintln!("OSAL host set_event -> guest event bitmap"));cpu.set_r(Reg::R0,0);ret(cpu);true}
