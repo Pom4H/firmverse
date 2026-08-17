@@ -6,6 +6,7 @@ use zmu_cortex_m::Processor;
 const ROM_LL_ENC_PSEUDO_RAND: u32 = 0x0000_4458;
 const ROM_LL_ENC_TRUE_RAND: u32 = 0x0000_4468;
 const ROM_LL_EXT_SET_SCA: u32 = 0x0000_4634;
+const ROM_LL_INIT_FEATURE_SET_DLE: u32 = 0x0000_BC6C;
 const LL_STATUS_SUCCESS: u32 = 0x00;
 const LL_STATUS_ERROR_BAD_PARAMETER: u32 = 0x12;
 
@@ -17,6 +18,7 @@ pub fn handle(cpu: &mut Processor, rng: &mut u32) -> bool {
         ROM_LL_ENC_PSEUDO_RAND => pseudo_rand(cpu, rng),
         ROM_LL_ENC_TRUE_RAND => true_rand(cpu, rng),
         ROM_LL_EXT_SET_SCA => set_sca(cpu),
+        ROM_LL_INIT_FEATURE_SET_DLE => init_feature_set_dle(cpu),
         _ => false,
     }
 }
@@ -65,6 +67,16 @@ fn set_sca(cpu: &mut Processor) -> bool {
     };
     eprintln!("BLE ROM LL_EXT_SetSCA ppm={ppm} status={status:#04x}");
     cpu.set_r(Reg::R0, status);
+    ret(cpu);
+    true
+}
+
+fn init_feature_set_dle(cpu: &mut Processor) -> bool {
+    let enabled = cpu.get_r(Reg::R0) != 0;
+    // This ROM helper mutates the controller's local feature bitmap. The emulated
+    // controller keeps data-length support in host state; there is no radio register
+    // side effect to reproduce here. The guest ABI is void.
+    eprintln!("BLE ROM llInitFeatureSetDLE enabled={enabled}");
     ret(cpu);
     true
 }
