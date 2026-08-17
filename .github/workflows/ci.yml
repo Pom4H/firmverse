@@ -13,6 +13,15 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      - name: Public repo leak guard
+        run: |
+          private_marker="dp""ls"
+          if git grep -in "$private_marker"; then
+            echo 'private product marker leaked into the generic emulator'
+            exit 1
+          fi
+      - name: BlueZ helper syntax
+        run: python3 -m py_compile host/ble/bluez.py
       - name: ARM GCC
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
       - name: Demo HEX

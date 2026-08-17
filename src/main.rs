@@ -1,4 +1,5 @@
 mod aes;
+mod ble_host;
 mod bus;
 mod cmd;
 mod discovery;
@@ -9,18 +10,23 @@ mod osal;
 mod silicon_regs;
 mod tui;
 
+use ble_host::BleHostOpts;
 use clap::Parser;
 use emu::{default_hex, run, RunOpts};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tui::TuiOpts;
 
+const DEFAULT_BLE_SERVICE: &str = "6B1D0001-7C8E-4A91-9F2B-E3A14C5B0001";
+const DEFAULT_BLE_RX: &str = "6B1D0002-7C8E-4A91-9F2B-E3A14C5B0001";
+const DEFAULT_BLE_TX: &str = "6B1D0003-7C8E-4A91-9F2B-E3A14C5B0001";
+
 #[derive(Parser)]
 #[command(
     name = "phy6252",
     version,
     about = "PHY6252 / PB-03F-Kit emulator",
-    after_help = "Live REPL is the default. Use --tui for a realtime pinout + logs dashboard."
+    after_help = "Live REPL is the default. Use --tui for a realtime pinout + logs dashboard or --ble to bridge the generic ATT mailbox to Linux BlueZ."
 )]
 struct Cli {
     /// Intel HEX image
@@ -32,8 +38,23 @@ struct Cli {
     #[arg(long)]
     raw: bool,
     /// Realtime terminal dashboard with live pinout, ADC/PWM/BLE state and logs
-    #[arg(long, conflicts_with_all = ["once", "raw"])]
+    #[arg(long, conflicts_with_all = ["once", "raw", "ble"])]
     tui: bool,
+    /// Expose the generic ATT mailbox through the Linux host Bluetooth adapter (BlueZ)
+    #[arg(long, conflicts_with_all = ["once", "raw", "tui"])]
+    ble: bool,
+    /// BLE local name used by --ble
+    #[arg(long, default_value = "PB03FKIT", requires = "ble")]
+    ble_name: String,
+    /// Generic GATT service UUID used by --ble
+    #[arg(long, default_value = DEFAULT_BLE_SERVICE, requires = "ble")]
+    ble_service: String,
+    /// Generic GATT write characteristic UUID used by --ble
+    #[arg(long, default_value = DEFAULT_BLE_RX, requires = "ble")]
+    ble_rx: String,
+    /// Generic GATT notify characteristic UUID used by --ble
+    #[arg(long, default_value = DEFAULT_BLE_TX, requires = "ble")]
+    ble_tx: String,
     /// Fault on unmodeled PHY6252 MMIO or vendor ROM accesses
     #[arg(long = "strict", visible_alias = "strict-mmio")]
     strict_mmio: bool,
@@ -63,6 +84,18 @@ fn run_cli() -> Result<ExitCode, String> {
             hex,
             strict: cli.strict_mmio,
             max_insns: cli.max_insns.unwrap_or(50_000_000),
+        });
+    }
+
+    if cli.ble {
+        return ble_host::run(BleHostOpts {
+            hex,
+            strict: cli.strict_mmio,
+            max_insns: cli.max_insns.unwrap_or(50_000_000),
+            name: cli.ble_name,
+            service: cli.ble_service,
+            rx_uuid: cli.ble_rx,
+            tx_uuid: cli.ble_tx,
         });
     }
 
