@@ -276,6 +276,12 @@ const SET_SLEEP_MODE_CODE: &[u8] = &[
 
 const ROM_SHIMS: &[RomShim] = &[
     RomShim {
+        entry: 0x0001_6DC4,
+        name: "spif_config",
+        behavior: "noop-return (host XIP backend already configured)",
+        code: DRV_IRQ_INIT_CODE,
+    },
+    RomShim {
         entry: 0x0000_8AA8,
         name: "clk_init ROM helper 0x8AA9",
         behavior: "identity-r0 (observed RC32M->XTAL16M boot path)",
@@ -906,6 +912,7 @@ mod tests {
         let bus = bus(true);
         assert_eq!(bus.read16(0x0000_8AA8).unwrap(), THUMB_BX_LR);
         assert_eq!(bus.read16(0x0000_8C00).unwrap(), THUMB_BX_LR);
+        assert_eq!(bus.read16(0x0001_6DC4).unwrap(), THUMB_BX_LR);
         assert!(matches!(bus.read16(0x0000_8C04), Err(Fault::DAccViol)));
         assert_eq!(bus.read16(0x0000_A9C8).unwrap(), THUMB_BX_LR);
         assert_eq!(bus.read16(0x0000_0EB2).unwrap(), 0x2200);
