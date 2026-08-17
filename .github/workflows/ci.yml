@@ -26,6 +26,22 @@ jobs:
         run: cargo test
       - name: Emulator binary
         run: cargo build --quiet
+      - name: Publish emulator binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: phy6252-linux-x86_64
+          path: target/debug/phy6252
+          if-no-files-found: error
+
+  demo-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build emulator
+        run: cargo build --quiet
       - name: Restore demo HEX
         id: demo-cache
         uses: actions/cache@v4
@@ -47,9 +63,3 @@ jobs:
           grep -q 'UART kit-demo boot' /tmp/emu.log
           grep -q '^GPIO ' /tmp/emu.log
           grep -q 'UART rx ' /tmp/emu.log
-      - name: Publish emulator binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: phy6252-linux-x86_64
-          path: target/debug/phy6252
-          if-no-files-found: error
