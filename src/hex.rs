@@ -2,6 +2,14 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+const XIP_BASE: u32 = 0x1100_0000;
+// The emulator already provisions this generic development/factory-security
+// window after loading the image. Keep only that window zero-initialized so the
+// existing provisioning detector can distinguish an unprovisioned image while
+// every ordinary NOR byte starts in its physical erased state (0xff).
+const DEV_PROFILE_START: u32 = 0x1100_2908;
+const DEV_PROFILE_END: u32 = 0x1100_2930;
+
 #[derive(Debug)]
 pub struct HexImage {
     pub bytes: Vec<(u32, u8)>,
@@ -44,6 +52,14 @@ impl HexImage {
     }
 
     pub fn fill(&self, base: u32, dest: &mut [u8]) {
+        if base == XIP_BASE {
+            dest.fill(0xff);
+            let start = DEV_PROFILE_START.wrapping_sub(base) as usize;
+            let end = DEV_PROFILE_END.wrapping_sub(base) as usize;
+            if start < end && end <= dest.len() {
+                dest[start..end].fill(0);
+            }
+        }
         for (addr, value) in &self.bytes {
             if *addr >= base {
                 let offset = (*addr - base) as usize;
@@ -80,12 +96,26 @@ fn hex_digit(c: u8) -> io::Result<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::decode_line;
+    use super::*;
 
     #[test]
     fn decodes_data_record() {
         let data = decode_line(":020000040000FA").expect("hex");
         assert_eq!(data[0], 2);
         assert_eq!(data[3], 4);
+    }
+
+    #[test]
+    fn xip_defaults_to_erased_nor_and_image_bytes_win() {
+        let image = HexImage {
+            bytes: vec![(XIP_BASE + 1, 0x12), (DEV_PROFILE_START, 0x34)],
+        };
+        let mut xip = vec![0; 0x3000];
+        image.fill(XIP_BASE, &mut xip);
+        assert_eq!(xip[0], 0xff);
+        assert_eq!(xip[1], 0x12);
+        assert_eq!(xip[(DEV_PROFILE_START - XIP_BASE) as usize], 0x34);
+        assert_eq!(xip[(DEV_PROFILE_START - XIP_BASE + 1) as usize], 0x00);
+        assert_eq!(xip[(DEV_PROFILE_END - XIP_BASE) as usize], 0xff);
     }
 }
