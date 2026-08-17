@@ -1,8 +1,9 @@
 use crate::bus::{
-    GpioBank, Phy6252Bus, ADC_CH_COUNT, GPIO_PIN_MASK, PWM_CHANNELS, SRAM_BASE, SRAM_SIZE, XIP_BASE,
-    XIP_SIZE,
+    GpioBank, Phy6252Bus, ADC_CH_COUNT, GPIO_PIN_MASK, PWM_CHANNELS, ROM_END, SRAM_BASE, SRAM_SIZE,
+    XIP_BASE, XIP_SIZE,
 };
 use crate::cmd::{gpio_silk, ChipCmd, HELP};
+use crate::discovery::DiscoveryBus;
 use crate::hex::HexImage;
 use crate::mailbox;
 use std::cell::RefCell;
@@ -25,6 +26,7 @@ pub struct RunOpts {
     pub hex: PathBuf,
     pub live: bool,
     pub raw: bool,
+    pub strict_mmio: bool,
     pub max_insns: u64,
 }
 
@@ -49,6 +51,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let hex_path = opts.hex;
     let live = opts.live;
     let raw = opts.raw;
+    let strict_mmio = opts.strict_mmio;
     let max_insns = opts.max_insns;
 
     let image = HexImage::load(&hex_path).map_err(|e| format!("{}: {e}", hex_path.display()))?;
@@ -57,6 +60,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     image.fill(SRAM_BASE, &mut sram);
     image.fill(XIP_BASE, &mut xip);
 
+    let (vector_base, vectors) = locate_vector_table(&sram)?;
     let device = Phy6252Bus::new(sram, xip);
     let gpio = Rc::clone(&device.gpio);
     let gpio_changed = Rc::clone(&device.gpio_changed);
@@ -64,11 +68,14 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let pwm = Rc::clone(&device.pwm);
     let pwm_changed = Rc::clone(&device.pwm_changed);
     let adc_mv = Rc::clone(&device.adc_mv);
-    let vectors = device.vector_table();
+    let device = DiscoveryBus::new(device, strict_mmio);
     let sp = u32::from_le_bytes([vectors[0], vectors[1], vectors[2], vectors[3]]);
     let reset = u32::from_le_bytes([vectors[4], vectors[5], vectors[6], vectors[7]]);
     eprintln!("hex {}", hex_path.display());
-    eprintln!("SP={sp:#010x} Reset={reset:#010x}");
+    eprintln!("Vectors={vector_base:#010x} SP={sp:#010x} Reset={reset:#010x}");
+    if strict_mmio {
+        eprintln!("MMIO discovery: strict");
+    }
 
     let ext_in = Arc::new(AtomicU32::new(0));
     let cmd_rx = if live {
@@ -80,6 +87,8 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let mut processor = Processor::new();
     processor.fault_trap_mode(FaultTrapMode::hardfault());
     processor.device(Some(Box::new(device)));
+    // zmu resets from address zero. Mirror the selected PHY6252 vector pair there;
+    // the rest of the image remains at its real SRAM/XIP addresses on the device bus.
     processor.flash_memory(vectors.len(), &vectors);
     processor
         .reset()
@@ -152,6 +161,73 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     }
 
     report_stop(&mut processor, insn, live, raw, &gpio, "max instructions")
+}
+
+fn locate_vector_table(sram: &[u8]) -> Result<(u32, [u8; 8]), String> {
+    if vector_pair_plausible(sram, 0) {
+        return Ok((SRAM_BASE, vector_pair(sram, 0)));
+    }
+
+    let mut best: Option<(u32, usize, u32)> = None;
+    for offset in (0..sram.len().saturating_sub(8)).step_by(4) {
+        if !vector_pair_plausible(sram, offset) {
+            continue;
+        }
+        let score = vector_score(sram, offset);
+        if best.map_or(true, |(_, _, best_score)| score > best_score) {
+            best = Some((SRAM_BASE + offset as u32, offset, score));
+        }
+    }
+
+    let Some((base, offset, _)) = best else {
+        let first = vector_pair(sram, 0);
+        let sp = u32::from_le_bytes(first[0..4].try_into().unwrap());
+        let reset = u32::from_le_bytes(first[4..8].try_into().unwrap());
+        return Err(format!(
+            "no plausible Cortex-M vector table in PHY6252 SRAM (first SP={sp:#010x} Reset={reset:#010x})"
+        ));
+    };
+    Ok((base, vector_pair(sram, offset)))
+}
+
+fn vector_pair(sram: &[u8], offset: usize) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    if let Some(bytes) = sram.get(offset..offset + 8) {
+        out.copy_from_slice(bytes);
+    }
+    out
+}
+
+fn vector_pair_plausible(sram: &[u8], offset: usize) -> bool {
+    let pair = vector_pair(sram, offset);
+    let sp = u32::from_le_bytes(pair[0..4].try_into().unwrap());
+    let reset = u32::from_le_bytes(pair[4..8].try_into().unwrap());
+    let sram_end = SRAM_BASE + SRAM_SIZE as u32;
+    let sp_ok = sp >= SRAM_BASE && sp <= sram_end && sp & 3 == 0;
+    sp_ok && reset & 1 == 1 && executable_address(reset & !1)
+}
+
+fn vector_score(sram: &[u8], offset: usize) -> u32 {
+    let mut score = 16;
+    for index in 2..16 {
+        let at = offset + index * 4;
+        let Some(bytes) = sram.get(at..at + 4) else {
+            break;
+        };
+        let value = u32::from_le_bytes(bytes.try_into().unwrap());
+        if value == 0 {
+            score += 1;
+        } else if value & 1 == 1 && executable_address(value & !1) {
+            score += 2;
+        }
+    }
+    score
+}
+
+fn executable_address(addr: u32) -> bool {
+    addr < ROM_END
+        || (SRAM_BASE..SRAM_BASE + SRAM_SIZE as u32).contains(&addr)
+        || (XIP_BASE..XIP_BASE + XIP_SIZE as u32).contains(&addr)
 }
 
 fn hex_label(path: &Path) -> String {
@@ -336,4 +412,31 @@ fn report_stop(
         processor.msp
     );
     Ok(ExitCode::from(if reason.starts_with("fault") { 2 } else { 0 }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_demo_vectors_at_sram_base() {
+        let mut sram = vec![0u8; SRAM_SIZE];
+        sram[0..4].copy_from_slice(&(SRAM_BASE + 0x8000).to_le_bytes());
+        sram[4..8].copy_from_slice(&(SRAM_BASE + 0x101).to_le_bytes());
+        let (base, _) = locate_vector_table(&sram).unwrap();
+        assert_eq!(base, SRAM_BASE);
+    }
+
+    #[test]
+    fn finds_sdk_vectors_after_jump_table() {
+        let mut sram = vec![0u8; SRAM_SIZE];
+        let offset = 0x1838usize;
+        sram[offset..offset + 4].copy_from_slice(&0x1FFF_9000u32.to_le_bytes());
+        sram[offset + 4..offset + 8].copy_from_slice(&0x1FFF_19E1u32.to_le_bytes());
+        sram[offset + 8..offset + 12].copy_from_slice(&0x0000_8481u32.to_le_bytes());
+        sram[offset + 12..offset + 16].copy_from_slice(&0x0000_28F1u32.to_le_bytes());
+        let (base, vectors) = locate_vector_table(&sram).unwrap();
+        assert_eq!(base, SRAM_BASE + offset as u32);
+        assert_eq!(u32::from_le_bytes(vectors[4..8].try_into().unwrap()), 0x1FFF_19E1);
+    }
 }

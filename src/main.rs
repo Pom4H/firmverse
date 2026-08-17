@@ -1,5 +1,6 @@
 mod bus;
 mod cmd;
+mod discovery;
 mod emu;
 mod hex;
 mod mailbox;
@@ -25,6 +26,9 @@ struct Cli {
     /// Machine line protocol (GPIO / UART / FRAME)
     #[arg(long)]
     raw: bool,
+    /// Fault on unmodeled PHY6252 MMIO or vendor ROM accesses
+    #[arg(long = "strict", visible_alias = "strict-mmio")]
+    strict_mmio: bool,
     #[arg(long)]
     max_insns: Option<u64>,
 }
@@ -51,6 +55,7 @@ fn run_cli() -> Result<ExitCode, String> {
         hex,
         live,
         raw: cli.raw,
+        strict_mmio: cli.strict_mmio,
         max_insns,
     })
 }

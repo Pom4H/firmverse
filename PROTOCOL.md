@@ -3,10 +3,12 @@
 `phy6252 --raw` speaks UTF-8 lines. The REPL (`phy6252` with no flags) accepts the same words plus `connect`, `write hi`, `p34 on`, `adc 3.3 …`.
 
 ```text
-phy6252 [--raw] [--once] [--max-insns N] [firmware.hex]
+phy6252 [--raw] [--once] [--strict] [--max-insns N] [firmware.hex]
 ```
 
 Default image: `firmware/kit-demo.hex`, or `PHY6252_HEX`. Default is live. `--once` runs until halt or the insn cap.
+
+`--strict` turns the emulator into a silicon-discovery runner: the first unmodeled MMIO register or vendor-ROM entry faults instead of being silently accepted. `--strict-mmio` remains an alias for compatibility. Outside strict mode, unknown MMIO registers use a sparse full-address backing store and are reported on stderr.
 
 ## Stdin (host → chip)
 
@@ -32,6 +34,14 @@ P34 is bit 22 (`IN 00400000` or `p34 on`).
 | `UART <text>` | UART0/1 line. |
 | `FRAME <HEXBYTES>` | Mailbox TX. |
 | `STOP <reason>` | Exit. |
+
+Strict discovery diagnostics are written to stderr, for example:
+
+```text
+MMIO unknown read32 addr=0x4000f03c aligned=0x4000f03c -- strict fault
+ROM shim drv_irq_init entry=0x0000a9c8 behavior=noop-return
+ROM unknown read16 addr=0x0000aeac -- vendor ROM image/ABI not modeled; strict fault
+```
 
 Mailbox at `0x20000000`:
 
