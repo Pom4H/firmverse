@@ -189,7 +189,8 @@ fn begin_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
 }
 
 fn begin_async_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
-    cpu.set_r(Reg::R12, cpu.get_pc() | 1);
+    let resume = cpu.get_pc() | 1;
+    cpu.set_r(Reg::R12, resume);
     begin_event_common(cpu, bytes, stage)
 }
 
