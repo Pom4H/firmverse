@@ -12,6 +12,7 @@ const UART1_BASE: u32 = 0x4000_9000;
 const PWM_BASE: u32 = 0x4000_E000;
 const VECTOR_MIRROR_BYTES: u32 = 8;
 const THUMB_BX_LR: u16 = 0x4770;
+const AON_XTAL_16M_CTRL: u32 = 0x4000_F0BC;
 
 // Emulator-private MMIO cells used only by tiny ROM ABI thunks. Real firmware never sees
 // these addresses directly: the thunk bridges Cortex-M argument registers into DiscoveryBus
@@ -43,6 +44,7 @@ const KNOWN_STUB_REGS: &[(u32, &str)] = &[
     (0x4000_6000, "SPI0"),
     (0x4000_F000, "AON.PMCTL0"),
     (0x4000_F03C, "PCRM.CLKSEL"),
+    (AON_XTAL_16M_CTRL, "AON.XTAL_16M_CTRL"),
 ];
 
 struct RomShim {
@@ -232,6 +234,17 @@ impl DiscoveryBus {
             .find_map(|(reg, name)| (*reg == aligned).then_some(*name))
     }
 
+    fn stub_reset(addr: u32) -> u32 {
+        match addr & !3 {
+            // PHY62XX SDK 3.1.2 configures this with read-modify-write. Its documented fields
+            // are XTAL cap [4:0] and current [6:5]. We do not know silicon reserved/reset bits,
+            // so keep the observable modeled fields clean instead of inheriting the old all-ones
+            // generic fallback, which would fabricate unrelated analog configuration.
+            AON_XTAL_16M_CTRL => 0,
+            _ => 0xFFFF_FFFF,
+        }
+    }
+
     fn emu_control_read(&self, addr: u32) -> Option<u32> {
         match addr & !3 {
             EMU_SLEEP_ALLOWED => Some(u32::from(self.sleep_allowed.get())),
@@ -267,11 +280,12 @@ impl DiscoveryBus {
     }
 
     fn sparse_read(&self, addr: u32) -> u32 {
-        *self
-            .sparse_mmio
+        let aligned = addr & !3;
+        self.sparse_mmio
             .borrow()
-            .get(&(addr & !3))
-            .unwrap_or(&0xFFFF_FFFF)
+            .get(&aligned)
+            .copied()
+            .unwrap_or_else(|| Self::stub_reset(aligned))
     }
 
     fn sparse_write(&self, addr: u32, value: u32, width: u32) {
@@ -284,7 +298,10 @@ impl DiscoveryBus {
             ((1u32 << bits) - 1) << shift
         };
         let mut mmio = self.sparse_mmio.borrow_mut();
-        let current = *mmio.get(&aligned).unwrap_or(&0xFFFF_FFFF);
+        let current = mmio
+            .get(&aligned)
+            .copied()
+            .unwrap_or_else(|| Self::stub_reset(aligned));
         mmio.insert(aligned, (current & !mask) | ((value << shift) & mask));
     }
 
@@ -483,6 +500,19 @@ mod tests {
             bus.write32(addr, 0x5555).unwrap();
             assert_eq!(bus.read32(addr).unwrap(), 0x5555);
         }
+    }
+
+    #[test]
+    fn xtal16m_ctrl_has_clean_modeled_fields_and_supports_sdk_rmw() {
+        let mut bus = bus(true);
+
+        assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0);
+        let cap9 = (bus.read32(AON_XTAL_16M_CTRL).unwrap() & !0x1F) | 0x09;
+        bus.write32(AON_XTAL_16M_CTRL, cap9).unwrap();
+        let current3 = bus.read32(AON_XTAL_16M_CTRL).unwrap() | 0x60;
+        bus.write32(AON_XTAL_16M_CTRL, current3).unwrap();
+
+        assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0x69);
     }
 
     #[test]
