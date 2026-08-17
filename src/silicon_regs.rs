@@ -13,6 +13,8 @@ pub struct StorageReg {
 
 pub const AP_CACHE_CTRL0: u32 = 0x4000_C000;
 pub const AP_CACHE_CTRL1: u32 = 0x4000_C004;
+pub const PCRM_CLKHF_CTL0: u32 = 0x4000_F040;
+pub const PCRM_CLKHF_CTL1: u32 = 0x4000_F044;
 
 const STORAGE_REGS: &[StorageReg] = &[
     StorageReg {
@@ -23,6 +25,16 @@ const STORAGE_REGS: &[StorageReg] = &[
     StorageReg {
         addr: AP_CACHE_CTRL1,
         name: "CACHE.CTRL1",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_CLKHF_CTL0,
+        name: "PCRM.CLKHF_CTL0",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_CLKHF_CTL1,
+        name: "PCRM.CLKHF_CTL1",
         reset: 0,
     },
 ];
@@ -42,5 +54,12 @@ mod tests {
         assert_eq!(storage_reg(AP_CACHE_CTRL1).unwrap().reset, 0);
         assert!(storage_reg(0x4000_C008).is_none());
         assert!(storage_reg(0x4000_C800).is_none());
+    }
+
+    #[test]
+    fn high_frequency_clock_controls_are_exact() {
+        assert_eq!(storage_reg(PCRM_CLKHF_CTL0).unwrap().reset, 0);
+        assert_eq!(storage_reg(PCRM_CLKHF_CTL1).unwrap().reset, 0);
+        assert!(storage_reg(0x4000_F048).is_none());
     }
 }
