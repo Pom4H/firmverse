@@ -23,14 +23,24 @@ phy6252 --help
 phy6252 firmware/kit-demo.hex
 phy6252 --raw                  # GPIO / UART / FRAME lines
 phy6252 --once path.hex        # no REPL, stop at halt / insn cap
-phy6252 --strict-mmio path.hex # fault on the first unmodeled MMIO register
+phy6252 --strict --once path.hex # stop on the first missing silicon behavior
 ```
+
+`--strict-mmio` remains an alias for `--strict`.
 
 Install: `cargo install --path .` → `phy6252` on your PATH.
 
-## Firmware-driven peripheral discovery
+## Firmware-driven silicon discovery
 
-The emulator can now use a firmware image as a probe for missing PHY6252 behavior.
+The emulator can use a real firmware image as a probe for missing PHY6252 behavior instead of silently pretending unsupported silicon works.
+
+### Relocated vectors
+
+PHY6252 SDK images do not have to place the Cortex-M vector table at the first byte of SRAM. The emulator scans SRAM for a plausible vector table, keeps the image at its real addresses, and mirrors only the selected SP/reset pair to address zero for zmu reset.
+
+This allows images with jump/config areas before `.vectors` to reach their actual reset handler without rewriting the firmware.
+
+### MMIO discovery
 
 By default, an MMIO access that is not modeled is kept in a sparse register store keyed by the full 32-bit address and reported once on stderr:
 
@@ -40,13 +50,33 @@ MMIO unknown write32 addr=0x40012340 aligned=0x40012340 -- sparse stub
 
 This replaces the old modulo-1024 fallback, where unrelated peripheral addresses could alias the same backing cell.
 
-With `--strict-mmio`, an unknown MMIO access raises `DAccViol` instead of being silently accepted:
+With `--strict`, an unknown MMIO access raises `DAccViol` instead of being silently accepted:
 
 ```sh
-phy6252 --strict-mmio --once vendor-firmware.hex
+phy6252 --strict --once vendor-firmware.hex
 ```
 
-The intended workflow for vendor/SDK firmware is iterative: boot the real HEX, take the first reported register, model or explicitly whitelist it, then run again. Functional GPIO/UART/ADC/PWM/timer registers are delegated to the current PHY6252 model. The few inert registers touched by `kit-demo` (PCR, WDT, I2C0, SPI0 and AON base registers) are explicit stubs rather than a catch-all MMIO range.
+Functional GPIO/UART/ADC/PWM/timer registers are delegated to the current PHY6252 model. Bootstrap registers that are intentionally inert are whitelisted by exact address, not by broad peripheral range, so the next missing register remains observable.
+
+### Vendor ROM discovery
+
+The repository does not contain the PHY6252 vendor ROM. In strict mode, execution therefore stops at the first unmodeled ROM entry rather than executing an all-zero placeholder until the end of the ROM address range:
+
+```text
+ROM unknown read16 addr=0x0000abcd -- vendor ROM image/ABI not modeled; strict fault
+```
+
+Known ROM ABI functions can be replaced by explicit, named shims. Shims are deliberately narrow and log when used. For example, the current bootstrap shim for `drv_irq_init` at Thumb symbol `0x0000a9c9` returns immediately (`BX LR`) while IRQ delivery itself is not yet modeled. This is an explicit emulator limitation, not an emulation claim.
+
+The intended workflow is iterative:
+
+1. boot the real HEX with `--strict`;
+2. stop at the first unknown MMIO register or ROM entry;
+3. identify it from the SDK/link map;
+4. model the required behavior or add a narrowly documented shim;
+5. run the same firmware again and repeat.
+
+That turns the firmware itself into an executable checklist for the missing PHY6252 model.
 
 ## Demo firmware
 
