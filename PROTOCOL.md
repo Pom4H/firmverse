@@ -3,10 +3,10 @@
 `phy6252 --raw` speaks UTF-8 lines. The REPL (`phy6252` with no flags) accepts the same words plus `connect`, `write hi`, `p34 on`, `adc 3.3 …`.
 
 ```text
-phy6252 [--raw] [--once] [--max-insns N] [firmware.hex]
+phy6252 [--raw] [--once] [--strict-mmio] [--max-insns N] [firmware.hex]
 ```
 
-Default image: `firmware/kit-demo.hex`, or `PHY6252_HEX`. Default is live. `--once` runs until halt or the insn cap.
+Default image: `firmware/kit-demo.hex`, or `PHY6252_HEX`. Default is live. `--once` runs until halt or the insn cap. `--strict-mmio` faults on the first MMIO register that is neither modeled nor an explicit stub; without it, unknown registers use a sparse full-address backing store and are reported on stderr.
 
 ## Stdin (host → chip)
 

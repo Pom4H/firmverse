@@ -19,11 +19,11 @@ jobs:
         run: make -C firmware
       - name: Cargo test
         run: cargo test
-      - name: Live smoke
+      - name: Strict MMIO live smoke
         run: |
           cargo build --quiet
           printf 'ADC 3300 1650 2500 3300\nIN 00400000\nCONNECT\nCCCD 1\nWRITE 4849\n' \
-            | timeout 3 ./target/debug/phy6252 --raw firmware/kit-demo.hex \
+            | timeout 3 ./target/debug/phy6252 --strict-mmio --raw firmware/kit-demo.hex \
             | tee /tmp/emu.log || true
           grep -q READY /tmp/emu.log
           grep -q 'UART kit-demo boot' /tmp/emu.log

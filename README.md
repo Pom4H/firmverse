@@ -23,9 +23,30 @@ phy6252 --help
 phy6252 firmware/kit-demo.hex
 phy6252 --raw                  # GPIO / UART / FRAME lines
 phy6252 --once path.hex        # no REPL, stop at halt / insn cap
+phy6252 --strict-mmio path.hex # fault on the first unmodeled MMIO register
 ```
 
 Install: `cargo install --path .` → `phy6252` on your PATH.
+
+## Firmware-driven peripheral discovery
+
+The emulator can now use a firmware image as a probe for missing PHY6252 behavior.
+
+By default, an MMIO access that is not modeled is kept in a sparse register store keyed by the full 32-bit address and reported once on stderr:
+
+```text
+MMIO unknown write32 addr=0x40012340 aligned=0x40012340 -- sparse stub
+```
+
+This replaces the old modulo-1024 fallback, where unrelated peripheral addresses could alias the same backing cell.
+
+With `--strict-mmio`, an unknown MMIO access raises `DAccViol` instead of being silently accepted:
+
+```sh
+phy6252 --strict-mmio --once vendor-firmware.hex
+```
+
+The intended workflow for vendor/SDK firmware is iterative: boot the real HEX, take the first reported register, model or explicitly whitelist it, then run again. Functional GPIO/UART/ADC/PWM/timer registers are delegated to the current PHY6252 model. The few inert registers touched by `kit-demo` (PCR, WDT, I2C0, SPI0 and AON base registers) are explicit stubs rather than a catch-all MMIO range.
 
 ## Demo firmware
 

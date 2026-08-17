@@ -3,6 +3,7 @@ use crate::bus::{
     XIP_SIZE,
 };
 use crate::cmd::{gpio_silk, ChipCmd, HELP};
+use crate::discovery::DiscoveryBus;
 use crate::hex::HexImage;
 use crate::mailbox;
 use std::cell::RefCell;
@@ -25,6 +26,7 @@ pub struct RunOpts {
     pub hex: PathBuf,
     pub live: bool,
     pub raw: bool,
+    pub strict_mmio: bool,
     pub max_insns: u64,
 }
 
@@ -49,6 +51,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let hex_path = opts.hex;
     let live = opts.live;
     let raw = opts.raw;
+    let strict_mmio = opts.strict_mmio;
     let max_insns = opts.max_insns;
 
     let image = HexImage::load(&hex_path).map_err(|e| format!("{}: {e}", hex_path.display()))?;
@@ -65,10 +68,14 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let pwm_changed = Rc::clone(&device.pwm_changed);
     let adc_mv = Rc::clone(&device.adc_mv);
     let vectors = device.vector_table();
+    let device = DiscoveryBus::new(device, strict_mmio);
     let sp = u32::from_le_bytes([vectors[0], vectors[1], vectors[2], vectors[3]]);
     let reset = u32::from_le_bytes([vectors[4], vectors[5], vectors[6], vectors[7]]);
     eprintln!("hex {}", hex_path.display());
     eprintln!("SP={sp:#010x} Reset={reset:#010x}");
+    if strict_mmio {
+        eprintln!("MMIO discovery: strict");
+    }
 
     let ext_in = Arc::new(AtomicU32::new(0));
     let cmd_rx = if live {
