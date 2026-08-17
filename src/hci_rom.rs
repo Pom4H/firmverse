@@ -6,8 +6,9 @@ const ROM_HCI_GAP_TASK_REGISTER: u32 = 0x0000_175C;
 const ROM_HCI_INIT: u32 = 0x0000_183C;
 const ROM_HCI_L2CAP_TASK_REGISTER: u32 = 0x0000_1878;
 const ROM_HCI_SMP_TASK_REGISTER: u32 = 0x0000_26C8;
-const ROM_HCI_READ_BDADDR_CMD: u32 = 0x0000_2550;
 const ROM_HCI_LE_READ_BUF_SIZE_CMD: u32 = 0x0000_1C28;
+const ROM_HCI_LE_SET_ADV_DATA_CMD: u32 = 0x0000_1F4C;
+const ROM_HCI_READ_BDADDR_CMD: u32 = 0x0000_2550;
 const ROM_OSAL_MSG_ALLOC: u32 = 0x0001_4D1C;
 const ROM_OSAL_MSG_SEND: u32 = 0x0001_4F58;
 
@@ -20,16 +21,20 @@ const HCI_SMP_TASK_ID: u32 = 0x1FFF_0910;
 // With LR=0xC3 it executes one harmless self-loop, giving the emulator another
 // host-dispatch tick without touching strict MMIO or inventing executable RAM.
 const CONT_TRAP: u32 = 0x0000_00C2;
+const CONT_MAGIC: u32 = 0x4843_4921; // "HCI!"
 const STAGE_BDADDR_ALLOC: u32 = 1;
 const STAGE_BUF_SIZE_ALLOC: u32 = 2;
 const STAGE_SEND_DONE: u32 = 3;
+const STAGE_STATUS_FLAG: u32 = 0x8000_0000;
 
 const HCI_GAP_EVENT_EVENT: u8 = 0x91;
 const HCI_COMMAND_COMPLETE_EVENT_CODE: u8 = 0x0E;
 const HCI_SUCCESS: u32 = 0;
 const HCI_ERROR_MEM_CAP_EXCEEDED: u32 = 0x07;
+const HCI_ERROR_INVALID_PARAMS: u32 = 0x12;
 const OPCODE_READ_BDADDR: u16 = 0x1009;
 const OPCODE_LE_READ_BUF_SIZE: u16 = 0x2002;
+const OPCODE_LE_SET_ADV_DATA: u16 = 0x2008;
 const CMD_COMPLETE_BYTES: u32 = 12;
 
 pub fn handle(cpu: &mut Processor) -> bool {
@@ -40,16 +45,23 @@ pub fn handle(cpu: &mut Processor) -> bool {
         ROM_HCI_SMP_TASK_REGISTER => register(cpu, HCI_SMP_TASK_ID, "SMP"),
         ROM_HCI_READ_BDADDR_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 7, STAGE_BDADDR_ALLOC),
         ROM_HCI_LE_READ_BUF_SIZE_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 6, STAGE_BUF_SIZE_ALLOC),
-        CONT_TRAP => match cpu.get_r(Reg::R3) {
-            STAGE_BDADDR_ALLOC => finish_bdaddr_alloc(cpu),
-            STAGE_BUF_SIZE_ALLOC => finish_buf_size_alloc(cpu),
-            STAGE_SEND_DONE => finish_send(cpu),
-            stage => {
-                eprintln!("BLE strict unknown HCI continuation stage={stage}");
-                false
-            }
-        },
+        ROM_HCI_LE_SET_ADV_DATA_CMD => set_adv_data(cpu),
+        CONT_TRAP if cpu.get_r(Reg::R2) == CONT_MAGIC => continue_event(cpu),
         _ => false,
+    }
+}
+
+fn continue_event(cpu: &mut Processor) -> bool {
+    let stage = cpu.get_r(Reg::R3);
+    match stage {
+        STAGE_BDADDR_ALLOC => finish_bdaddr_alloc(cpu),
+        STAGE_BUF_SIZE_ALLOC => finish_buf_size_alloc(cpu),
+        STAGE_SEND_DONE => finish_send(cpu),
+        _ if stage & STAGE_STATUS_FLAG != 0 => finish_status_alloc(cpu, (stage & 0xFFFF) as u16),
+        _ => {
+            eprintln!("BLE strict unknown HCI continuation stage={stage}");
+            false
+        }
     }
 }
 
@@ -63,10 +75,28 @@ fn register(cpu: &mut Processor, slot: u32, name: &str) -> bool {
     true
 }
 
+fn set_adv_data(cpu: &mut Processor) -> bool {
+    let len = cpu.get_r(Reg::R0) as u8;
+    let ptr = cpu.get_r(Reg::R1);
+    if len > 31 || (len != 0 && ptr == 0) {
+        cpu.set_r(Reg::R0, HCI_ERROR_INVALID_PARAMS);
+        ret(cpu);
+        return true;
+    }
+    eprintln!("BLE HCI LE_SetAdvData len={len}");
+    begin_status_event(cpu, OPCODE_LE_SET_ADV_DATA)
+}
+
+fn begin_status_event(cpu: &mut Processor, opcode: u16) -> bool {
+    begin_event(cpu, CMD_COMPLETE_BYTES + 1, STAGE_STATUS_FLAG | u32::from(opcode))
+}
+
 fn begin_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
-    // R12 and R3 are caller-saved under AAPCS. Host OSAL shims deliberately leave them
-    // untouched, so they carry the original return address and continuation stage.
+    // R12, R3 and R2 are caller-saved under AAPCS. Host OSAL shims deliberately leave
+    // R12/R3 untouched, while msg_allocate/send only consume R0/R1. R2 carries a magic
+    // tag so the shared 0xC2 BX LR address remains invisible to unrelated ROM thunks.
     cpu.set_r(Reg::R12, cpu.get_r(Reg::LR));
+    cpu.set_r(Reg::R2, CONT_MAGIC);
     cpu.set_r(Reg::R3, stage);
     cpu.set_r(Reg::R0, bytes);
     cpu.set_r(Reg::LR, CONT_TRAP | 1);
@@ -96,6 +126,7 @@ fn route_to_gap(cpu: &mut Processor, msg: u32) -> bool {
             return true;
         }
     };
+    cpu.set_r(Reg::R2, CONT_MAGIC);
     cpu.set_r(Reg::R3, STAGE_SEND_DONE);
     cpu.set_r(Reg::R0, u32::from(task));
     cpu.set_r(Reg::R1, msg);
@@ -149,6 +180,21 @@ fn finish_buf_size_alloc(cpu: &mut Processor) -> bool {
     route_to_gap(cpu, msg)
 }
 
+fn finish_status_alloc(cpu: &mut Processor, opcode: u16) -> bool {
+    let msg = cpu.get_r(Reg::R0);
+    if msg == 0 {
+        return finish_failed_alloc(cpu);
+    }
+    if !write_common(cpu, msg, opcode, 1) {
+        return false;
+    }
+    if cpu.write8(msg + CMD_COMPLETE_BYTES, HCI_SUCCESS as u8).is_err() {
+        return false;
+    }
+    eprintln!("BLE HCI CommandComplete opcode={opcode:#06x} status=0");
+    route_to_gap(cpu, msg)
+}
+
 fn finish_failed_alloc(cpu: &mut Processor) -> bool {
     cpu.set_r(Reg::R0, HCI_ERROR_MEM_CAP_EXCEEDED);
     cpu.set_pc(cpu.get_r(Reg::R12) & !1);
@@ -158,6 +204,8 @@ fn finish_failed_alloc(cpu: &mut Processor) -> bool {
 fn finish_send(cpu: &mut Processor) -> bool {
     let send_status = cpu.get_r(Reg::R0);
     cpu.set_r(Reg::R0, if send_status == 0 { HCI_SUCCESS } else { send_status });
+    cpu.set_r(Reg::R2, 0);
+    cpu.set_r(Reg::R3, 0);
     cpu.set_pc(cpu.get_r(Reg::R12) & !1);
     true
 }
@@ -174,6 +222,7 @@ mod tests {
     fn standard_startup_opcodes_are_correct() {
         assert_eq!(OPCODE_READ_BDADDR, 0x1009);
         assert_eq!(OPCODE_LE_READ_BUF_SIZE, 0x2002);
+        assert_eq!(OPCODE_LE_SET_ADV_DATA, 0x2008);
     }
 
     #[test]
@@ -184,5 +233,6 @@ mod tests {
     #[test]
     fn continuation_trap_is_existing_boot_flash_bx_lr() {
         assert_eq!(CONT_TRAP, 0xC2);
+        assert_eq!(CONT_MAGIC, 0x4843_4921);
     }
 }
