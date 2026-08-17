@@ -8,6 +8,7 @@ const ROM_HCI_L2CAP_TASK_REGISTER: u32 = 0x0000_1878;
 const ROM_HCI_SMP_TASK_REGISTER: u32 = 0x0000_26C8;
 const ROM_HCI_LE_READ_BUF_SIZE_CMD: u32 = 0x0000_1C28;
 const ROM_HCI_LE_SET_ADV_DATA_CMD: u32 = 0x0000_1F4C;
+const ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD: u32 = 0x0000_2254;
 const ROM_HCI_READ_BDADDR_CMD: u32 = 0x0000_2550;
 const ROM_OSAL_MSG_ALLOC: u32 = 0x0001_4D1C;
 const ROM_OSAL_MSG_SEND: u32 = 0x0001_4F58;
@@ -17,11 +18,8 @@ const HCI_GAP_TASK_ID: u32 = 0x1FFF_090E;
 const HCI_L2CAP_TASK_ID: u32 = 0x1FFF_090F;
 const HCI_SMP_TASK_ID: u32 = 0x1FFF_0910;
 
-// 0xC2 is the existing BX LR halfword in the boot-flash drv_disable_irq thunk.
-// With LR=0xC3 it executes one harmless self-loop, giving the emulator another
-// host-dispatch tick without touching strict MMIO or inventing executable RAM.
 const CONT_TRAP: u32 = 0x0000_00C2;
-const CONT_MAGIC: u32 = 0x4843_4921; // "HCI!"
+const CONT_MAGIC: u32 = 0x4843_4921;
 const STAGE_BDADDR_ALLOC: u32 = 1;
 const STAGE_BUF_SIZE_ALLOC: u32 = 2;
 const STAGE_SEND_DONE: u32 = 3;
@@ -35,6 +33,7 @@ const HCI_ERROR_INVALID_PARAMS: u32 = 0x12;
 const OPCODE_READ_BDADDR: u16 = 0x1009;
 const OPCODE_LE_READ_BUF_SIZE: u16 = 0x2002;
 const OPCODE_LE_SET_ADV_DATA: u16 = 0x2008;
+const OPCODE_LE_SET_SCAN_RSP_DATA: u16 = 0x2009;
 const CMD_COMPLETE_BYTES: u32 = 12;
 
 pub fn handle(cpu: &mut Processor) -> bool {
@@ -45,7 +44,8 @@ pub fn handle(cpu: &mut Processor) -> bool {
         ROM_HCI_SMP_TASK_REGISTER => register(cpu, HCI_SMP_TASK_ID, "SMP"),
         ROM_HCI_READ_BDADDR_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 7, STAGE_BDADDR_ALLOC),
         ROM_HCI_LE_READ_BUF_SIZE_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 6, STAGE_BUF_SIZE_ALLOC),
-        ROM_HCI_LE_SET_ADV_DATA_CMD => set_adv_data(cpu),
+        ROM_HCI_LE_SET_ADV_DATA_CMD => set_payload_data(cpu, OPCODE_LE_SET_ADV_DATA, "AdvData"),
+        ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD => set_payload_data(cpu, OPCODE_LE_SET_SCAN_RSP_DATA, "ScanRspData"),
         CONT_TRAP if cpu.get_r(Reg::R2) == CONT_MAGIC => continue_event(cpu),
         _ => false,
     }
@@ -67,15 +67,13 @@ fn continue_event(cpu: &mut Processor) -> bool {
 
 fn register(cpu: &mut Processor, slot: u32, name: &str) -> bool {
     let task = cpu.get_r(Reg::R0) as u8;
-    if cpu.write8(slot, task).is_err() {
-        return false;
-    }
+    if cpu.write8(slot, task).is_err() { return false; }
     eprintln!("BLE HCI ROM register {name} task={task}");
     ret(cpu);
     true
 }
 
-fn set_adv_data(cpu: &mut Processor) -> bool {
+fn set_payload_data(cpu: &mut Processor, opcode: u16, label: &str) -> bool {
     let len = cpu.get_r(Reg::R0) as u8;
     let ptr = cpu.get_r(Reg::R1);
     if len > 31 || (len != 0 && ptr == 0) {
@@ -83,8 +81,8 @@ fn set_adv_data(cpu: &mut Processor) -> bool {
         ret(cpu);
         return true;
     }
-    eprintln!("BLE HCI LE_SetAdvData len={len}");
-    begin_status_event(cpu, OPCODE_LE_SET_ADV_DATA)
+    eprintln!("BLE HCI LE_Set{label} len={len}");
+    begin_status_event(cpu, opcode)
 }
 
 fn begin_status_event(cpu: &mut Processor, opcode: u16) -> bool {
@@ -92,17 +90,12 @@ fn begin_status_event(cpu: &mut Processor, opcode: u16) -> bool {
 }
 
 fn begin_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
-    // R12, R3 and R2 are caller-saved under AAPCS. Host OSAL shims deliberately leave
-    // R12/R3 untouched, while msg_allocate/send only consume R0/R1. R2 carries a magic
-    // tag so the shared 0xC2 BX LR address remains invisible to unrelated ROM thunks.
     cpu.set_r(Reg::R12, cpu.get_r(Reg::LR));
     cpu.set_r(Reg::R2, CONT_MAGIC);
     cpu.set_r(Reg::R3, stage);
     cpu.set_r(Reg::R0, bytes);
     cpu.set_r(Reg::LR, CONT_TRAP | 1);
     cpu.set_pc(ROM_OSAL_MSG_ALLOC);
-    // Return false intentionally: HostOsal::handle sees the rewritten PC in the same
-    // dispatch call and executes msg_allocate before Cortex-M fetches vendor ROM.
     false
 }
 
@@ -132,28 +125,18 @@ fn route_to_gap(cpu: &mut Processor, msg: u32) -> bool {
     cpu.set_r(Reg::R1, msg);
     cpu.set_r(Reg::LR, CONT_TRAP | 1);
     cpu.set_pc(ROM_OSAL_MSG_SEND);
-    // Same handoff rule as begin_event: let HostOsal consume msg_send immediately.
     false
 }
 
 fn finish_bdaddr_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 {
-        return finish_failed_alloc(cpu);
-    }
-    if !write_common(cpu, msg, OPCODE_READ_BDADDR, 7) {
-        return false;
-    }
+    if msg == 0 { return finish_failed_alloc(cpu); }
+    if !write_common(cpu, msg, OPCODE_READ_BDADDR, 7) { return false; }
     let ret_ptr = msg + CMD_COMPLETE_BYTES;
-    // Stable, emulator-local public address. HCI transmits BDADDR least-significant octet first.
     let addr = [0x01u8, 0x00, 0x00, 0x25, 0x62, 0x52];
-    if cpu.write8(ret_ptr, 0).is_err() {
-        return false;
-    }
+    if cpu.write8(ret_ptr, 0).is_err() { return false; }
     for (i, byte) in addr.into_iter().enumerate() {
-        if cpu.write8(ret_ptr + 1 + i as u32, byte).is_err() {
-            return false;
-        }
+        if cpu.write8(ret_ptr + 1 + i as u32, byte).is_err() { return false; }
     }
     eprintln!("BLE HCI ReadBDADDR -> 52:62:25:00:00:01");
     route_to_gap(cpu, msg)
@@ -161,36 +144,24 @@ fn finish_bdaddr_alloc(cpu: &mut Processor) -> bool {
 
 fn finish_buf_size_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 {
-        return finish_failed_alloc(cpu);
-    }
-    if !write_common(cpu, msg, OPCODE_LE_READ_BUF_SIZE, 6) {
-        return false;
-    }
+    if msg == 0 { return finish_failed_alloc(cpu); }
+    if !write_common(cpu, msg, OPCODE_LE_READ_BUF_SIZE, 6) { return false; }
     let ret_ptr = msg + CMD_COMPLETE_BYTES;
     if cpu.write8(ret_ptr, 0).is_err()
         || cpu.write8(ret_ptr + 1, 0).is_err()
         || cpu.write16(ret_ptr + 2, 251).is_err()
         || cpu.write8(ret_ptr + 4, 12).is_err()
         || cpu.write8(ret_ptr + 5, 0).is_err()
-    {
-        return false;
-    }
+    { return false; }
     eprintln!("BLE HCI LE_ReadBufSize len=251 packets=12");
     route_to_gap(cpu, msg)
 }
 
 fn finish_status_alloc(cpu: &mut Processor, opcode: u16) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 {
-        return finish_failed_alloc(cpu);
-    }
-    if !write_common(cpu, msg, opcode, 1) {
-        return false;
-    }
-    if cpu.write8(msg + CMD_COMPLETE_BYTES, HCI_SUCCESS as u8).is_err() {
-        return false;
-    }
+    if msg == 0 { return finish_failed_alloc(cpu); }
+    if !write_common(cpu, msg, opcode, 1) { return false; }
+    if cpu.write8(msg + CMD_COMPLETE_BYTES, HCI_SUCCESS as u8).is_err() { return false; }
     eprintln!("BLE HCI CommandComplete opcode={opcode:#06x} status=0");
     route_to_gap(cpu, msg)
 }
@@ -210,9 +181,7 @@ fn finish_send(cpu: &mut Processor) -> bool {
     true
 }
 
-fn ret(cpu: &mut Processor) {
-    cpu.set_pc(cpu.get_r(Reg::LR) & !1);
-}
+fn ret(cpu: &mut Processor) { cpu.set_pc(cpu.get_r(Reg::LR) & !1); }
 
 #[cfg(test)]
 mod tests {
@@ -223,12 +192,11 @@ mod tests {
         assert_eq!(OPCODE_READ_BDADDR, 0x1009);
         assert_eq!(OPCODE_LE_READ_BUF_SIZE, 0x2002);
         assert_eq!(OPCODE_LE_SET_ADV_DATA, 0x2008);
+        assert_eq!(OPCODE_LE_SET_SCAN_RSP_DATA, 0x2009);
     }
 
     #[test]
-    fn command_complete_layout_is_arm32_compatible() {
-        assert_eq!(CMD_COMPLETE_BYTES, 12);
-    }
+    fn command_complete_layout_is_arm32_compatible() { assert_eq!(CMD_COMPLETE_BYTES, 12); }
 
     #[test]
     fn continuation_trap_is_existing_boot_flash_bx_lr() {
