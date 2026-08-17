@@ -1,4 +1,5 @@
 mod aes;
+mod arm_abi;
 mod ble_host;
 mod ble_rom;
 mod bus;
