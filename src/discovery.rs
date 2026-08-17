@@ -1,6 +1,6 @@
 use crate::aes::aes128_encrypt_block;
 use crate::bus::{
-    Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS, ROM_END,
+    Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS, ROM_END, XIP_BASE,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -19,12 +19,20 @@ const PCRM_EFUSE_CFG: u32 = 0x4000_F054;
 const PCRM_EFUSE_PROG0: u32 = 0x4000_F140;
 const PCRM_EFUSE_PROG1: u32 = 0x4000_F144;
 
+const SECURE_KEY_TAIL: u32 = 0x1100_2908;
+const SECURE_PLAINTEXT: u32 = 0x1100_2910;
+const SECURE_EXPECTED: u32 = 0x1100_2920;
+const FINIDV_STATUS: u32 = 0x1FFF_6128;
+const FINIDV_SECONDARY: u32 = 0x1FFF_86A0;
+
 const EMU_SLEEP_ALLOWED: u32 = 0x5000_FF00;
 const EMU_SLEEP_MODE: u32 = 0x5000_FF04;
 const EMU_AES_KEY_PTR: u32 = 0x5000_FF10;
 const EMU_AES_PLAINTEXT_PTR: u32 = 0x5000_FF14;
 const EMU_AES_CIPHERTEXT_PTR: u32 = 0x5000_FF18;
 const EMU_AES_TRIGGER: u32 = 0x5000_FF1C;
+const EMU_FINIDV_TRIGGER: u32 = 0x5000_FF20;
+const EMU_FINIDV_RESULT: u32 = 0x5000_FF24;
 
 const TIM_CURRENT: [u32; 6] = [
     0x4000_1004,
@@ -87,6 +95,14 @@ const OSAL_MEMCMP_CODE: &[u8] = &[
     0x70, 0x47,
 ];
 
+// Private ROM helper reached by _rom_sec_boot_init after the version check. The SDK source
+// names this call finidv(); the public linker symbol table does not export the 0xA2E1 name.
+// The thunk asks the host model to run the same eFuse/AES/compare contract and returns its result.
+const FINIDV_CODE: &[u8] = &[
+    0x02, 0x4B, 0x01, 0x20, 0x18, 0x60, 0x58, 0x68,
+    0x70, 0x47, 0x00, 0xBF, 0x20, 0xFF, 0x00, 0x50,
+];
+
 const ENABLE_SLEEP_CODE: &[u8] = &[
     0x01, 0x20, 0x01, 0x49, 0x08, 0x60, 0x70, 0x47, 0x00, 0xFF, 0x00, 0x50,
 ];
@@ -105,6 +121,12 @@ const ROM_SHIMS: &[RomShim] = &[
         name: "LL_ENC_AES128_Encrypt0",
         behavior: "host-aes128-key-plaintext-ciphertext",
         code: AES128_ENCRYPT0_CODE,
+    },
+    RomShim {
+        entry: 0x0000_A2E0,
+        name: "finidv",
+        behavior: "secure-id-efuse-aes-compare",
+        code: FINIDV_CODE,
     },
     RomShim {
         entry: 0x0000_A9C8,
@@ -156,10 +178,12 @@ pub struct DiscoveryBus {
     aes_key_ptr: Cell<u32>,
     aes_plaintext_ptr: Cell<u32>,
     aes_ciphertext_ptr: Cell<u32>,
+    finidv_result: Cell<u32>,
 }
 
 impl DiscoveryBus {
-    pub fn new(inner: Phy6252Bus, strict: bool) -> Self {
+    pub fn new(mut inner: Phy6252Bus, strict: bool) -> Self {
+        Self::seed_development_secure_profile(&mut inner);
         Self {
             inner,
             strict,
@@ -172,7 +196,24 @@ impl DiscoveryBus {
             aes_key_ptr: Cell::new(0),
             aes_plaintext_ptr: Cell::new(0),
             aes_ciphertext_ptr: Cell::new(0),
+            finidv_result: Cell::new(0),
         }
+    }
+
+    fn seed_development_secure_profile(inner: &mut Phy6252Bus) {
+        let start = (SECURE_KEY_TAIL - XIP_BASE) as usize;
+        let end = (SECURE_EXPECTED + 16 - XIP_BASE) as usize;
+        if end > inner.xip.len() || !inner.xip[start..end].iter().all(|byte| *byte == 0) {
+            return;
+        }
+
+        // Development identity: blank eFuse bank + zero key tail + zero plaintext. Instead of
+        // bypassing secure boot, populate the expected ciphertext so the real firmware check
+        // succeeds cryptographically. A firmware image that supplies this region is never changed.
+        let expected = aes128_encrypt_block([0; 16], [0; 16]);
+        let expected_off = (SECURE_EXPECTED - XIP_BASE) as usize;
+        inner.xip[expected_off..expected_off + 16].copy_from_slice(&expected);
+        eprintln!("SEC factory_profile=development deterministic-aes128");
     }
 
     pub fn sleep_allowed(&self) -> bool {
@@ -303,6 +344,35 @@ impl DiscoveryBus {
         Ok(())
     }
 
+    fn run_finidv(&mut self) -> Result<u32, Fault> {
+        if self.inner.read8(FINIDV_STATUS)? == 1 {
+            eprintln!("SEC finidv=pass cached=true");
+            return Ok(1);
+        }
+
+        // efuse_read(1) is currently modeled as a deterministic blank 8-byte bank. Combine it
+        // with the fixed flash tail exactly as the SDK finidv implementation does.
+        let mut key = [0u8; 16];
+        for i in 0..8 {
+            key[8 + i] = self.inner.read8(SECURE_KEY_TAIL + i as u32)?;
+        }
+        let plaintext = self.guest_read_block(SECURE_PLAINTEXT)?;
+        let expected = self.guest_read_block(SECURE_EXPECTED)?;
+        let actual = aes128_encrypt_block(key, plaintext);
+
+        if actual != expected {
+            self.inner.write8(FINIDV_STATUS, 0xFF)?;
+            eprintln!("SEC finidv=fail reason=aes-mismatch");
+            return Ok(0);
+        }
+
+        self.inner.write8(FINIDV_STATUS, 1)?;
+        let secondary = aes128_encrypt_block(key, expected);
+        self.guest_write_block(FINIDV_SECONDARY, &secondary)?;
+        eprintln!("SEC finidv=pass cached=false");
+        Ok(1)
+    }
+
     fn emu_control_read(&self, addr: u32) -> Option<u32> {
         match addr & !3 {
             EMU_SLEEP_ALLOWED => Some(u32::from(self.sleep_allowed.get())),
@@ -311,6 +381,8 @@ impl DiscoveryBus {
             EMU_AES_PLAINTEXT_PTR => Some(self.aes_plaintext_ptr.get()),
             EMU_AES_CIPHERTEXT_PTR => Some(self.aes_ciphertext_ptr.get()),
             EMU_AES_TRIGGER => Some(0),
+            EMU_FINIDV_TRIGGER => Some(0),
+            EMU_FINIDV_RESULT => Some(self.finidv_result.get()),
             _ => None,
         }
     }
@@ -352,6 +424,13 @@ impl DiscoveryBus {
             EMU_AES_TRIGGER => {
                 if value != 0 {
                     self.run_guest_aes128()?;
+                }
+                Ok(true)
+            }
+            EMU_FINIDV_TRIGGER => {
+                if value != 0 {
+                    let result = self.run_finidv()?;
+                    self.finidv_result.set(result);
                 }
                 Ok(true)
             }
@@ -605,6 +684,28 @@ mod tests {
             assert_eq!(bus.read32(addr).unwrap(), 0x55AA_1234);
             bus.write32(addr, 0).unwrap();
         }
+    }
+
+    #[test]
+    fn development_secure_profile_passes_the_real_finidv_contract() {
+        let mut bus = bus(true);
+        let expected = aes128_encrypt_block([0; 16], [0; 16]);
+        assert_eq!(bus.guest_read_block(SECURE_EXPECTED).unwrap(), expected);
+        assert_eq!(bus.run_finidv().unwrap(), 1);
+        assert_eq!(bus.inner.read8(FINIDV_STATUS).unwrap(), 1);
+        let secondary = aes128_encrypt_block([0; 16], expected);
+        assert_eq!(bus.guest_read_block(FINIDV_SECONDARY).unwrap(), secondary);
+    }
+
+    #[test]
+    fn finidv_rom_thunk_triggers_host_secure_check_and_returns_result() {
+        let mut bus = bus(true);
+        assert_eq!(bus.read16(0x0000_A2E0).unwrap(), 0x4B02);
+        assert_eq!(bus.read16(0x0000_A2E2).unwrap(), 0x2001);
+        assert_eq!(bus.read16(0x0000_A2E4).unwrap(), 0x6018);
+        assert_eq!(bus.read16(0x0000_A2E6).unwrap(), 0x6858);
+        assert_eq!(bus.read16(0x0000_A2E8).unwrap(), THUMB_BX_LR);
+        assert_eq!(bus.read32(0x0000_A2EC).unwrap(), EMU_FINIDV_TRIGGER);
     }
 
     #[test]
