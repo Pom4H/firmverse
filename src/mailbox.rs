@@ -59,6 +59,10 @@ pub fn cccd(processor: &mut Processor, enable: bool) -> Result<(), Fault> {
     write_u32(processor, STATUS, status)
 }
 
+pub fn status(processor: &mut Processor) -> Result<u32, Fault> {
+    read_u32(processor, STATUS)
+}
+
 pub fn write_rx(processor: &mut Processor, payload: &[u8]) -> Result<(), Fault> {
     let n = payload.len().min(PAYLOAD);
     write_u32(processor, RX_LEN, n as u32)?;
@@ -67,6 +71,16 @@ pub fn write_rx(processor: &mut Processor, payload: &[u8]) -> Result<(), Fault> 
     }
     let seq = read_u32(processor, RX_SEQ)?.wrapping_add(1);
     write_u32(processor, RX_SEQ, seq)
+}
+
+pub fn emit_tx(processor: &mut Processor, payload: &[u8]) -> Result<(), Fault> {
+    let n = payload.len().min(PAYLOAD);
+    write_u32(processor, TX_LEN, n as u32)?;
+    for (i, byte) in payload.iter().take(n).enumerate() {
+        processor.write8(BASE + TX_BYTES + i as u32, *byte)?;
+    }
+    let seq = read_u32(processor, TX_SEQ)?.wrapping_add(1);
+    write_u32(processor, TX_SEQ, seq)
 }
 
 pub fn take_tx(processor: &mut Processor, last_seq: &mut u32) -> Result<Option<Vec<u8>>, Fault> {
