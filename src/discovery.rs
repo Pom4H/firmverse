@@ -459,14 +459,19 @@ impl DiscoveryBus {
         [UART0_BASE, UART1_BASE].iter().any(|base| {
             matches!(
                 aligned.wrapping_sub(*base),
-                0x08 | 0x14 | 0x7C | 0x80 | 0x84
+                0x00 | 0x04 | 0x08 | 0x0C | 0x10 | 0x14 | 0x1C | 0x7C | 0x80 | 0x84
             )
         })
     }
 
     fn uart_write_known(addr: u32) -> bool {
         let aligned = addr & !3;
-        aligned == UART0_BASE || aligned == UART1_BASE
+        [UART0_BASE, UART1_BASE].iter().any(|base| {
+            matches!(
+                aligned.wrapping_sub(*base),
+                0x00 | 0x04 | 0x08 | 0x0C | 0x10 | 0x1C
+            )
+        })
     }
 
     fn adc_read_known(addr: u32) -> bool {

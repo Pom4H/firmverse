@@ -29,7 +29,12 @@ pub const ADC_CH_COUNT: usize = 9;
 const PWM_BASE: u32 = 0x4000_E000;
 pub const PWM_CHANNELS: usize = 6;
 const TIM_CURRENT: [u32; 6] = [
-    0x4000_1004, 0x4000_1018, 0x4000_102C, 0x4000_1040, 0x4000_1054, 0x4000_1068,
+    0x4000_1004,
+    0x4000_1018,
+    0x4000_102C,
+    0x4000_1040,
+    0x4000_1054,
+    0x4000_1068,
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -40,6 +45,17 @@ pub struct GpioBank {
     pub ext: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct UartRegs {
+    dll: u8,
+    dlm: u8,
+    ier: u32,
+    fcr: u8,
+    lcr: u8,
+    mcr: u32,
+    scr: u8,
+}
+
 pub struct Phy6252Bus {
     pub sram: Vec<u8>,
     pub host_ram: Rc<RefCell<Vec<u8>>>,
@@ -48,6 +64,7 @@ pub struct Phy6252Bus {
     pub gpio: Rc<RefCell<GpioBank>>,
     pub gpio_changed: Rc<RefCell<bool>>,
     pub uart_rx: Rc<RefCell<Vec<u8>>>,
+    uart_regs: Rc<RefCell<[UartRegs; 2]>>,
     pub pwm: Rc<RefCell<[u32; PWM_CHANNELS]>>,
     pub pwm_changed: Rc<RefCell<bool>>,
     pub adc_mv: Rc<RefCell<[u16; ADC_CH_COUNT]>>,
@@ -69,6 +86,7 @@ impl Phy6252Bus {
             gpio: Rc::new(RefCell::new(GpioBank::default())),
             gpio_changed: Rc::new(RefCell::new(false)),
             uart_rx: Rc::new(RefCell::new(Vec::new())),
+            uart_regs: Rc::new(RefCell::new([UartRegs::default(); 2])),
             pwm: Rc::new(RefCell::new([0; PWM_CHANNELS])),
             pwm_changed: Rc::new(RefCell::new(false)),
             adc_mv: Rc::new(RefCell::new(adc)),
@@ -177,16 +195,71 @@ impl Phy6252Bus {
         true
     }
 
-    fn uart_write(&self, addr: u32, value: u8) -> bool {
-        let base = if addr >= UART0_BASE && addr < UART0_BASE + UART_WINDOW {
-            UART0_BASE
+    fn uart_port(addr: u32) -> Option<(usize, u32)> {
+        if addr >= UART0_BASE && addr < UART0_BASE + UART_WINDOW {
+            Some((0, addr - UART0_BASE))
         } else if addr >= UART1_BASE && addr < UART1_BASE + UART_WINDOW {
-            UART1_BASE
+            Some((1, addr - UART1_BASE))
         } else {
+            None
+        }
+    }
+
+    fn uart_read(&self, addr: u32) -> Option<u32> {
+        let (port, off) = Self::uart_port(addr & !3)?;
+        let regs = self.uart_regs.borrow();
+        let uart = regs[port];
+        let dlab = uart.lcr & 0x80 != 0;
+        match off & !3 {
+            0x00 => Some(if dlab { u32::from(uart.dll) } else { 0 }),
+            0x04 => Some(if dlab { u32::from(uart.dlm) } else { uart.ier }),
+            0x08 => Some(0x01), // IIR: no interrupt pending
+            0x0C => Some(u32::from(uart.lcr)),
+            0x10 => Some(uart.mcr),
+            0x14 => Some(0x60), // LSR_THRE | LSR_TEMT
+            0x1C => Some(u32::from(uart.scr)),
+            0x7C => Some(0x06),     // USR_TFE | USR_TFNF, not busy
+            0x80 | 0x84 => Some(0), // TFL/RFL empty
+            _ => None,
+        }
+    }
+
+    fn uart_write(&self, addr: u32, value: u32, width: u32) -> bool {
+        let Some((port, off)) = Self::uart_port(addr) else {
             return false;
         };
-        if addr - base == 0 {
-            self.uart_rx.borrow_mut().push(value);
+        let aligned = off & !3;
+        if !matches!(aligned, 0x00 | 0x04 | 0x08 | 0x0C | 0x10 | 0x1C) {
+            return false;
+        }
+        let shift = (addr & 3) * 8;
+        let low = ((value << shift) & 0xff) as u8;
+        let mut regs = self.uart_regs.borrow_mut();
+        let uart = &mut regs[port];
+        let dlab = uart.lcr & 0x80 != 0;
+        match aligned {
+            0x00 => {
+                if dlab {
+                    uart.dll = low;
+                } else {
+                    self.uart_rx.borrow_mut().push(low);
+                }
+            }
+            0x04 => {
+                if dlab {
+                    uart.dlm = low;
+                } else if width >= 4 && addr & 3 == 0 {
+                    uart.ier = value;
+                } else {
+                    let mask = if width == 1 { 0xff } else { 0xffff };
+                    uart.ier = (uart.ier & !mask) | (value & mask);
+                }
+            }
+            0x08 => uart.fcr = low,
+            0x0C => uart.lcr = low,
+            0x10 => uart.mcr = value,
+            0x1C => uart.scr = low,
+            _ => unreachable!(),
         }
         true
     }
@@ -201,24 +274,7 @@ impl Phy6252Bus {
         if let Some(value) = self.adc_read(aligned) {
             return Some(value);
         }
-        uart_status(aligned)
-    }
-}
-
-fn uart_status(addr: u32) -> Option<u32> {
-    let off = if addr >= UART0_BASE && addr < UART0_BASE + UART_WINDOW {
-        addr - UART0_BASE
-    } else if addr >= UART1_BASE && addr < UART1_BASE + UART_WINDOW {
-        addr - UART1_BASE
-    } else {
-        return None;
-    };
-    match off {
-        0x08 => Some(0x01),
-        0x14 => Some(0x60),
-        0x7C => Some(0x06),
-        0x80 | 0x84 => Some(0),
-        _ => None,
+        self.uart_read(aligned)
     }
 }
 
@@ -320,7 +376,7 @@ impl Bus for Phy6252Bus {
         if self.pwm_write(addr, value) {
             return Ok(());
         }
-        if self.uart_write(addr, value as u8) {
+        if self.uart_write(addr, value, 4) {
             return Ok(());
         }
         if let Some(index) = Self::mmio_index(addr) {
@@ -352,7 +408,7 @@ impl Bus for Phy6252Bus {
         if self.pwm_write(addr, u32::from(value)) {
             return Ok(());
         }
-        if self.uart_write(addr, value as u8) {
+        if self.uart_write(addr, u32::from(value), 2) {
             return Ok(());
         }
         if let Some(index) = Self::mmio_index(addr) {
@@ -381,7 +437,7 @@ impl Bus for Phy6252Bus {
             self.gpio_write_partial(addr, u32::from(value), 1);
             return Ok(());
         }
-        if self.uart_write(addr, value) {
+        if self.uart_write(addr, u32::from(value), 1) {
             return Ok(());
         }
         if self.pwm_write(addr, u32::from(value)) {
@@ -422,4 +478,32 @@ fn read_le32(mem: &[u8], base: u32, addr: u32) -> Option<u32> {
     let offset = offset_in(mem, base, addr)?;
     let bytes = mem.get(offset..offset + 4)?;
     Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uart_dlab_divisor_writes_do_not_leak_into_tx_log() {
+        let mut bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]);
+        bus.write8(UART0_BASE + 0x0C, 0x80).unwrap();
+        bus.write8(UART0_BASE, 9).unwrap();
+        bus.write8(UART0_BASE + 0x04, 0).unwrap();
+        assert_eq!(bus.read32(UART0_BASE).unwrap(), 9);
+        assert!(bus.uart_rx.borrow().is_empty());
+
+        bus.write8(UART0_BASE + 0x0C, 0x03).unwrap();
+        bus.write8(UART0_BASE, b'A').unwrap();
+        assert_eq!(&*bus.uart_rx.borrow(), b"A");
+    }
+
+    #[test]
+    fn uart_exposes_idle_status_and_ier_readback() {
+        let mut bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]);
+        bus.write32(UART0_BASE + 0x04, 0x81).unwrap();
+        assert_eq!(bus.read32(UART0_BASE + 0x04).unwrap(), 0x81);
+        assert_eq!(bus.read32(UART0_BASE + 0x14).unwrap(), 0x60);
+        assert_eq!(bus.read32(UART0_BASE + 0x7C).unwrap(), 0x06);
+    }
 }
