@@ -16,6 +16,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::fault::FaultTrapMode;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::core::reset::Reset;
@@ -29,6 +30,8 @@ const BOOT_FLASH_BYTES: usize = 0xC8;
 const ROM_DRV_DISABLE_IRQ: u32 = 0x0000_A974;
 const ROM_DRV_ENABLE_IRQ: u32 = 0x0000_A99C;
 const ROM_SPIF_READ_ID: u32 = 0x0001_7208;
+const ROM_CLK_GET_PCLK: u32 = 0x0000_A5D0;
+const PHY6252_G_HCLK: u32 = 0x1FFF_0874;
 
 pub struct RunOpts {
     pub hex: PathBuf,
@@ -184,6 +187,40 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
 
 fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8) {
     let pc = processor.get_pc();
+    if pc == ROM_CLK_GET_PCLK {
+        // The observed SDK boot path does not call clk_set_pclk_div before UART init.
+        // clk_init has already written g_hclk from g_hclk_table, so PCLK is the
+        // current HCLK while the APB divider remains at its reset /1 setting.
+        // A future clk_set_pclk_div call is still unknown ROM and therefore strict-faults.
+        let pclk = match processor.read32(PHY6252_G_HCLK) {
+            Ok(value) if value != 0 => value,
+            Ok(_) => {
+                if *seen & 16 == 0 {
+                    eprintln!(
+                        "ROM CPU strict clk_get_pclk entry={pc:#010x} -- g_hclk is zero before clock init"
+                    );
+                    *seen |= 16;
+                }
+                return;
+            }
+            Err(fault) => {
+                eprintln!(
+                    "ROM CPU strict clk_get_pclk entry={pc:#010x} -- cannot read g_hclk: {fault}"
+                );
+                return;
+            }
+        };
+        if *seen & 32 == 0 {
+            eprintln!(
+                "ROM CPU shim clk_get_pclk entry={pc:#010x} behavior=g_hclk/default-divider pclk={pclk}Hz"
+            );
+            *seen |= 32;
+        }
+        processor.set_r(Reg::R0, pclk);
+        let lr = processor.get_r(Reg::LR);
+        processor.set_pc(lr & !1);
+        return;
+    }
     if pc == ROM_SPIF_READ_ID {
         let pid_ptr = processor.get_r(Reg::R0);
         if pid_ptr != 0 {
