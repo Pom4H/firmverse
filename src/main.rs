@@ -1,3 +1,4 @@
+mod aes;
 mod bus;
 mod cmd;
 mod discovery;
