@@ -19,9 +19,6 @@ const PCRM_EFUSE_CFG: u32 = 0x4000_F054;
 const PCRM_EFUSE_PROG0: u32 = 0x4000_F140;
 const PCRM_EFUSE_PROG1: u32 = 0x4000_F144;
 
-// Emulator-private MMIO cells used only by tiny ROM ABI thunks. Real firmware never sees
-// these addresses directly: the thunks bridge Cortex-M argument registers into DiscoveryBus
-// state without teaching the CPU executor about PHY6252 vendor functions.
 const EMU_SLEEP_ALLOWED: u32 = 0x5000_FF00;
 const EMU_SLEEP_MODE: u32 = 0x5000_FF04;
 const EMU_AES_KEY_PTR: u32 = 0x5000_FF10;
@@ -44,11 +41,6 @@ struct StubReg {
     reset: u32,
 }
 
-// Registers deliberately accepted as inert read/write storage. Keep this list exact:
-// broad peripheral ranges would hide the next silicon behavior that real firmware needs.
-// Reset values are conservative emulator-visible values, not claims about undocumented
-// silicon bits. Registers whose startup code only writes before reading keep the historical
-// all-ones fallback; analog/tracking/bootstrap registers used via read-modify-write start clean.
 const KNOWN_STUB_REGS: &[StubReg] = &[
     StubReg { addr: 0x4000_0000, name: "PCR.SW_RESET0", reset: 0xFFFF_FFFF },
     StubReg { addr: 0x4000_000C, name: "PCR.SW_RESET2", reset: 0xFFFF_FFFF },
@@ -63,8 +55,6 @@ const KNOWN_STUB_REGS: &[StubReg] = &[
     StubReg { addr: 0x4000_F03C, name: "PCRM.CLKSEL", reset: 0xFFFF_FFFF },
     StubReg { addr: AON_XTAL_16M_CTRL, name: "AON.XTAL_16M_CTRL", reset: 0 },
     StubReg { addr: AON_SLEEP_R1, name: "AON.SLEEP_R[1]", reset: 0 },
-    // efuse_init() in the SDK boot path clears the config and both programming words before
-    // calling the ROM efuse reader. These are exact PCRM registers, not a broad efuse window.
     StubReg { addr: PCRM_EFUSE_CFG, name: "PCRM.efuse_cfg", reset: 0 },
     StubReg { addr: PCRM_EFUSE_PROG0, name: "PCRM.EFUSE_PROG[0]", reset: 0 },
     StubReg { addr: PCRM_EFUSE_PROG1, name: "PCRM.EFUSE_PROG[1]", reset: 0 },
@@ -87,6 +77,14 @@ const AES128_ENCRYPT0_CODE: &[u8] = &[
     0x03, 0x4B, 0x18, 0x60, 0x59, 0x60, 0x9A, 0x60,
     0x01, 0x20, 0xD8, 0x60, 0x70, 0x47, 0x00, 0xBF,
     0x10, 0xFF, 0x00, 0x50,
+];
+
+const OSAL_MEMCMP_CODE: &[u8] = &[
+    0x10, 0xB4, 0x00, 0x2A, 0x07, 0xD0, 0x03, 0x78,
+    0x0C, 0x78, 0xA3, 0x42, 0x06, 0xD1, 0x01, 0x30,
+    0x01, 0x31, 0x01, 0x3A, 0xF7, 0xD1, 0x01, 0x20,
+    0x10, 0xBC, 0x70, 0x47, 0x00, 0x20, 0x10, 0xBC,
+    0x70, 0x47,
 ];
 
 const ENABLE_SLEEP_CODE: &[u8] = &[
@@ -131,6 +129,12 @@ const ROM_SHIMS: &[RomShim] = &[
         name: "enableSleep",
         behavior: "sleep-allowed=true",
         code: ENABLE_SLEEP_CODE,
+    },
+    RomShim {
+        entry: 0x0001_4CCC,
+        name: "osal_memcmp",
+        behavior: "cortex-m0-byte-compare",
+        code: OSAL_MEMCMP_CODE,
     },
     RomShim {
         entry: 0x0001_6B44,
@@ -667,6 +671,16 @@ mod tests {
                 0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a,
             ]
         );
+    }
+
+    #[test]
+    fn osal_memcmp_shim_is_native_thumb_compare() {
+        let bus = bus(true);
+        assert_eq!(bus.read16(0x0001_4CCC).unwrap(), 0xB410);
+        assert_eq!(bus.read16(0x0001_4CCE).unwrap(), 0x2A00);
+        assert_eq!(bus.read16(0x0001_4CD2).unwrap(), 0x7803);
+        assert_eq!(bus.read16(0x0001_4CE6).unwrap(), THUMB_BX_LR);
+        assert_eq!(bus.read16(0x0001_4CEC).unwrap(), THUMB_BX_LR);
     }
 
     #[test]
