@@ -11,12 +11,24 @@ pub struct StorageReg {
     pub reset: u32,
 }
 
+pub const IOMUX_FULL_MUX0_EN: u32 = 0x4000_380C;
+pub const IOMUX_GPIO_SEL1: u32 = 0x4000_381C;
 pub const AP_CACHE_CTRL0: u32 = 0x4000_C000;
 pub const AP_CACHE_CTRL1: u32 = 0x4000_C004;
 pub const PCRM_CLKHF_CTL0: u32 = 0x4000_F040;
 pub const PCRM_CLKHF_CTL1: u32 = 0x4000_F044;
 
 const STORAGE_REGS: &[StorageReg] = &[
+    StorageReg {
+        addr: IOMUX_FULL_MUX0_EN,
+        name: "IOMUX.full_mux0_en",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL1,
+        name: "IOMUX.gpio_sel[1]",
+        reset: 0,
+    },
     StorageReg {
         addr: AP_CACHE_CTRL0,
         name: "CACHE.CTRL0",
@@ -47,6 +59,14 @@ pub fn storage_reg(addr: u32) -> Option<StorageReg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observed_debug_uart_iomux_registers_are_exact() {
+        assert_eq!(storage_reg(IOMUX_FULL_MUX0_EN).unwrap().reset, 0);
+        assert_eq!(storage_reg(IOMUX_GPIO_SEL1).unwrap().reset, 0);
+        assert!(storage_reg(0x4000_3818).is_none());
+        assert!(storage_reg(0x4000_3820).is_none());
+    }
 
     #[test]
     fn cache_control_registers_are_exact_not_a_window() {
