@@ -77,6 +77,11 @@ struct RomShim {
     code: &'static [u8],
 }
 
+const AEABI_MEMCLR4_CODE: &[u8] = &[
+    0x00, 0x22, 0x00, 0x29, 0x03, 0xD0, 0x02, 0x70,
+    0x01, 0x30, 0x01, 0x39, 0xF9, 0xD1, 0x70, 0x47,
+];
+
 const DRV_IRQ_INIT_CODE: &[u8] = &[0x70, 0x47, 0x70, 0x47];
 
 const EFUSE_READ_CODE: &[u8] = &[
@@ -120,6 +125,7 @@ const SET_SLEEP_MODE_CODE: &[u8] = &[
 ];
 
 const ROM_SHIMS: &[RomShim] = &[
+    RomShim { entry: 0x0000_0EB2, name: "__aeabi_memclr4", behavior: "cortex-m0-byte-clear", code: AEABI_MEMCLR4_CODE },
     RomShim { entry: 0x0000_3FDC, name: "LL_ENC_AES128_Encrypt0", behavior: "host-aes128-key-plaintext-ciphertext", code: AES128_ENCRYPT0_CODE },
     RomShim { entry: 0x0000_A2E0, name: "finidv", behavior: "secure-id-efuse-aes-compare", code: FINIDV_CODE },
     RomShim { entry: 0x0000_A9C8, name: "drv_irq_init", behavior: "noop-return", code: DRV_IRQ_INIT_CODE },
@@ -402,6 +408,7 @@ mod tests {
     #[test] fn efuse_bootstrap_registers_are_exact_clean_stubs() { let mut bus = bus(true); for addr in [PCRM_EFUSE_CFG,PCRM_EFUSE_PROG0,PCRM_EFUSE_PROG1] { assert_eq!(bus.read32(addr).unwrap(), 0); bus.write32(addr, 0x55AA_1234).unwrap(); assert_eq!(bus.read32(addr).unwrap(), 0x55AA_1234); bus.write32(addr, 0).unwrap(); } }
     #[test] fn development_secure_profile_passes_the_real_finidv_contract() { let mut bus = bus(true); let expected = aes128_encrypt_block([0;16],[0;16]); assert_eq!(bus.guest_read_block(SECURE_EXPECTED).unwrap(), expected); assert_eq!(bus.run_finidv().unwrap(),1); assert_eq!(bus.inner.read8(FINIDV_STATUS).unwrap(),1); let secondary=aes128_encrypt_block([0;16], expected); assert_eq!(bus.guest_read_block(FINIDV_SECONDARY).unwrap(), secondary); }
     #[test] fn finidv_rom_thunk_triggers_host_secure_check_and_returns_result() { let mut bus=bus(true); assert_eq!(bus.read16(0x0000_A2E0).unwrap(),0x4B02); assert_eq!(bus.read16(0x0000_A2E2).unwrap(),0x2001); assert_eq!(bus.read16(0x0000_A2E4).unwrap(),0x6018); assert_eq!(bus.read16(0x0000_A2E6).unwrap(),0x6858); assert_eq!(bus.read16(0x0000_A2E8).unwrap(),THUMB_BX_LR); assert_eq!(bus.read32(0x0000_A2EC).unwrap(),EMU_FINIDV_TRIGGER); }
+    #[test] fn aeabi_memclr4_shim_is_native_thumb_clear_loop() { let bus=bus(true); assert_eq!(bus.read16(0x0000_0EB2).unwrap(),0x2200); assert_eq!(bus.read16(0x0000_0EB4).unwrap(),0x2900); assert_eq!(bus.read16(0x0000_0EBC).unwrap(),0x3901); assert_eq!(bus.read16(0x0000_0EC0).unwrap(),THUMB_BX_LR); }
     #[test] fn osal_mem_set_heap_thunk_captures_runtime_heap() { let mut bus=bus(true); assert_eq!(bus.read16(0x0001_4CB4).unwrap(),0x4A02); assert_eq!(bus.read16(0x0001_4CB6).unwrap(),0x6010); assert_eq!(bus.read16(0x0001_4CB8).unwrap(),0x6051); assert_eq!(bus.read16(0x0001_4CBA).unwrap(),THUMB_BX_LR); assert_eq!(bus.read32(0x0001_4CC0).unwrap(),EMU_HEAP_BASE); bus.write32(EMU_HEAP_BASE,0x1FFF_6244).unwrap(); bus.write32(EMU_HEAP_SIZE,0xC00).unwrap(); assert_eq!(bus.heap_base.get(),0x1FFF_6244); assert_eq!(bus.heap_size.get(),0xC00); }
     #[test] fn strict_mode_stops_at_first_vendor_rom_access() { let bus=bus(true); assert!(matches!(bus.read16(0x0000_1000),Err(Fault::DAccViol))); }
     #[test] fn drv_irq_init_shim_is_a_thumb_noop_return() { let bus=bus(true); assert_eq!(bus.read16(0x0000_A9C8).unwrap(),THUMB_BX_LR); assert!(matches!(bus.read16(0x0000_A9CC),Err(Fault::DAccViol))); }
