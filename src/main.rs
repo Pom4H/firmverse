@@ -1,5 +1,6 @@
 mod aes;
 mod ble_host;
+mod ble_rom;
 mod bus;
 mod cmd;
 mod discovery;
