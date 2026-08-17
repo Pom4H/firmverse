@@ -26,8 +26,8 @@ struct Cli {
     /// Machine line protocol (GPIO / UART / FRAME)
     #[arg(long)]
     raw: bool,
-    /// Fault on MMIO registers that are neither modeled nor explicitly whitelisted stubs
-    #[arg(long)]
+    /// Fault on unmodeled PHY6252 MMIO or vendor ROM accesses
+    #[arg(long = "strict", visible_alias = "strict-mmio")]
     strict_mmio: bool,
     #[arg(long)]
     max_insns: Option<u64>,
