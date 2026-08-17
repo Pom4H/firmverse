@@ -56,7 +56,27 @@ const PINS: &[Pin] = &[
     Pin { label: "P34", bit: 22, adc_slot: None },
 ];
 
+// PB-03F-Kit V1.0.0, figure 7: bottom view, top-to-bottom silkscreen order.
+const BOARD_ROWS: &[(&str, &str)] = &[
+    ("P24", "P15"),
+    ("P23", "P11"),
+    ("P20", "P31"),
+    ("P3", "P7"),
+    ("P2", "P32"),
+    ("3V3", "P33"),
+    ("GND", "P14"),
+    ("NC", "P16"),
+    ("P34", "P17"),
+    ("P0", "GND"),
+    ("P18", "3V3"),
+    ("RX0", "NC"),
+    ("TX0", "NC"),
+    ("GND", "GND"),
+    ("3V3", "5V"),
+];
+
 struct State {
+    started: Instant,
     image: String,
     strict: bool,
     status: String,
@@ -77,6 +97,7 @@ struct State {
 impl State {
     fn new(opts: &TuiOpts) -> Self {
         Self {
+            started: Instant::now(),
             image: opts
                 .hex
                 .file_name()
@@ -103,7 +124,8 @@ impl State {
         if self.logs.len() >= 256 {
             self.logs.pop_front();
         }
-        self.logs.push_back(line.into());
+        let elapsed = self.started.elapsed().as_secs_f64();
+        self.logs.push_back(format!("[{elapsed:8.3}] {}", line.into()));
     }
 
     fn apply_raw_line(&mut self, stream: Stream, line: &str) {
@@ -327,7 +349,9 @@ fn handle_key(
     state: &mut State,
     child_stdin: &mut impl Write,
 ) -> Result<bool, String> {
-    if code == KeyCode::Esc || (code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL)) {
+    if code == KeyCode::Esc
+        || (code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL))
+    {
         return Ok(true);
     }
 
@@ -385,36 +409,82 @@ fn history_down(state: &mut State) {
 }
 
 fn draw(state: &State) -> Result<(), String> {
-    let (width, height) = size().unwrap_or((100, 34));
+    let (width, height) = size().unwrap_or((120, 42));
     let mut out = String::new();
-    let w = usize::from(width).max(72);
+    let w = usize::from(width).max(86);
 
-    push_line(&mut out, w, &format!("PHY6252 / PB-03F LIVE   image={}   mode={}   {}", state.image, if state.strict { "STRICT" } else { "NORMAL" }, state.status));
-    push_line(&mut out, w, &format!("BLE  link={}  notify={}  {}", on_off(state.connected), on_off(state.notify), state.adv));
+    push_line(
+        &mut out,
+        w,
+        &format!(
+            "PHY6252 / PB-03F LIVE   image={}   mode={}   {}",
+            state.image,
+            if state.strict { "STRICT" } else { "NORMAL" },
+            state.status
+        ),
+    );
+    push_line(
+        &mut out,
+        w,
+        &format!(
+            "BLE  link={}  notify={}  {}",
+            on_off(state.connected),
+            on_off(state.notify),
+            state.adv
+        ),
+    );
     push_line(&mut out, w, "");
-    push_line(&mut out, w, "LIVE PIN MATRIX  (silkscreen → gpio_pin_e; OUT reads DR, IN reads external level)");
+    push_line(
+        &mut out,
+        w,
+        "PB-03F-KIT PINOUT — physical bottom view (Ai-Thinker V1.0.0 figure 7)",
+    );
+    push_line(&mut out, w, "       LEFT HEADER                         BOARD                         RIGHT HEADER");
+    push_line(&mut out, w, "  ┌──────────────────────────────┐   ┌──────────────────┐   ┌──────────────────────────────┐");
 
-    let half = (PINS.len() + 1) / 2;
-    for row in 0..half {
-        let left = pin_text(state, PINS[row]);
-        let right = PINS.get(row + half).map(|p| pin_text(state, *p)).unwrap_or_default();
-        push_line(&mut out, w, &format!("  {left:<35} │  {right}"));
+    for (row, (left, right)) in BOARD_ROWS.iter().enumerate() {
+        let left_text = board_pin_text(state, left);
+        let right_text = board_pin_text(state, right);
+        let middle = match row {
+            0 => "│   PB-03F-Kit    │",
+            5 => "│    PHY6252      │",
+            10 => "│   NodeMCU       │",
+            14 => "│      USB        │",
+            _ => "│                  │",
+        };
+        push_line(
+            &mut out,
+            w,
+            &format!("  │ {left_text:<28} │───{middle}───│ {right_text:<28} │"),
+        );
     }
+    push_line(&mut out, w, "  └──────────────────────────────┘   └──────────────────┘   └──────────────────────────────┘");
+    push_line(&mut out, w, "  GPIO shows gpio_pin_e mapping; OUT=value from DR, IN=value from host-driven external level.");
 
-    push_line(&mut out, w, "");
     let leds = [
         ("R/P7", 4u32),
         ("G/P11", 7),
         ("B/P18", 12),
         ("W/P0", 0),
     ];
-    let led_text = leds.iter().map(|(name, bit)| format!("{name}={}", bit_value(state.gpio_dr, *bit))).collect::<Vec<_>>().join("  ");
+    let led_text = leds
+        .iter()
+        .map(|(name, bit)| format!("{name}={}", bit_value(state.gpio_dr, *bit)))
+        .collect::<Vec<_>>()
+        .join("  ");
     push_line(&mut out, w, &format!("LED  {led_text}"));
-    push_line(&mut out, w, &format!("PWM  c0={:04x} c1={:04x} c2={:04x} c3={:04x} c4={:04x} c5={:04x}", state.pwm[0], state.pwm[1], state.pwm[2], state.pwm[3], state.pwm[4], state.pwm[5]));
+    push_line(
+        &mut out,
+        w,
+        &format!(
+            "PWM  c0={:04x} c1={:04x} c2={:04x} c3={:04x} c4={:04x} c5={:04x}",
+            state.pwm[0], state.pwm[1], state.pwm[2], state.pwm[3], state.pwm[4], state.pwm[5]
+        ),
+    );
     push_line(&mut out, w, "");
-    push_line(&mut out, w, "LOGS");
+    push_line(&mut out, w, "LOGS  (host elapsed seconds; UART / ATT / ROM / MMIO / power / secure diagnostics)");
 
-    let fixed_rows = 17usize + half;
+    let fixed_rows = 27usize;
     let log_rows = usize::from(height).saturating_sub(fixed_rows).max(4);
     let start = state.logs.len().saturating_sub(log_rows);
     for line in state.logs.iter().skip(start) {
@@ -424,7 +494,11 @@ fn draw(state: &State) -> Result<(), String> {
         out.push('\n');
     }
     push_line(&mut out, w, &format!("> {}", state.input));
-    push_line(&mut out, w, "Enter=send  ↑/↓=history  Esc/Ctrl-C=quit   try: connect | adc 3.3 1.65 2.5 3.3 | p34 on");
+    push_line(
+        &mut out,
+        w,
+        "Enter=send  ↑/↓=history  Esc/Ctrl-C=quit   try: connect | adc 3.3 1.65 2.5 3.3 | p34 on",
+    );
 
     let mut stdout = io::stdout();
     execute!(stdout, MoveTo(0, 0), Clear(ClearType::All)).map_err(|e| e.to_string())?;
@@ -432,23 +506,42 @@ fn draw(state: &State) -> Result<(), String> {
     stdout.flush().map_err(|e| e.to_string())
 }
 
+fn board_pin_text(state: &State, label: &str) -> String {
+    if let Some(pin) = PINS.iter().copied().find(|pin| pin.label == label) {
+        return pin_text(state, pin);
+    }
+    match label {
+        "3V3" => "3V3   PWR 3.3V".into(),
+        "5V" => "5V    PWR 5V".into(),
+        "GND" => "GND   0V".into(),
+        "NC" => "NC    —".into(),
+        "TX0" => "TX0   UART0 TX".into(),
+        "RX0" => "RX0   UART0 RX".into(),
+        other => other.into(),
+    }
+}
+
 fn push_line(out: &mut String, width: usize, text: &str) {
-    let mut used = 0usize;
-    for ch in text.chars() {
+    for (used, ch) in text.chars().enumerate() {
         if used >= width.saturating_sub(1) {
             break;
         }
         out.push(ch);
-        used += 1;
     }
     out.push('\n');
 }
 
 fn pin_text(state: &State, pin: Pin) -> String {
     let (output, value) = state.pin_value(pin);
-    let mut text = format!("{:>3}  e{:02}  {:>3}={}", pin.label, pin.bit, if output { "OUT" } else { "IN" }, if value { 1 } else { 0 });
+    let mut text = format!(
+        "{:>3} e{:02} {:>3}={}",
+        pin.label,
+        pin.bit,
+        if output { "OUT" } else { "IN" },
+        if value { 1 } else { 0 }
+    );
     if let Some(slot) = pin.adc_slot {
-        text.push_str(&format!("  ADC={:.3}V", f64::from(state.adc_mv[slot]) / 1000.0));
+        text.push_str(&format!(" {:.3}V", f64::from(state.adc_mv[slot]) / 1000.0));
     }
     text
 }
@@ -501,10 +594,17 @@ fn on_off(value: bool) -> &'static str {
 mod tests {
     use super::*;
 
+    fn opts() -> TuiOpts {
+        TuiOpts {
+            hex: PathBuf::from("demo.hex"),
+            strict: false,
+            max_insns: 1,
+        }
+    }
+
     #[test]
     fn pin_state_tracks_direction_and_external_level() {
-        let opts = TuiOpts { hex: PathBuf::from("demo.hex"), strict: false, max_insns: 1 };
-        let mut state = State::new(&opts);
+        let mut state = State::new(&opts());
         let p34 = *PINS.iter().find(|p| p.label == "P34").unwrap();
         state.ext_in = 1 << 22;
         assert_eq!(state.pin_value(p34), (false, true));
@@ -515,13 +615,19 @@ mod tests {
 
     #[test]
     fn local_command_state_tracks_adc_and_link() {
-        let opts = TuiOpts { hex: PathBuf::from("demo.hex"), strict: false, max_insns: 1 };
-        let mut state = State::new(&opts);
+        let mut state = State::new(&opts());
         state.apply_command_state("connect");
         state.apply_command_state("notify on");
         state.apply_command_state("adc 3.3 1.65 2.5 3.2");
         assert!(state.connected);
         assert!(state.notify);
         assert_eq!(state.adc_mv, [3300, 1650, 2500, 3200]);
+    }
+
+    #[test]
+    fn physical_board_rows_match_pb03f_bottom_view() {
+        assert_eq!(BOARD_ROWS.first(), Some(&("P24", "P15")));
+        assert_eq!(BOARD_ROWS.last(), Some(&("3V3", "5V")));
+        assert_eq!(BOARD_ROWS.len(), 15);
     }
 }
