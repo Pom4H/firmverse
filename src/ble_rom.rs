@@ -1,4 +1,4 @@
-use crate::arm_abi;
+use crate::{arm_abi, osal_power};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
@@ -11,7 +11,7 @@ const LL_STATUS_SUCCESS: u32 = 0x00;
 const LL_STATUS_ERROR_BAD_PARAMETER: u32 = 0x12;
 
 pub fn handle(cpu: &mut Processor, rng: &mut u32) -> bool {
-    if arm_abi::handle(cpu) {
+    if arm_abi::handle(cpu) || osal_power::handle(cpu) {
         return true;
     }
     match cpu.get_pc() {
@@ -73,9 +73,6 @@ fn set_sca(cpu: &mut Processor) -> bool {
 
 fn init_feature_set_dle(cpu: &mut Processor) -> bool {
     let enabled = cpu.get_r(Reg::R0) != 0;
-    // This ROM helper mutates the controller's local feature bitmap. The emulated
-    // controller keeps data-length support in host state; there is no radio register
-    // side effect to reproduce here. The guest ABI is void.
     eprintln!("BLE ROM llInitFeatureSetDLE enabled={enabled}");
     ret(cpu);
     true
