@@ -22,6 +22,7 @@ help
 phy6252 --help
 phy6252 firmware/kit-demo.hex
 phy6252 --tui                  # realtime pinout + logs dashboard
+phy6252 --ble                  # expose ATT mailbox through Linux BlueZ
 phy6252 --raw                  # GPIO / UART / FRAME lines
 phy6252 --once path.hex        # no REPL, stop at halt / insn cap
 phy6252 --strict --once path.hex # stop on the first missing silicon behavior
@@ -30,6 +31,32 @@ phy6252 --strict --once path.hex # stop on the first missing silicon behavior
 `--strict-mmio` remains an alias for `--strict`.
 
 Install: `cargo install --path .` → `phy6252` on your PATH.
+
+## Host Bluetooth LE
+
+`phy6252 --ble [firmware.hex]` exposes the emulator's generic ATT mailbox through the Linux host Bluetooth adapter using BlueZ. The emulator remains the source of RX/TX data; BlueZ only supplies the real radio, advertising and GATT transport.
+
+Defaults:
+
+| | Value |
+|---|---|
+| Local name | `PB03FKIT` |
+| Service | `6B1D0001-7C8E-4A91-9F2B-E3A14C5B0001` |
+| RX write | `6B1D0002-7C8E-4A91-9F2B-E3A14C5B0001` |
+| TX notify | `6B1D0003-7C8E-4A91-9F2B-E3A14C5B0001` |
+
+All four values are runtime configuration, so the public emulator does not need product-specific BLE definitions:
+
+```sh
+phy6252 --ble \
+  --ble-name DEVICE \
+  --ble-service 12345678-1234-5678-1234-56789abcdef0 \
+  --ble-rx      12345678-1234-5678-1234-56789abcdef1 \
+  --ble-tx      12345678-1234-5678-1234-56789abcdef2 \
+  firmware.hex
+```
+
+Host requirements are `bluez`, `python3-dbus` and `python3-gi`; `bluetoothd` must expose `GattManager1` and `LEAdvertisingManager1`. `--ble` powers the selected adapter, registers one service with RX/TX characteristics, starts connectable advertising, and bridges writes/notifies to the existing `WRITE`/`FRAME` protocol.
 
 ## Realtime terminal dashboard
 
@@ -63,9 +90,9 @@ The emulator can use a real firmware image as a probe for missing PHY6252 behavi
 
 ### Relocated vectors
 
-PHY6252 SDK images do not have to place the Cortex-M vector table at the first byte of SRAM. The emulator scans SRAM for a plausible vector table, keeps the image at its real addresses, and mirrors only the selected SP/reset pair to address zero for zmu reset.
+PHY6252 SDK images do not have to place the Cortex-M vector table at the first byte of SRAM. The emulator scans SRAM for a plausible vector table, keeps the image at its real addresses, and mirrors the selected SDK vector block into the Cortex-M exception-vector window used by zmu.
 
-This allows images with jump/config areas before `.vectors` to reach their actual reset handler without rewriting the firmware.
+This allows images with jump/config areas before `.vectors` to reach their actual reset handler and exception handlers without rewriting the firmware.
 
 ### MMIO discovery
 
