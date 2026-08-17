@@ -6,6 +6,7 @@ use zmu_cortex_m::Processor;
 
 const ROM_UIDIV: u32 = 0x0000_0E08;
 const ROM_IDIV: u32 = 0x0000_0E34;
+const ROM_LL_INIT: u32 = 0x0000_4EB0;
 const ROM_CLOCK: u32 = 0x0001_4948;
 const ROM_CLEAR_EVENT: u32 = 0x0001_4A88;
 const ROM_GET_TIMEOUT: u32 = 0x0001_4AC8;
@@ -58,7 +59,7 @@ pub struct HostOsal {
     heap_next: Option<u32>, heap_end: u32,
     free: Vec<(u32, u32)>, allocs: HashMap<u32, u32>, messages: VecDeque<u32>,
     seen: HashSet<u32>, tasks: Option<u32>, events: Option<u32>, count: u8,
-    running: Option<u8>, started: bool, timers: Vec<Timer>,
+    running: Option<u8>, started: bool, timers: Vec<Timer>, ll_task: Option<u8>,
 }
 
 impl HostOsal {
@@ -70,7 +71,7 @@ impl HostOsal {
         let pc = cpu.get_pc();
         if pc == IDLE_BX_LR_ROM && self.started && self.running.is_none() { return self.dispatch(cpu); }
         match pc {
-            ROM_UIDIV => self.uidiv(cpu), ROM_IDIV => self.idiv(cpu),
+            ROM_UIDIV => self.uidiv(cpu), ROM_IDIV => self.idiv(cpu), ROM_LL_INIT => self.ll_init(cpu),
             ROM_CLOCK => self.clock(cpu, now), ROM_CLEAR_EVENT => self.clear_event_call(cpu),
             ROM_GET_TIMEOUT => self.get_timeout(cpu, now), ROM_NEXT_TIMEOUT => self.next_timeout(cpu, now),
             ROM_TIMER_NUM_ACTIVE => self.timer_num_active(cpu),
@@ -99,6 +100,12 @@ impl HostOsal {
         let n=cpu.get_r(Reg::R0) as i32; let d=cpu.get_r(Reg::R1) as i32;
         let (q,r)=if d==0{(0,n)}else if n==i32::MIN&&d==-1{(i32::MIN,0)}else{(n/d,n%d)};
         self.once(ROM_IDIV,||eprintln!("EABI host idiv/idivmod")); cpu.set_r(Reg::R0,q as u32); cpu.set_r(Reg::R1,r as u32); ret(cpu); true
+    }
+    fn ll_init(&mut self,cpu:&mut Processor)->bool {
+        let task=cpu.get_r(Reg::R0) as u8;
+        self.ll_task=Some(task);
+        self.once(ROM_LL_INIT,||eprintln!("BLE host controller initialized by guest LL task={task}"));
+        ret(cpu); true
     }
 
     fn init(&mut self, cpu: &mut Processor) -> bool {
