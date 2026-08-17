@@ -6,7 +6,12 @@ use zmu_cortex_m::Processor;
 
 const ROM_UIDIV: u32 = 0x0000_0E08;
 const ROM_IDIV: u32 = 0x0000_0E34;
+const ROM_HCI_EXT_TASK_REGISTER: u32 = 0x0000_1750;
+const ROM_HCI_GAP_TASK_REGISTER: u32 = 0x0000_175C;
 const ROM_HCI_INIT: u32 = 0x0000_183C;
+const ROM_HCI_L2CAP_TASK_REGISTER: u32 = 0x0000_1878;
+const ROM_HCI_SMP_TASK_REGISTER: u32 = 0x0000_26C8;
+const ROM_HCI_TEST_APP_TASK_REGISTER: u32 = 0x0000_288C;
 const ROM_LL_INIT: u32 = 0x0000_4EB0;
 const ROM_CB_TIMER_INIT: u32 = 0x0001_4620;
 const ROM_CLOCK: u32 = 0x0001_4948;
@@ -61,7 +66,9 @@ pub struct HostOsal {
     heap_next: Option<u32>, heap_end: u32,
     free: Vec<(u32, u32)>, allocs: HashMap<u32, u32>, messages: VecDeque<u32>,
     seen: HashSet<u32>, tasks: Option<u32>, events: Option<u32>, count: u8,
-    running: Option<u8>, started: bool, timers: Vec<Timer>, ll_task: Option<u8>, hci_task: Option<u8>, cb_timer_task: Option<u8>,
+    running: Option<u8>, started: bool, timers: Vec<Timer>,
+    ll_task: Option<u8>, hci_task: Option<u8>, cb_timer_task: Option<u8>,
+    hci_ext_task: Option<u8>, gap_task: Option<u8>, l2cap_task: Option<u8>, smp_task: Option<u8>, test_app_task: Option<u8>,
 }
 
 impl HostOsal {
@@ -73,7 +80,11 @@ impl HostOsal {
         let pc = cpu.get_pc();
         if pc == IDLE_BX_LR_ROM && self.started && self.running.is_none() { return self.dispatch(cpu); }
         match pc {
-            ROM_UIDIV => self.uidiv(cpu), ROM_IDIV => self.idiv(cpu), ROM_HCI_INIT => self.hci_init(cpu), ROM_LL_INIT => self.ll_init(cpu), ROM_CB_TIMER_INIT => self.cb_timer_init(cpu),
+            ROM_UIDIV => self.uidiv(cpu), ROM_IDIV => self.idiv(cpu),
+            ROM_HCI_EXT_TASK_REGISTER => self.hci_ext_task_register(cpu), ROM_HCI_GAP_TASK_REGISTER => self.hci_gap_task_register(cpu),
+            ROM_HCI_INIT => self.hci_init(cpu), ROM_HCI_L2CAP_TASK_REGISTER => self.hci_l2cap_task_register(cpu),
+            ROM_HCI_SMP_TASK_REGISTER => self.hci_smp_task_register(cpu), ROM_HCI_TEST_APP_TASK_REGISTER => self.hci_test_app_task_register(cpu),
+            ROM_LL_INIT => self.ll_init(cpu), ROM_CB_TIMER_INIT => self.cb_timer_init(cpu),
             ROM_CLOCK => self.clock(cpu, now), ROM_CLEAR_EVENT => self.clear_event_call(cpu),
             ROM_GET_TIMEOUT => self.get_timeout(cpu, now), ROM_NEXT_TIMEOUT => self.next_timeout(cpu, now),
             ROM_TIMER_NUM_ACTIVE => self.timer_num_active(cpu),
@@ -98,6 +109,11 @@ impl HostOsal {
     fn ll_init(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.ll_task=Some(task);self.once(ROM_LL_INIT,||eprintln!("BLE host controller initialized by guest LL task={task}"));ret(cpu);true }
     fn hci_init(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.hci_task=Some(task);self.once(ROM_HCI_INIT,||eprintln!("BLE host HCI initialized by guest task={task}"));ret(cpu);true }
     fn cb_timer_init(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.cb_timer_task=Some(task);self.once(ROM_CB_TIMER_INIT,||eprintln!("OSAL callback timer task initialized task={task}"));ret(cpu);true }
+    fn hci_ext_task_register(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.hci_ext_task=Some(task);self.once(ROM_HCI_EXT_TASK_REGISTER,||eprintln!("BLE HCI route EXT task={task}"));ret(cpu);true }
+    fn hci_gap_task_register(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.gap_task=Some(task);self.once(ROM_HCI_GAP_TASK_REGISTER,||eprintln!("BLE HCI route GAP task={task}"));ret(cpu);true }
+    fn hci_l2cap_task_register(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.l2cap_task=Some(task);self.once(ROM_HCI_L2CAP_TASK_REGISTER,||eprintln!("BLE HCI route L2CAP task={task}"));ret(cpu);true }
+    fn hci_smp_task_register(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.smp_task=Some(task);self.once(ROM_HCI_SMP_TASK_REGISTER,||eprintln!("BLE HCI route SMP task={task}"));ret(cpu);true }
+    fn hci_test_app_task_register(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.test_app_task=Some(task);self.once(ROM_HCI_TEST_APP_TASK_REGISTER,||eprintln!("BLE HCI route test-app task={task}"));ret(cpu);true }
 
     fn init(&mut self,cpu:&mut Processor)->bool { let entry=match cpu.read32(JT_INIT){Ok(v)if v&1==1=>v,Ok(v)=>{eprintln!("OSAL strict init callback={v:#010x} is not Thumb");return false;},Err(e)=>{eprintln!("OSAL strict init callback read: {e}");return false;}};self.once(ROM_INIT,||eprintln!("OSAL host init task_init={entry:#010x}"));cpu.set_pc(entry&!1);true }
     fn start(&mut self,cpu:&mut Processor)->bool { if self.running.is_some(){return self.finish(cpu);}if !self.started{if !self.resolve(cpu){return false;}self.started=true;self.once(ROM_START,||eprintln!("OSAL host cooperative scheduler started"));}self.dispatch(cpu) }
