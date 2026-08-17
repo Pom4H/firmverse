@@ -6,6 +6,7 @@ use crate::cmd::{gpio_silk, ChipCmd, HELP};
 use crate::discovery::DiscoveryBus;
 use crate::hex::HexImage;
 use crate::mailbox;
+use crate::osal::HostOsal;
 use std::cell::RefCell;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -111,6 +112,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let mut uart_line = String::new();
     let mut clock_ms = 0u32;
     let mut cpu_rom_seen = 0u8;
+    let mut host_osal = HostOsal::new();
 
     if live {
         if raw {
@@ -128,7 +130,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let mut insn: u64 = 0;
     while insn < max_insns {
         apply_ext(&gpio, &ext_in);
-        redirect_cpu_rom_abi(&mut processor, &mut cpu_rom_seen);
+        redirect_cpu_rom_abi(&mut processor, &mut cpu_rom_seen, &mut host_osal);
         if let Some(trap) = processor.take_pending_fault_trap() {
             return report_stop(
                 &mut processor,
@@ -155,7 +157,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
         }
 
         for _ in 0..burst {
-            redirect_cpu_rom_abi(&mut processor, &mut cpu_rom_seen);
+            redirect_cpu_rom_abi(&mut processor, &mut cpu_rom_seen, &mut host_osal);
             processor.step();
             insn += 1;
             if insn >= max_insns {
@@ -185,7 +187,10 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     report_stop(&mut processor, insn, live, raw, &gpio, "max instructions")
 }
 
-fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8) {
+fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8, host_osal: &mut HostOsal) {
+    if host_osal.handle(processor) {
+        return;
+    }
     let pc = processor.get_pc();
     if pc == ROM_CLK_GET_PCLK {
         // The observed SDK boot path does not call clk_set_pclk_div before UART init.
