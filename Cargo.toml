@@ -6,6 +6,12 @@ publish = false
 license = "MIT"
 description = "PHY6252 Cortex-M0 chip emulator (AI-Thinker PB-03F-Kit)"
 repository = "https://github.com/Pom4H/phy6252-emu"
+default-run = "phy6252"
+
+[[bin]]
+name = "phy6252"
+path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 zmu_cortex_m = { path = "third_party/zmu/zmu_cortex_m", default-features = false, features = ["armv6m"] }
