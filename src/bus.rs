@@ -13,6 +13,14 @@ pub const MMIO_BASE: u32 = 0x4000_0000;
 pub const MMIO_END: u32 = 0x5001_0000;
 pub const ROM_END: u32 = 0x0002_0000;
 
+// Emulator-internal controls live at the unused top of host RAM, outside guest
+// silicon MMIO. ROM ABI shims use them to perform NOR operations without making
+// the memory-mapped XIP window writable to ordinary guest stores.
+pub const HOST_FLASH_ADDR: u32 = HOST_RAM_BASE + HOST_RAM_SIZE as u32 - 12;
+pub const HOST_FLASH_PROGRAM: u32 = HOST_RAM_BASE + HOST_RAM_SIZE as u32 - 8;
+pub const HOST_FLASH_ERASE: u32 = HOST_RAM_BASE + HOST_RAM_SIZE as u32 - 4;
+const FLASH_SECTOR_SIZE: usize = 4096;
+
 pub const GPIO_BASE: u32 = 0x4000_8000;
 const GPIO_WINDOW: u32 = 0x80;
 pub const GPIO_PIN_MASK: u32 = (1 << 23) - 1;
@@ -29,12 +37,7 @@ pub const ADC_CH_COUNT: usize = 9;
 const PWM_BASE: u32 = 0x4000_E000;
 pub const PWM_CHANNELS: usize = 6;
 const TIM_CURRENT: [u32; 6] = [
-    0x4000_1004,
-    0x4000_1018,
-    0x4000_102C,
-    0x4000_1040,
-    0x4000_1054,
-    0x4000_1068,
+    0x4000_1004, 0x4000_1018, 0x4000_102C, 0x4000_1040, 0x4000_1054, 0x4000_1068,
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -71,6 +74,7 @@ pub struct Phy6252Bus {
     pub pwm_changed: Rc<RefCell<bool>>,
     pub adc_mv: Rc<RefCell<[u16; ADC_CH_COUNT]>>,
     timer_count: Cell<u32>,
+    flash_addr: Cell<u32>,
 }
 
 impl Phy6252Bus {
@@ -93,6 +97,7 @@ impl Phy6252Bus {
             pwm_changed: Rc::new(RefCell::new(false)),
             adc_mv: Rc::new(RefCell::new(adc)),
             timer_count: Cell::new(0xFFFF_0000),
+            flash_addr: Cell::new(0),
         }
     }
 
@@ -102,10 +107,28 @@ impl Phy6252Bus {
         out
     }
 
-    fn gpio_off(addr: u32) -> Option<u32> {
-        if addr < GPIO_BASE || addr >= GPIO_BASE + GPIO_WINDOW {
-            return None;
+    fn flash_offset(&self, addr: u32) -> Option<usize> {
+        let raw = if addr >= XIP_BASE { addr.wrapping_sub(XIP_BASE) } else { addr } as usize;
+        (raw < self.xip.len()).then_some(raw)
+    }
+
+    fn flash_program_byte(&mut self, value: u8) {
+        let addr = self.flash_addr.get();
+        if let Some(off) = self.flash_offset(addr) {
+            self.xip[off] &= value;
+            self.flash_addr.set(addr.wrapping_add(1));
         }
+    }
+
+    fn flash_erase_sector(&mut self) {
+        let Some(off) = self.flash_offset(self.flash_addr.get()) else { return; };
+        let start = off & !(FLASH_SECTOR_SIZE - 1);
+        let end = (start + FLASH_SECTOR_SIZE).min(self.xip.len());
+        self.xip[start..end].fill(0xff);
+    }
+
+    fn gpio_off(addr: u32) -> Option<u32> {
+        if addr < GPIO_BASE || addr >= GPIO_BASE + GPIO_WINDOW { return None; }
         Some(addr - GPIO_BASE)
     }
 
@@ -128,16 +151,10 @@ impl Phy6252Bus {
         let mut gpio = self.gpio.borrow_mut();
         match aligned {
             GPIO_DR => {
-                if gpio.dr != masked {
-                    gpio.dr = masked;
-                    *self.gpio_changed.borrow_mut() = true;
-                }
+                if gpio.dr != masked { gpio.dr = masked; *self.gpio_changed.borrow_mut() = true; }
             }
             GPIO_DDR => {
-                if gpio.ddr != masked {
-                    gpio.ddr = masked;
-                    *self.gpio_changed.borrow_mut() = true;
-                }
+                if gpio.ddr != masked { gpio.ddr = masked; *self.gpio_changed.borrow_mut() = true; }
             }
             GPIO_CTL => gpio.ctl = masked,
             0x30 => gpio.inten = masked,
@@ -150,54 +167,33 @@ impl Phy6252Bus {
         let off = addr - GPIO_BASE;
         let shift = (addr & 3) * 8;
         let bits = width * 8;
-        let mask = if bits >= 32 {
-            0xFFFF_FFFF
-        } else {
-            ((1u32 << bits) - 1) << shift
-        };
+        let mask = if bits >= 32 { 0xFFFF_FFFF } else { ((1u32 << bits) - 1) << shift };
         let cur = self.gpio_read_reg(off);
         self.gpio_write_reg(off, (cur & !mask) | ((value << shift) & mask));
     }
 
     fn mmio_index(addr: u32) -> Option<usize> {
-        if addr < MMIO_BASE || addr >= MMIO_END {
-            return None;
-        }
+        if addr < MMIO_BASE || addr >= MMIO_END { return None; }
         Some(((addr - MMIO_BASE) >> 2) as usize % 1024)
     }
 
     fn adc_read(&self, addr: u32) -> Option<u32> {
-        if addr < ADC_CH_BASE {
-            return None;
-        }
+        if addr < ADC_CH_BASE { return None; }
         let off = (addr - ADC_CH_BASE) as usize;
-        if off % 4 != 0 {
-            return None;
-        }
+        if off % 4 != 0 { return None; }
         let ch = off / 4;
-        if ch >= ADC_CH_COUNT {
-            return None;
-        }
+        if ch >= ADC_CH_COUNT { return None; }
         Some(u32::from(self.adc_mv.borrow()[ch]))
     }
 
     fn pwm_write(&self, addr: u32, value: u32) -> bool {
-        if addr < PWM_BASE || addr >= PWM_BASE + 0x80 {
-            return false;
-        }
+        if addr < PWM_BASE || addr >= PWM_BASE + 0x80 { return false; }
         let off = addr - PWM_BASE;
-        if off % 16 != 8 {
-            return true;
-        }
+        if off % 16 != 8 { return true; }
         let ch = (off / 16) as usize;
-        if ch >= PWM_CHANNELS {
-            return true;
-        }
+        if ch >= PWM_CHANNELS { return true; }
         let mut pwm = self.pwm.borrow_mut();
-        if pwm[ch] != value {
-            pwm[ch] = value;
-            *self.pwm_changed.borrow_mut() = true;
-        }
+        if pwm[ch] != value { pwm[ch] = value; *self.pwm_changed.borrow_mut() = true; }
         true
     }
 
@@ -206,9 +202,7 @@ impl Phy6252Bus {
             Some((0, addr - UART0_BASE))
         } else if addr >= UART1_BASE && addr < UART1_BASE + UART_WINDOW {
             Some((1, addr - UART1_BASE))
-        } else {
-            None
-        }
+        } else { None }
     }
 
     fn uart_read(&self, addr: u32) -> Option<u32> {
@@ -219,47 +213,32 @@ impl Phy6252Bus {
         match off & !3 {
             0x00 => Some(if dlab { u32::from(uart.dll) } else { 0 }),
             0x04 => Some(if dlab { u32::from(uart.dlm) } else { uart.ier }),
-            0x08 => Some(0x01), // IIR: no interrupt pending
+            0x08 => Some(0x01),
             0x0C => Some(u32::from(uart.lcr)),
             0x10 => Some(uart.mcr),
-            0x14 => Some(0x60), // LSR_THRE | LSR_TEMT
+            0x14 => Some(0x60),
             0x1C => Some(u32::from(uart.scr)),
-            0x7C => Some(0x06),     // USR_TFE | USR_TFNF, not busy
-            0x80 | 0x84 => Some(0), // TFL/RFL empty
+            0x7C => Some(0x06),
+            0x80 | 0x84 => Some(0),
             _ => None,
         }
     }
 
     fn uart_write(&self, addr: u32, value: u32, width: u32) -> bool {
-        let Some((port, off)) = Self::uart_port(addr) else {
-            return false;
-        };
+        let Some((port, off)) = Self::uart_port(addr) else { return false; };
         let aligned = off & !3;
-        if !matches!(aligned, 0x00 | 0x04 | 0x08 | 0x0C | 0x10 | 0x1C) {
-            return false;
-        }
+        if !matches!(aligned, 0x00 | 0x04 | 0x08 | 0x0C | 0x10 | 0x1C) { return false; }
         let shift = (addr & 3) * 8;
         let low = ((value << shift) & 0xff) as u8;
         let mut regs = self.uart_regs.borrow_mut();
         let uart = &mut regs[port];
         let dlab = uart.lcr & 0x80 != 0;
         match aligned {
-            0x00 => {
-                if dlab {
-                    uart.dll = low;
-                } else {
-                    self.uart_rx.borrow_mut().push(low);
-                }
-            }
+            0x00 => { if dlab { uart.dll = low; } else { self.uart_rx.borrow_mut().push(low); } }
             0x04 => {
-                if dlab {
-                    uart.dlm = low;
-                } else if width >= 4 && addr & 3 == 0 {
-                    uart.ier = value;
-                } else {
-                    let mask = if width == 1 { 0xff } else { 0xffff };
-                    uart.ier = (uart.ier & !mask) | (value & mask);
-                }
+                if dlab { uart.dlm = low; }
+                else if width >= 4 && addr & 3 == 0 { uart.ier = value; }
+                else { let mask = if width == 1 { 0xff } else { 0xffff }; uart.ier = (uart.ier & !mask) | (value & mask); }
             }
             0x08 => uart.fcr = low,
             0x0C => uart.lcr = low,
@@ -277,182 +256,81 @@ impl Phy6252Bus {
             self.timer_count.set(value.wrapping_sub(4));
             return Some(value);
         }
-        if let Some(value) = self.adc_read(aligned) {
-            return Some(value);
-        }
+        if let Some(value) = self.adc_read(aligned) { return Some(value); }
         self.uart_read(aligned)
     }
 }
 
 impl Bus for Phy6252Bus {
     fn read32(&mut self, addr: u32) -> Result<u32, Fault> {
-        if let Some(value) = read_le32(&self.sram, SRAM_BASE, addr) {
-            return Ok(value);
-        }
-        if let Some(value) = read_le32(&self.host_ram.borrow(), HOST_RAM_BASE, addr) {
-            return Ok(value);
-        }
-        if let Some(value) = read_le32(&self.xip, XIP_BASE, addr) {
-            return Ok(value);
-        }
-        if addr < ROM_END {
-            return Ok(0);
-        }
-        if let Some(off) = Self::gpio_off(addr) {
-            return Ok(self.gpio_read_reg(off));
-        }
-        if let Some(value) = self.peripheral_read(addr) {
-            return Ok(value);
-        }
-        if let Some(index) = Self::mmio_index(addr) {
-            return Ok(self.mmio.borrow()[index]);
-        }
+        if let Some(value) = read_le32(&self.sram, SRAM_BASE, addr) { return Ok(value); }
+        if let Some(value) = read_le32(&self.host_ram.borrow(), HOST_RAM_BASE, addr) { return Ok(value); }
+        if let Some(value) = read_le32(&self.xip, XIP_BASE, addr) { return Ok(value); }
+        if addr < ROM_END { return Ok(0); }
+        if let Some(off) = Self::gpio_off(addr) { return Ok(self.gpio_read_reg(off)); }
+        if let Some(value) = self.peripheral_read(addr) { return Ok(value); }
+        if let Some(index) = Self::mmio_index(addr) { return Ok(self.mmio.borrow()[index]); }
         Err(Fault::DAccViol)
     }
 
     fn read16(&self, addr: u32) -> Result<u16, Fault> {
-        if let Some(value) = read_le16(&self.sram, SRAM_BASE, addr) {
-            return Ok(value);
-        }
-        if let Some(value) = read_le16(&self.host_ram.borrow(), HOST_RAM_BASE, addr) {
-            return Ok(value);
-        }
-        if let Some(value) = read_le16(&self.xip, XIP_BASE, addr) {
-            return Ok(value);
-        }
-        if addr < ROM_END {
-            return Ok(0);
-        }
-        if let Some(off) = Self::gpio_off(addr) {
-            return Ok((self.gpio_read_reg(off) >> ((addr & 3) * 8)) as u16);
-        }
-        if let Some(value) = self.peripheral_read(addr) {
-            return Ok((value >> ((addr & 3) * 8)) as u16);
-        }
-        if let Some(index) = Self::mmio_index(addr) {
-            return Ok(self.mmio.borrow()[index] as u16);
-        }
+        if let Some(value) = read_le16(&self.sram, SRAM_BASE, addr) { return Ok(value); }
+        if let Some(value) = read_le16(&self.host_ram.borrow(), HOST_RAM_BASE, addr) { return Ok(value); }
+        if let Some(value) = read_le16(&self.xip, XIP_BASE, addr) { return Ok(value); }
+        if addr < ROM_END { return Ok(0); }
+        if let Some(off) = Self::gpio_off(addr) { return Ok((self.gpio_read_reg(off) >> ((addr & 3) * 8)) as u16); }
+        if let Some(value) = self.peripheral_read(addr) { return Ok((value >> ((addr & 3) * 8)) as u16); }
+        if let Some(index) = Self::mmio_index(addr) { return Ok(self.mmio.borrow()[index] as u16); }
         Err(Fault::DAccViol)
     }
 
     fn read8(&self, addr: u32) -> Result<u8, Fault> {
-        if let Some(offset) = offset_in(&self.sram, SRAM_BASE, addr) {
-            return Ok(self.sram[offset]);
-        }
-        if let Some(offset) = offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr) {
-            return Ok(self.host_ram.borrow()[offset]);
-        }
-        if let Some(offset) = offset_in(&self.xip, XIP_BASE, addr) {
-            return Ok(self.xip[offset]);
-        }
-        if addr < ROM_END {
-            return Ok(0);
-        }
-        if let Some(off) = Self::gpio_off(addr) {
-            return Ok((self.gpio_read_reg(off) >> ((addr & 3) * 8)) as u8);
-        }
-        if let Some(value) = self.peripheral_read(addr) {
-            return Ok((value >> ((addr & 3) * 8)) as u8);
-        }
-        if let Some(index) = Self::mmio_index(addr) {
-            return Ok(self.mmio.borrow()[index] as u8);
-        }
+        if let Some(offset) = offset_in(&self.sram, SRAM_BASE, addr) { return Ok(self.sram[offset]); }
+        if let Some(offset) = offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr) { return Ok(self.host_ram.borrow()[offset]); }
+        if let Some(offset) = offset_in(&self.xip, XIP_BASE, addr) { return Ok(self.xip[offset]); }
+        if addr < ROM_END { return Ok(0); }
+        if let Some(off) = Self::gpio_off(addr) { return Ok((self.gpio_read_reg(off) >> ((addr & 3) * 8)) as u8); }
+        if let Some(value) = self.peripheral_read(addr) { return Ok((value >> ((addr & 3) * 8)) as u8); }
+        if let Some(index) = Self::mmio_index(addr) { return Ok(self.mmio.borrow()[index] as u8); }
         Err(Fault::DAccViol)
     }
 
     fn write32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
-        if let Some(offset) = offset_in(&self.sram, SRAM_BASE, addr) {
-            self.sram[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-            return Ok(());
-        }
-        if let Some(offset) = offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr) {
-            self.host_ram.borrow_mut()[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-            return Ok(());
-        }
-        if offset_in(&self.xip, XIP_BASE, addr).is_some() {
-            return Ok(());
-        }
-        if addr < ROM_END {
-            return Ok(());
-        }
-        if Self::gpio_off(addr).is_some() {
-            self.gpio_write_partial(addr, value, 4);
-            return Ok(());
-        }
-        if self.pwm_write(addr, value) {
-            return Ok(());
-        }
-        if self.uart_write(addr, value, 4) {
-            return Ok(());
-        }
-        if let Some(index) = Self::mmio_index(addr) {
-            self.mmio.borrow_mut()[index] = value;
-            return Ok(());
-        }
+        if addr == HOST_FLASH_ADDR { self.flash_addr.set(value); return Ok(()); }
+        if addr == HOST_FLASH_PROGRAM { self.flash_program_byte(value as u8); return Ok(()); }
+        if addr == HOST_FLASH_ERASE { self.flash_erase_sector(); return Ok(()); }
+        if let Some(offset) = offset_in(&self.sram, SRAM_BASE, addr) { self.sram[offset..offset + 4].copy_from_slice(&value.to_le_bytes()); return Ok(()); }
+        if let Some(offset) = offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr) { self.host_ram.borrow_mut()[offset..offset + 4].copy_from_slice(&value.to_le_bytes()); return Ok(()); }
+        if offset_in(&self.xip, XIP_BASE, addr).is_some() { return Ok(()); }
+        if addr < ROM_END { return Ok(()); }
+        if Self::gpio_off(addr).is_some() { self.gpio_write_partial(addr, value, 4); return Ok(()); }
+        if self.pwm_write(addr, value) { return Ok(()); }
+        if self.uart_write(addr, value, 4) { return Ok(()); }
+        if let Some(index) = Self::mmio_index(addr) { self.mmio.borrow_mut()[index] = value; return Ok(()); }
         Err(Fault::DAccViol)
     }
 
     fn write16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
-        if let Some(offset) = offset_in(&self.sram, SRAM_BASE, addr) {
-            self.sram[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-            return Ok(());
-        }
-        if let Some(offset) = offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr) {
-            self.host_ram.borrow_mut()[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-            return Ok(());
-        }
-        if offset_in(&self.xip, XIP_BASE, addr).is_some() {
-            return Ok(());
-        }
-        if addr < ROM_END {
-            return Ok(());
-        }
-        if Self::gpio_off(addr).is_some() {
-            self.gpio_write_partial(addr, u32::from(value), 2);
-            return Ok(());
-        }
-        if self.pwm_write(addr, u32::from(value)) {
-            return Ok(());
-        }
-        if self.uart_write(addr, u32::from(value), 2) {
-            return Ok(());
-        }
-        if let Some(index) = Self::mmio_index(addr) {
-            self.mmio.borrow_mut()[index] = u32::from(value);
-            return Ok(());
-        }
+        if let Some(offset) = offset_in(&self.sram, SRAM_BASE, addr) { self.sram[offset..offset + 2].copy_from_slice(&value.to_le_bytes()); return Ok(()); }
+        if let Some(offset) = offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr) { self.host_ram.borrow_mut()[offset..offset + 2].copy_from_slice(&value.to_le_bytes()); return Ok(()); }
+        if offset_in(&self.xip, XIP_BASE, addr).is_some() { return Ok(()); }
+        if addr < ROM_END { return Ok(()); }
+        if Self::gpio_off(addr).is_some() { self.gpio_write_partial(addr, u32::from(value), 2); return Ok(()); }
+        if self.pwm_write(addr, u32::from(value)) { return Ok(()); }
+        if self.uart_write(addr, u32::from(value), 2) { return Ok(()); }
+        if let Some(index) = Self::mmio_index(addr) { self.mmio.borrow_mut()[index] = u32::from(value); return Ok(()); }
         Err(Fault::DAccViol)
     }
 
     fn write8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
-        if let Some(offset) = offset_in(&self.sram, SRAM_BASE, addr) {
-            self.sram[offset] = value;
-            return Ok(());
-        }
-        if let Some(offset) = offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr) {
-            self.host_ram.borrow_mut()[offset] = value;
-            return Ok(());
-        }
-        if offset_in(&self.xip, XIP_BASE, addr).is_some() {
-            return Ok(());
-        }
-        if addr < ROM_END {
-            return Ok(());
-        }
-        if Self::gpio_off(addr).is_some() {
-            self.gpio_write_partial(addr, u32::from(value), 1);
-            return Ok(());
-        }
-        if self.uart_write(addr, u32::from(value), 1) {
-            return Ok(());
-        }
-        if self.pwm_write(addr, u32::from(value)) {
-            return Ok(());
-        }
-        if let Some(index) = Self::mmio_index(addr) {
-            self.mmio.borrow_mut()[index] = u32::from(value);
-            return Ok(());
-        }
+        if let Some(offset) = offset_in(&self.sram, SRAM_BASE, addr) { self.sram[offset] = value; return Ok(()); }
+        if let Some(offset) = offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr) { self.host_ram.borrow_mut()[offset] = value; return Ok(()); }
+        if offset_in(&self.xip, XIP_BASE, addr).is_some() { return Ok(()); }
+        if addr < ROM_END { return Ok(()); }
+        if Self::gpio_off(addr).is_some() { self.gpio_write_partial(addr, u32::from(value), 1); return Ok(()); }
+        if self.uart_write(addr, u32::from(value), 1) { return Ok(()); }
+        if self.pwm_write(addr, u32::from(value)) { return Ok(()); }
+        if let Some(index) = Self::mmio_index(addr) { self.mmio.borrow_mut()[index] = u32::from(value); return Ok(()); }
         Err(Fault::DAccViol)
     }
 
@@ -467,11 +345,7 @@ impl Bus for Phy6252Bus {
 
 fn offset_in(mem: &[u8], base: u32, addr: u32) -> Option<usize> {
     let offset = addr.wrapping_sub(base) as usize;
-    if offset < mem.len() {
-        Some(offset)
-    } else {
-        None
-    }
+    if offset < mem.len() { Some(offset) } else { None }
 }
 
 fn read_le16(mem: &[u8], base: u32, addr: u32) -> Option<u16> {
@@ -507,7 +381,6 @@ mod tests {
         bus.write8(UART0_BASE + 0x04, 0).unwrap();
         assert_eq!(bus.read32(UART0_BASE).unwrap(), 9);
         assert!(bus.uart_rx.borrow().is_empty());
-
         bus.write8(UART0_BASE + 0x0C, 0x03).unwrap();
         bus.write8(UART0_BASE, b'A').unwrap();
         assert_eq!(&*bus.uart_rx.borrow(), b"A");
@@ -520,5 +393,29 @@ mod tests {
         assert_eq!(bus.read32(UART0_BASE + 0x04).unwrap(), 0x81);
         assert_eq!(bus.read32(UART0_BASE + 0x14).unwrap(), 0x60);
         assert_eq!(bus.read32(UART0_BASE + 0x7C).unwrap(), 0x06);
+    }
+
+    #[test]
+    fn nor_program_only_clears_bits_and_direct_xip_store_is_ignored() {
+        let mut bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0xff; XIP_SIZE]);
+        bus.write32(HOST_FLASH_ADDR, 0x20).unwrap();
+        bus.write32(HOST_FLASH_PROGRAM, 0x5a).unwrap();
+        assert_eq!(bus.read8(XIP_BASE + 0x20).unwrap(), 0x5a);
+        bus.write32(HOST_FLASH_ADDR, 0x20).unwrap();
+        bus.write32(HOST_FLASH_PROGRAM, 0xf0).unwrap();
+        assert_eq!(bus.read8(XIP_BASE + 0x20).unwrap(), 0x50);
+        bus.write8(XIP_BASE + 0x20, 0xff).unwrap();
+        assert_eq!(bus.read8(XIP_BASE + 0x20).unwrap(), 0x50);
+    }
+
+    #[test]
+    fn nor_sector_erase_restores_ff() {
+        let mut bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0xff; XIP_SIZE]);
+        bus.write32(HOST_FLASH_ADDR, 0x1234).unwrap();
+        bus.write32(HOST_FLASH_PROGRAM, 0).unwrap();
+        assert_eq!(bus.read8(XIP_BASE + 0x1234).unwrap(), 0);
+        bus.write32(HOST_FLASH_ADDR, 0x1234).unwrap();
+        bus.write32(HOST_FLASH_ERASE, 1).unwrap();
+        assert_eq!(bus.read8(XIP_BASE + 0x1234).unwrap(), 0xff);
     }
 }
