@@ -11,6 +11,8 @@ const UART0_BASE: u32 = 0x4000_4000;
 const UART1_BASE: u32 = 0x4000_9000;
 const PWM_BASE: u32 = 0x4000_E000;
 const SPIF_BASE: u32 = 0x4000_C800;
+const WAKEUP_MASK_31_0: u32 = 0x4000_F0A0;
+const WAKEUP_MASK_34_32: u32 = 0x4000_F0A4;
 const VECTOR_MIRROR_BYTES: u32 = 0xC0;
 const THUMB_BX_LR: u16 = 0x4770;
 
@@ -494,6 +496,14 @@ impl DiscoveryBus {
         }
     }
 
+    fn wakeup_bootstrap_write_name(addr: u32) -> Option<&'static str> {
+        match addr & !3 {
+            WAKEUP_MASK_31_0 => Some("WAKEUP.io_wu_mask_31_0"),
+            WAKEUP_MASK_34_32 => Some("WAKEUP.io_wu_mask_34_32"),
+            _ => None,
+        }
+    }
+
     fn timer_read_known(addr: u32) -> bool {
         TIM_CURRENT.contains(&(addr & !3))
     }
@@ -784,6 +794,11 @@ impl Bus for DiscoveryBus {
             self.sparse_write(addr, value, 4);
             return Ok(());
         }
+        if let Some(name) = Self::wakeup_bootstrap_write_name(addr) {
+            eprintln!("GPIO bootstrap {name}={value:#010x}");
+            self.sparse_write(addr, value, 4);
+            return Ok(());
+        }
         if !Self::is_mmio(addr) || Self::functional_write(addr) {
             return self.inner.write32(addr, value);
         }
@@ -867,6 +882,17 @@ mod tests {
             assert_eq!(bus.read32(addr).unwrap(), initial ^ 0x10);
         }
         assert_eq!(DiscoveryBus::storage_reset(PCR_CACHE_BYPASS), Some(0));
+    }
+
+    #[test]
+    fn gpio_wakeup_bootstrap_is_write_only_and_exact() {
+        let mut bus = bus(true);
+        bus.write32(WAKEUP_MASK_31_0, 0).unwrap();
+        bus.write32(WAKEUP_MASK_34_32, 0).unwrap();
+        assert_eq!(bus.sparse_mmio.borrow().get(&WAKEUP_MASK_31_0), Some(&0));
+        assert_eq!(bus.sparse_mmio.borrow().get(&WAKEUP_MASK_34_32), Some(&0));
+        assert!(matches!(bus.read32(WAKEUP_MASK_31_0), Err(Fault::DAccViol)));
+        assert!(matches!(bus.write32(0x4000_F0A8, 0), Err(Fault::DAccViol)));
     }
 
     #[test]
