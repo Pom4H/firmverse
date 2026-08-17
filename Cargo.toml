@@ -14,4 +14,5 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
 zmu_cortex_m = { path = "third_party/zmu/zmu_cortex_m", default-features = false, features = ["armv6m"] }
