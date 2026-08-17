@@ -77,65 +77,30 @@ struct RomShim {
     code: &'static [u8],
 }
 
-// BX LR, padded so a 32-bit instruction fetch at the entry is still fully backed.
 const DRV_IRQ_INIT_CODE: &[u8] = &[0x70, 0x47, 0x70, 0x47];
 
-// efuse_read(index, uint32_t *out): the SDK callers observed in Test-DPLS provide an
-// 8-byte output buffer and treat r0 == 0 as success. The emulator deliberately exposes a
-// deterministic blank bank rather than inventing factory-programmed calibration/security data.
-//   movs r2, #0
-//   str  r2, [r1]
-//   str  r2, [r1, #4]
-//   movs r0, #0
-//   bx   lr
 const EFUSE_READ_CODE: &[u8] = &[
     0x00, 0x22, 0x0A, 0x60, 0x4A, 0x60, 0x00, 0x20, 0x70, 0x47, 0x70, 0x47,
 ];
 
-// LL_ENC_AES128_Encrypt0(key, plaintext, ciphertext): capture the three Cortex-M ABI
-// pointers in a private control block, then trigger the host-side AES-128 implementation.
-//   ldr  r3, [pc, #12]  ; .word EMU_AES_KEY_PTR
-//   str  r0, [r3]
-//   str  r1, [r3, #4]
-//   str  r2, [r3, #8]
-//   movs r0, #1
-//   str  r0, [r3, #12]
-//   bx   lr
-//   nop
-//   .word EMU_AES_KEY_PTR
 const AES128_ENCRYPT0_CODE: &[u8] = &[
     0x03, 0x4B, 0x18, 0x60, 0x59, 0x60, 0x9A, 0x60,
     0x01, 0x20, 0xD8, 0x60, 0x70, 0x47, 0x00, 0xBF,
     0x10, 0xFF, 0x00, 0x50,
 ];
 
-// enableSleep():
-//   movs r0, #1
-//   ldr  r1, [pc, #4]   ; literal at entry + 8
-//   str  r0, [r1]
-//   bx   lr
-//   .word EMU_SLEEP_ALLOWED
 const ENABLE_SLEEP_CODE: &[u8] = &[
     0x01, 0x20, 0x01, 0x49, 0x08, 0x60, 0x70, 0x47, 0x00, 0xFF, 0x00, 0x50,
 ];
 
-// disableSleep(): same thunk, writing zero.
 const DISABLE_SLEEP_CODE: &[u8] = &[
     0x00, 0x20, 0x01, 0x49, 0x08, 0x60, 0x70, 0x47, 0x00, 0xFF, 0x00, 0x50,
 ];
 
-// setSleepMode(Sleep_Mode mode): preserve r0, store it in the emulator power-state cell.
-//   ldr  r1, [pc, #4]   ; literal at entry + 8
-//   str  r0, [r1]
-//   bx   lr
-//   nop
-//   .word EMU_SLEEP_MODE
 const SET_SLEEP_MODE_CODE: &[u8] = &[
     0x01, 0x49, 0x08, 0x60, 0x70, 0x47, 0x00, 0xBF, 0x04, 0xFF, 0x00, 0x50,
 ];
 
-// Exact ROM ABI entry points observed in PHY62XX SDK 3.1.2 / Test-DPLS.
-// Addresses are fetch addresses (Thumb symbol address with bit 0 cleared).
 const ROM_SHIMS: &[RomShim] = &[
     RomShim {
         entry: 0x0000_3FDC,
@@ -664,7 +629,7 @@ mod tests {
 
     #[test]
     fn aes128_rom_thunk_encodes_three_pointer_bridge() {
-        let bus = bus(true);
+        let mut bus = bus(true);
         assert_eq!(bus.read16(0x0000_3FDC).unwrap(), 0x4B03);
         assert_eq!(bus.read16(0x0000_3FDE).unwrap(), 0x6018);
         assert_eq!(bus.read16(0x0000_3FE0).unwrap(), 0x6059);
