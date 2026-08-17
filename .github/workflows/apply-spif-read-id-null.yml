@@ -1,0 +1,36 @@
+name: Apply SPIF read-id NULL ABI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/apply-spif-read-id-null.py
+      - .github/workflows/apply-spif-read-id-null.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply strict SPIF read-id NULL ABI
+        run: |
+          python scripts/apply-spif-read-id-null.py
+          cargo fmt --check || cargo fmt
+          cargo test
+      - name: Commit generated source change
+        run: |
+          if git diff --quiet; then
+            echo "No source change required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/discovery.rs src/emu.rs
+          git commit -m "Model strict PHY6252 spif_read_id NULL probe"
+          git push
