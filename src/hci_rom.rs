@@ -8,6 +8,8 @@ const ROM_HCI_L2CAP_TASK_REGISTER: u32 = 0x0000_1878;
 const ROM_HCI_SMP_TASK_REGISTER: u32 = 0x0000_26C8;
 const ROM_HCI_LE_READ_BUF_SIZE_CMD: u32 = 0x0000_1C28;
 const ROM_HCI_LE_SET_ADV_DATA_CMD: u32 = 0x0000_1F4C;
+const ROM_HCI_LE_SET_ADV_ENABLE_CMD: u32 = 0x0000_1F68;
+const ROM_HCI_LE_SET_ADV_PARAM_CMD: u32 = 0x0000_1F84;
 const ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD: u32 = 0x0000_2254;
 const ROM_HCI_READ_BDADDR_CMD: u32 = 0x0000_2550;
 const ROM_OSAL_MSG_ALLOC: u32 = 0x0001_4D1C;
@@ -32,8 +34,10 @@ const HCI_ERROR_MEM_CAP_EXCEEDED: u32 = 0x07;
 const HCI_ERROR_INVALID_PARAMS: u32 = 0x12;
 const OPCODE_READ_BDADDR: u16 = 0x1009;
 const OPCODE_LE_READ_BUF_SIZE: u16 = 0x2002;
+const OPCODE_LE_SET_ADV_PARAM: u16 = 0x2006;
 const OPCODE_LE_SET_ADV_DATA: u16 = 0x2008;
 const OPCODE_LE_SET_SCAN_RSP_DATA: u16 = 0x2009;
+const OPCODE_LE_SET_ADV_ENABLE: u16 = 0x200A;
 const CMD_COMPLETE_BYTES: u32 = 12;
 
 pub fn handle(cpu: &mut Processor) -> bool {
@@ -46,6 +50,8 @@ pub fn handle(cpu: &mut Processor) -> bool {
         ROM_HCI_LE_READ_BUF_SIZE_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 6, STAGE_BUF_SIZE_ALLOC),
         ROM_HCI_LE_SET_ADV_DATA_CMD => set_payload_data(cpu, OPCODE_LE_SET_ADV_DATA, "AdvData"),
         ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD => set_payload_data(cpu, OPCODE_LE_SET_SCAN_RSP_DATA, "ScanRspData"),
+        ROM_HCI_LE_SET_ADV_ENABLE_CMD => set_adv_enable(cpu),
+        ROM_HCI_LE_SET_ADV_PARAM_CMD => set_adv_params(cpu),
         CONT_TRAP if cpu.get_r(Reg::R2) == CONT_MAGIC => continue_event(cpu),
         _ => false,
     }
@@ -58,10 +64,7 @@ fn continue_event(cpu: &mut Processor) -> bool {
         STAGE_BUF_SIZE_ALLOC => finish_buf_size_alloc(cpu),
         STAGE_SEND_DONE => finish_send(cpu),
         _ if stage & STAGE_STATUS_FLAG != 0 => finish_status_alloc(cpu, (stage & 0xFFFF) as u16),
-        _ => {
-            eprintln!("BLE strict unknown HCI continuation stage={stage}");
-            false
-        }
+        _ => false,
     }
 }
 
@@ -76,13 +79,34 @@ fn register(cpu: &mut Processor, slot: u32, name: &str) -> bool {
 fn set_payload_data(cpu: &mut Processor, opcode: u16, label: &str) -> bool {
     let len = cpu.get_r(Reg::R0) as u8;
     let ptr = cpu.get_r(Reg::R1);
-    if len > 31 || (len != 0 && ptr == 0) {
-        cpu.set_r(Reg::R0, HCI_ERROR_INVALID_PARAMS);
-        ret(cpu);
-        return true;
-    }
+    if len > 31 || (len != 0 && ptr == 0) { return immediate_error(cpu); }
     eprintln!("BLE HCI LE_Set{label} len={len}");
     begin_status_event(cpu, opcode)
+}
+
+fn set_adv_enable(cpu: &mut Processor) -> bool {
+    let enabled = cpu.get_r(Reg::R0) as u8;
+    if enabled > 1 { return immediate_error(cpu); }
+    eprintln!("BLE HCI LE_SetAdvEnable enabled={enabled}");
+    begin_status_event(cpu, OPCODE_LE_SET_ADV_ENABLE)
+}
+
+fn set_adv_params(cpu: &mut Processor) -> bool {
+    let min = cpu.get_r(Reg::R0) as u16;
+    let max = cpu.get_r(Reg::R1) as u16;
+    let adv_type = cpu.get_r(Reg::R2) as u8;
+    let own_addr_type = cpu.get_r(Reg::R3) as u8;
+    if min > max || min < 0x20 || max > 0x4000 || adv_type > 4 || own_addr_type > 1 {
+        return immediate_error(cpu);
+    }
+    eprintln!("BLE HCI LE_SetAdvParam interval={min}..{max} type={adv_type} own_addr={own_addr_type}");
+    begin_status_event(cpu, OPCODE_LE_SET_ADV_PARAM)
+}
+
+fn immediate_error(cpu: &mut Processor) -> bool {
+    cpu.set_r(Reg::R0, HCI_ERROR_INVALID_PARAMS);
+    ret(cpu);
+    true
 }
 
 fn begin_status_event(cpu: &mut Processor, opcode: u16) -> bool {
@@ -112,13 +136,7 @@ fn write_common(cpu: &mut Processor, msg: u32, opcode: u16, ret_len: u32) -> boo
 }
 
 fn route_to_gap(cpu: &mut Processor, msg: u32) -> bool {
-    let task = match cpu.read8(HCI_GAP_TASK_ID) {
-        Ok(v) if v != 0xFF => v,
-        _ => {
-            eprintln!("BLE strict HCI GAP task is not registered");
-            return true;
-        }
-    };
+    let task = match cpu.read8(HCI_GAP_TASK_ID) { Ok(v) if v != 0xFF => v, _ => return true };
     cpu.set_r(Reg::R2, CONT_MAGIC);
     cpu.set_r(Reg::R3, STAGE_SEND_DONE);
     cpu.set_r(Reg::R0, u32::from(task));
@@ -151,8 +169,7 @@ fn finish_buf_size_alloc(cpu: &mut Processor) -> bool {
         || cpu.write8(ret_ptr + 1, 0).is_err()
         || cpu.write16(ret_ptr + 2, 251).is_err()
         || cpu.write8(ret_ptr + 4, 12).is_err()
-        || cpu.write8(ret_ptr + 5, 0).is_err()
-    { return false; }
+        || cpu.write8(ret_ptr + 5, 0).is_err() { return false; }
     eprintln!("BLE HCI LE_ReadBufSize len=251 packets=12");
     route_to_gap(cpu, msg)
 }
@@ -191,8 +208,10 @@ mod tests {
     fn standard_startup_opcodes_are_correct() {
         assert_eq!(OPCODE_READ_BDADDR, 0x1009);
         assert_eq!(OPCODE_LE_READ_BUF_SIZE, 0x2002);
+        assert_eq!(OPCODE_LE_SET_ADV_PARAM, 0x2006);
         assert_eq!(OPCODE_LE_SET_ADV_DATA, 0x2008);
         assert_eq!(OPCODE_LE_SET_SCAN_RSP_DATA, 0x2009);
+        assert_eq!(OPCODE_LE_SET_ADV_ENABLE, 0x200A);
     }
 
     #[test]
