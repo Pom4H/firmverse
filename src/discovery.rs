@@ -225,7 +225,6 @@ impl DiscoveryBus {
             (offset < shim.code.len()).then_some((shim, offset))
         })
     }
-
     fn rom_shim_byte(&self, addr: u32) -> Option<u8> {
         let (shim, offset) = Self::rom_shim_for_addr(addr)?;
         if self.seen_shims.borrow_mut().insert(shim.entry) {
@@ -233,7 +232,6 @@ impl DiscoveryBus {
         }
         Some(shim.code[offset])
     }
-
     fn rom_shim_read(&self, addr: u32, width: usize) -> Option<u32> {
         let mut value = 0u32;
         for i in 0..width { value |= u32::from(self.rom_shim_byte(addr + i as u32)?) << (i * 8); }
@@ -410,28 +408,99 @@ mod tests {
     use super::*;
     use crate::bus::{SRAM_BASE, SRAM_SIZE, XIP_SIZE};
 
-    fn bus(strict: bool) -> DiscoveryBus { DiscoveryBus::new(Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]), strict) }
+    fn bus(strict: bool) -> DiscoveryBus {
+        DiscoveryBus::new(Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]), strict)
+    }
 
-    #[test] fn permissive_unknown_mmio_is_sparse_and_does_not_alias() { let mut bus = bus(false); let a = 0x4001_0000; let b = 0x4001_1000; bus.write32(a, 0x1122_3344).unwrap(); bus.write32(b, 0xAABB_CCDD).unwrap(); assert_eq!(bus.read32(a).unwrap(), 0x1122_3344); assert_eq!(bus.read32(b).unwrap(), 0xAABB_CCDD); }
-    #[test] fn sparse_mmio_preserves_partial_writes() { let mut bus = bus(false); let addr = 0x4001_2000; bus.write32(addr, 0x1122_3344).unwrap(); bus.write8(addr + 1, 0xAA).unwrap(); bus.write16(addr + 2, 0xBEEF).unwrap(); assert_eq!(bus.read32(addr).unwrap(), 0xBEEF_AA44); }
-    #[test] fn strict_mode_faults_on_unmodeled_register() { let mut bus = bus(true); assert!(matches!(bus.write32(0x4001_0000, 1), Err(Fault::DAccViol))); }
-    #[test] fn exact_pcr_register_block_supports_clock_reset_cache_rmw() { let mut bus=bus(true); let regs=[PCR_SW_RESET0,PCR_SW_RESET1,PCR_SW_CLK,PCR_SW_RESET2,PCR_SW_RESET3,PCR_SW_CLK1,PCR_APB_CLK,PCR_APB_CLK_UPDATE,PCR_CACHE_CLOCK_GATE,PCR_CACHE_RST,PCR_CACHE_BYPASS]; for addr in regs { let initial=bus.read32(addr).unwrap(); bus.write32(addr,initial ^ 0x10).unwrap(); assert_eq!(bus.read32(addr).unwrap(), initial ^ 0x10); } assert_eq!(Self::stub_reset(PCR_CACHE_BYPASS),0); }
-    #[test] fn aon_gpio_pull_registers_are_clean_exact_rmw_storage() { let mut bus=bus(true); for addr in [AON_IOCTL0,AON_IOCTL1,AON_IOCTL2,AON_PMCTL0] { assert_eq!(bus.read32(addr).unwrap(),0); bus.write32(addr,0x55AA_1234).unwrap(); assert_eq!(bus.read32(addr).unwrap(),0x55AA_1234); } }
-    #[test] fn aon_ram_retention_registers_are_clean_exact_rmw_storage() { let mut bus=bus(true); for addr in [AON_PMCTL1,AON_PMCTL2_0,AON_PMCTL2_1] { assert_eq!(bus.read32(addr).unwrap(),0); bus.write32(addr,0x003E_0000).unwrap(); assert_eq!(bus.read32(addr).unwrap(),0x003E_0000); } }
-    #[test] fn xtal16m_ctrl_has_clean_modeled_fields_and_supports_sdk_rmw() { let mut bus = bus(true); assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0); let cap9 = (bus.read32(AON_XTAL_16M_CTRL).unwrap() & !0x1F) | 0x09; bus.write32(AON_XTAL_16M_CTRL, cap9).unwrap(); let current3 = bus.read32(AON_XTAL_16M_CTRL).unwrap() | 0x60; bus.write32(AON_XTAL_16M_CTRL, current3).unwrap(); assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0x69); }
-    #[test] fn rc32k_tracking_state_is_an_exact_clean_aon_stub() { let mut bus = bus(true); assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0); bus.write32(AON_SLEEP_R1, 0x1234_0084).unwrap(); assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0x1234_0084); bus.write32(AON_SLEEP_R1, 0).unwrap(); assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0); }
-    #[test] fn efuse_bootstrap_registers_are_exact_clean_stubs() { let mut bus = bus(true); for addr in [PCRM_EFUSE_CFG,PCRM_EFUSE_PROG0,PCRM_EFUSE_PROG1] { assert_eq!(bus.read32(addr).unwrap(), 0); bus.write32(addr, 0x55AA_1234).unwrap(); assert_eq!(bus.read32(addr).unwrap(), 0x55AA_1234); bus.write32(addr, 0).unwrap(); } }
-    #[test] fn development_secure_profile_passes_the_real_finidv_contract() { let mut bus = bus(true); let expected = aes128_encrypt_block([0;16],[0;16]); assert_eq!(bus.guest_read_block(SECURE_EXPECTED).unwrap(), expected); assert_eq!(bus.run_finidv().unwrap(),1); assert_eq!(bus.inner.read8(FINIDV_STATUS).unwrap(),1); let secondary=aes128_encrypt_block([0;16], expected); assert_eq!(bus.guest_read_block(FINIDV_SECONDARY).unwrap(), secondary); }
-    #[test] fn finidv_rom_thunk_triggers_host_secure_check_and_returns_result() { let mut bus=bus(true); assert_eq!(bus.read16(0x0000_A2E0).unwrap(),0x4B02); assert_eq!(bus.read16(0x0000_A2E2).unwrap(),0x2001); assert_eq!(bus.read16(0x0000_A2E4).unwrap(),0x6018); assert_eq!(bus.read16(0x0000_A2E6).unwrap(),0x6858); assert_eq!(bus.read16(0x0000_A2E8).unwrap(),THUMB_BX_LR); assert_eq!(bus.read32(0x0000_A2EC).unwrap(),EMU_FINIDV_TRIGGER); }
-    #[test] fn aeabi_memclr4_shim_is_native_thumb_clear_loop() { let bus=bus(true); assert_eq!(bus.read16(0x0000_0EB2).unwrap(),0x2200); assert_eq!(bus.read16(0x0000_0EB4).unwrap(),0x2900); assert_eq!(bus.read16(0x0000_0EBC).unwrap(),0x3901); assert_eq!(bus.read16(0x0000_0EC0).unwrap(),THUMB_BX_LR); }
-    #[test] fn osal_mem_set_heap_thunk_captures_runtime_heap() { let mut bus=bus(true); assert_eq!(bus.read16(0x0001_4CB4).unwrap(),0x4A02); assert_eq!(bus.read16(0x0001_4CB6).unwrap(),0x6010); assert_eq!(bus.read16(0x0001_4CB8).unwrap(),0x6051); assert_eq!(bus.read16(0x0001_4CBA).unwrap(),THUMB_BX_LR); assert_eq!(bus.read32(0x0001_4CC0).unwrap(),EMU_HEAP_BASE); bus.write32(EMU_HEAP_BASE,0x1FFF_6244).unwrap(); bus.write32(EMU_HEAP_SIZE,0xC00).unwrap(); assert_eq!(bus.heap_base.get(),0x1FFF_6244); assert_eq!(bus.heap_size.get(),0xC00); }
-    #[test] fn strict_mode_stops_at_first_vendor_rom_access() { let bus=bus(true); assert!(matches!(bus.read16(0x0000_1000),Err(Fault::DAccViol))); }
-    #[test] fn drv_irq_init_shim_is_a_thumb_noop_return() { let bus=bus(true); assert_eq!(bus.read16(0x0000_A9C8).unwrap(),THUMB_BX_LR); assert!(matches!(bus.read16(0x0000_A9CC),Err(Fault::DAccViol))); }
-    #[test] fn efuse_read_shim_is_a_blank_eight_byte_success_read() { let bus=bus(true); assert_eq!(bus.read16(0x0000_ACE0).unwrap(),0x2200); assert_eq!(bus.read16(0x0000_ACE2).unwrap(),0x600A); assert_eq!(bus.read16(0x0000_ACE4).unwrap(),0x604A); assert_eq!(bus.read16(0x0000_ACE6).unwrap(),0x2000); assert_eq!(bus.read16(0x0000_ACE8).unwrap(),THUMB_BX_LR); assert!(matches!(bus.read16(0x0000_ACEC),Err(Fault::DAccViol))); }
-    #[test] fn aes128_rom_thunk_encodes_three_pointer_bridge() { let mut bus=bus(true); assert_eq!(bus.read16(0x0000_3FDC).unwrap(),0x4B03); assert_eq!(bus.read16(0x0000_3FDE).unwrap(),0x6018); assert_eq!(bus.read16(0x0000_3FE0).unwrap(),0x6059); assert_eq!(bus.read16(0x0000_3FE2).unwrap(),0x609A); assert_eq!(bus.read16(0x0000_3FE4).unwrap(),0x2001); assert_eq!(bus.read16(0x0000_3FE6).unwrap(),0x60D8); assert_eq!(bus.read16(0x0000_3FE8).unwrap(),THUMB_BX_LR); assert_eq!(bus.read32(0x0000_3FEC).unwrap(),EMU_AES_KEY_PTR); }
-    #[test] fn aes128_bridge_encrypts_guest_memory() { let mut bus=bus(true); let key_addr=SRAM_BASE+0x100; let plaintext_addr=SRAM_BASE+0x120; let ciphertext_addr=SRAM_BASE+0x140; let key=[0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f]; let plaintext=[0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff]; bus.inner.sram[0x100..0x110].copy_from_slice(&key); bus.inner.sram[0x120..0x130].copy_from_slice(&plaintext); bus.write32(EMU_AES_KEY_PTR,key_addr).unwrap(); bus.write32(EMU_AES_PLAINTEXT_PTR,plaintext_addr).unwrap(); bus.write32(EMU_AES_CIPHERTEXT_PTR,ciphertext_addr).unwrap(); bus.write32(EMU_AES_TRIGGER,1).unwrap(); assert_eq!(&bus.inner.sram[0x140..0x150], &[0x69,0xc4,0xe0,0xd8,0x6a,0x7b,0x04,0x30,0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a]); }
-    #[test] fn osal_memcmp_shim_is_native_thumb_compare() { let bus=bus(true); assert_eq!(bus.read16(0x0001_4CCC).unwrap(),0xB410); assert_eq!(bus.read16(0x0001_4CCE).unwrap(),0x2A00); assert_eq!(bus.read16(0x0001_4CD2).unwrap(),0x7803); assert_eq!(bus.read16(0x0001_4CE6).unwrap(),THUMB_BX_LR); assert_eq!(bus.read16(0x0001_4CEC).unwrap(),THUMB_BX_LR); }
-    #[test] fn sleep_rom_thunks_encode_real_state_updates() { let mut bus=bus(true); assert_eq!(bus.read16(0x0000_AEAC).unwrap(),0x2001); assert_eq!(bus.read16(0x0000_AEAE).unwrap(),0x4901); assert_eq!(bus.read16(0x0000_AEB0).unwrap(),0x6008); assert_eq!(bus.read16(0x0000_AEB2).unwrap(),THUMB_BX_LR); assert_eq!(bus.read32(0x0000_AEB4).unwrap(),EMU_SLEEP_ALLOWED); assert_eq!(bus.read16(0x0001_6B44).unwrap(),0x4901); assert_eq!(bus.read16(0x0001_6B46).unwrap(),0x6008); assert_eq!(bus.read16(0x0001_6B48).unwrap(),THUMB_BX_LR); assert_eq!(bus.read32(0x0001_6B4C).unwrap(),EMU_SLEEP_MODE); }
-    #[test] fn emulator_power_cells_track_sleep_policy() { let mut bus=bus(true); assert!(!bus.sleep_allowed()); assert_eq!(bus.sleep_mode(),0); bus.write32(EMU_SLEEP_ALLOWED,1).unwrap(); bus.write32(EMU_SLEEP_MODE,1).unwrap(); assert!(bus.sleep_allowed()); assert_eq!(bus.sleep_mode(),1); bus.write32(EMU_SLEEP_ALLOWED,0).unwrap(); assert!(!bus.sleep_allowed()); }
-    #[test] fn vector_mirror_is_not_treated_as_unknown_rom() { let mut bus=bus(true); assert!(bus.read32(0).is_ok()); }
+    #[test]
+    fn sparse_mmio_is_full_address_and_preserves_partial_writes() {
+        let mut bus = bus(false);
+        let a = 0x4001_0000;
+        let b = 0x4001_1000;
+        bus.write32(a, 0x1122_3344).unwrap();
+        bus.write32(b, 0xAABB_CCDD).unwrap();
+        bus.write8(a + 1, 0xAA).unwrap();
+        assert_eq!(bus.read32(a).unwrap(), 0x1122_AA44);
+        assert_eq!(bus.read32(b).unwrap(), 0xAABB_CCDD);
+    }
+
+    #[test]
+    fn strict_mode_faults_on_unmodeled_register() {
+        let mut bus = bus(true);
+        assert!(matches!(bus.write32(0x4001_0000, 1), Err(Fault::DAccViol)));
+    }
+
+    #[test]
+    fn exact_pcr_register_block_supports_clock_reset_cache_rmw() {
+        let mut bus = bus(true);
+        let regs = [
+            PCR_SW_RESET0, PCR_SW_RESET1, PCR_SW_CLK, PCR_SW_RESET2, PCR_SW_RESET3,
+            PCR_SW_CLK1, PCR_APB_CLK, PCR_APB_CLK_UPDATE, PCR_CACHE_CLOCK_GATE,
+            PCR_CACHE_RST, PCR_CACHE_BYPASS,
+        ];
+        for addr in regs {
+            let initial = bus.read32(addr).unwrap();
+            bus.write32(addr, initial ^ 0x10).unwrap();
+            assert_eq!(bus.read32(addr).unwrap(), initial ^ 0x10);
+        }
+        assert_eq!(DiscoveryBus::stub_reset(PCR_CACHE_BYPASS), 0);
+    }
+
+    #[test]
+    fn aon_bootstrap_and_ram_retention_registers_are_exact_rmw_storage() {
+        let mut bus = bus(true);
+        for addr in [AON_IOCTL0, AON_IOCTL1, AON_IOCTL2, AON_PMCTL0, AON_PMCTL1, AON_PMCTL2_0, AON_PMCTL2_1] {
+            assert_eq!(bus.read32(addr).unwrap(), 0);
+            bus.write32(addr, 0x003E_0084).unwrap();
+            assert_eq!(bus.read32(addr).unwrap(), 0x003E_0084);
+        }
+    }
+
+    #[test]
+    fn development_secure_profile_and_aes_bridge_work() {
+        let mut bus = bus(true);
+        assert_eq!(bus.run_finidv().unwrap(), 1);
+        assert_eq!(bus.inner.read8(FINIDV_STATUS).unwrap(), 1);
+        let key_addr = SRAM_BASE + 0x100;
+        let plaintext_addr = SRAM_BASE + 0x120;
+        let ciphertext_addr = SRAM_BASE + 0x140;
+        let key = [0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f];
+        let plaintext = [0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff];
+        bus.inner.sram[0x100..0x110].copy_from_slice(&key);
+        bus.inner.sram[0x120..0x130].copy_from_slice(&plaintext);
+        bus.write32(EMU_AES_KEY_PTR, key_addr).unwrap();
+        bus.write32(EMU_AES_PLAINTEXT_PTR, plaintext_addr).unwrap();
+        bus.write32(EMU_AES_CIPHERTEXT_PTR, ciphertext_addr).unwrap();
+        bus.write32(EMU_AES_TRIGGER, 1).unwrap();
+        assert_eq!(&bus.inner.sram[0x140..0x150], &[0x69,0xc4,0xe0,0xd8,0x6a,0x7b,0x04,0x30,0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a]);
+    }
+
+    #[test]
+    fn explicit_rom_thunks_remain_narrow() {
+        let bus = bus(true);
+        assert_eq!(bus.read16(0x0000_A9C8).unwrap(), THUMB_BX_LR);
+        assert_eq!(bus.read16(0x0000_0EB2).unwrap(), 0x2200);
+        assert_eq!(bus.read16(0x0001_4CCC).unwrap(), 0xB410);
+        assert!(matches!(bus.read16(0x0000_A9CC), Err(Fault::DAccViol)));
+    }
+
+    #[test]
+    fn power_and_heap_control_cells_track_sdk_contract() {
+        let mut bus = bus(true);
+        bus.write32(EMU_SLEEP_ALLOWED, 1).unwrap();
+        bus.write32(EMU_SLEEP_MODE, 1).unwrap();
+        bus.write32(EMU_HEAP_BASE, 0x1FFF_6244).unwrap();
+        bus.write32(EMU_HEAP_SIZE, 0xC00).unwrap();
+        assert!(bus.sleep_allowed());
+        assert_eq!(bus.sleep_mode(), 1);
+        assert_eq!(bus.heap_base.get(), 0x1FFF_6244);
+        assert_eq!(bus.heap_size.get(), 0xC00);
+    }
+
+    #[test]
+    fn mirrored_vector_region_is_not_vendor_rom() {
+        let mut bus = bus(true);
+        assert!(bus.read32(0).is_ok());
+        assert!(bus.read32(0x80).is_ok());
+    }
 }
