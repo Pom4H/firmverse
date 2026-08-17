@@ -13,6 +13,12 @@ const UART1_BASE: u32 = 0x4000_9000;
 const PWM_BASE: u32 = 0x4000_E000;
 const VECTOR_MIRROR_BYTES: u32 = 8;
 const THUMB_BX_LR: u16 = 0x4770;
+const AON_PWROFF: u32 = 0x4000_F000;
+const AON_PWRSLP: u32 = 0x4000_F004;
+const AON_IOCTL0: u32 = 0x4000_F008;
+const AON_IOCTL1: u32 = 0x4000_F00C;
+const AON_IOCTL2: u32 = 0x4000_F010;
+const AON_PMCTL0: u32 = 0x4000_F014;
 const AON_XTAL_16M_CTRL: u32 = 0x4000_F0BC;
 const AON_SLEEP_R1: u32 = 0x4000_F0C4;
 const PCRM_EFUSE_CFG: u32 = 0x4000_F054;
@@ -61,7 +67,12 @@ const KNOWN_STUB_REGS: &[StubReg] = &[
     StubReg { addr: 0x4000_2014, name: "WDT.EOI", reset: 0xFFFF_FFFF },
     StubReg { addr: 0x4000_5000, name: "I2C0.IC_CON", reset: 0xFFFF_FFFF },
     StubReg { addr: 0x4000_6000, name: "SPI0", reset: 0xFFFF_FFFF },
-    StubReg { addr: 0x4000_F000, name: "AON.PMCTL0", reset: 0xFFFF_FFFF },
+    StubReg { addr: AON_PWROFF, name: "AON.PWROFF", reset: 0 },
+    StubReg { addr: AON_PWRSLP, name: "AON.PWRSLP", reset: 0 },
+    StubReg { addr: AON_IOCTL0, name: "AON.IOCTL[0]", reset: 0 },
+    StubReg { addr: AON_IOCTL1, name: "AON.IOCTL[1]", reset: 0 },
+    StubReg { addr: AON_IOCTL2, name: "AON.IOCTL[2]", reset: 0 },
+    StubReg { addr: AON_PMCTL0, name: "AON.PMCTL0", reset: 0 },
     StubReg { addr: 0x4000_F03C, name: "PCRM.CLKSEL", reset: 0xFFFF_FFFF },
     StubReg { addr: AON_XTAL_16M_CTRL, name: "AON.XTAL_16M_CTRL", reset: 0 },
     StubReg { addr: AON_SLEEP_R1, name: "AON.SLEEP_R[1]", reset: 0 },
@@ -403,6 +414,7 @@ mod tests {
     #[test] fn sparse_mmio_preserves_partial_writes() { let mut bus = bus(false); let addr = 0x4001_2000; bus.write32(addr, 0x1122_3344).unwrap(); bus.write8(addr + 1, 0xAA).unwrap(); bus.write16(addr + 2, 0xBEEF).unwrap(); assert_eq!(bus.read32(addr).unwrap(), 0xBEEF_AA44); }
     #[test] fn strict_mode_faults_on_unmodeled_register() { let mut bus = bus(true); assert!(matches!(bus.write32(0x4001_0000, 1), Err(Fault::DAccViol))); }
     #[test] fn strict_mode_accepts_explicit_watchdog_startup_regs() { let mut bus = bus(true); for addr in [0x4000_F03C,0x4000_0014,0x4000_0000,0x4000_000C,0x4000_2000,0x4000_2004,0x4000_200C,0x4000_2014] { bus.write32(addr, 0x5555).unwrap(); assert_eq!(bus.read32(addr).unwrap(), 0x5555); } }
+    #[test] fn aon_gpio_pull_registers_are_clean_exact_rmw_storage() { let mut bus=bus(true); for addr in [AON_IOCTL0,AON_IOCTL1,AON_IOCTL2,AON_PMCTL0] { assert_eq!(bus.read32(addr).unwrap(),0); bus.write32(addr,0x55AA_1234).unwrap(); assert_eq!(bus.read32(addr).unwrap(),0x55AA_1234); } }
     #[test] fn xtal16m_ctrl_has_clean_modeled_fields_and_supports_sdk_rmw() { let mut bus = bus(true); assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0); let cap9 = (bus.read32(AON_XTAL_16M_CTRL).unwrap() & !0x1F) | 0x09; bus.write32(AON_XTAL_16M_CTRL, cap9).unwrap(); let current3 = bus.read32(AON_XTAL_16M_CTRL).unwrap() | 0x60; bus.write32(AON_XTAL_16M_CTRL, current3).unwrap(); assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0x69); }
     #[test] fn rc32k_tracking_state_is_an_exact_clean_aon_stub() { let mut bus = bus(true); assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0); bus.write32(AON_SLEEP_R1, 0x1234_0084).unwrap(); assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0x1234_0084); bus.write32(AON_SLEEP_R1, 0).unwrap(); assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0); }
     #[test] fn efuse_bootstrap_registers_are_exact_clean_stubs() { let mut bus = bus(true); for addr in [PCRM_EFUSE_CFG,PCRM_EFUSE_PROG0,PCRM_EFUSE_PROG1] { assert_eq!(bus.read32(addr).unwrap(), 0); bus.write32(addr, 0x55AA_1234).unwrap(); assert_eq!(bus.read32(addr).unwrap(), 0x55AA_1234); bus.write32(addr, 0).unwrap(); } }
