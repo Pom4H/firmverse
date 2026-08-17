@@ -16,9 +16,13 @@ const HCI_GAP_TASK_ID: u32 = 0x1FFF_090E;
 const HCI_L2CAP_TASK_ID: u32 = 0x1FFF_090F;
 const HCI_SMP_TASK_ID: u32 = 0x1FFF_0910;
 
-const CONT_BDADDR_ALLOC: u32 = 0x5000_F800;
-const CONT_BUF_SIZE_ALLOC: u32 = 0x5000_F804;
-const CONT_SEND_DONE: u32 = 0x5000_F808;
+// 0xC2 is the existing BX LR halfword in the boot-flash drv_disable_irq thunk.
+// With LR=0xC3 it executes one harmless self-loop, giving the emulator another
+// host-dispatch tick without touching strict MMIO or inventing executable RAM.
+const CONT_TRAP: u32 = 0x0000_00C2;
+const STAGE_BDADDR_ALLOC: u32 = 1;
+const STAGE_BUF_SIZE_ALLOC: u32 = 2;
+const STAGE_SEND_DONE: u32 = 3;
 
 const HCI_GAP_EVENT_EVENT: u8 = 0x91;
 const HCI_COMMAND_COMPLETE_EVENT_CODE: u8 = 0x0E;
@@ -34,11 +38,17 @@ pub fn handle(cpu: &mut Processor) -> bool {
         ROM_HCI_GAP_TASK_REGISTER => register(cpu, HCI_GAP_TASK_ID, "GAP"),
         ROM_HCI_L2CAP_TASK_REGISTER => register(cpu, HCI_L2CAP_TASK_ID, "L2CAP"),
         ROM_HCI_SMP_TASK_REGISTER => register(cpu, HCI_SMP_TASK_ID, "SMP"),
-        ROM_HCI_READ_BDADDR_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 7, CONT_BDADDR_ALLOC),
-        ROM_HCI_LE_READ_BUF_SIZE_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 6, CONT_BUF_SIZE_ALLOC),
-        CONT_BDADDR_ALLOC => finish_bdaddr_alloc(cpu),
-        CONT_BUF_SIZE_ALLOC => finish_buf_size_alloc(cpu),
-        CONT_SEND_DONE => finish_send(cpu),
+        ROM_HCI_READ_BDADDR_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 7, STAGE_BDADDR_ALLOC),
+        ROM_HCI_LE_READ_BUF_SIZE_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 6, STAGE_BUF_SIZE_ALLOC),
+        CONT_TRAP => match cpu.get_r(Reg::R3) {
+            STAGE_BDADDR_ALLOC => finish_bdaddr_alloc(cpu),
+            STAGE_BUF_SIZE_ALLOC => finish_buf_size_alloc(cpu),
+            STAGE_SEND_DONE => finish_send(cpu),
+            stage => {
+                eprintln!("BLE strict unknown HCI continuation stage={stage}");
+                false
+            }
+        },
         _ => false,
     }
 }
@@ -53,14 +63,17 @@ fn register(cpu: &mut Processor, slot: u32, name: &str) -> bool {
     true
 }
 
-fn begin_event(cpu: &mut Processor, bytes: u32, continuation: u32) -> bool {
-    // R12 is caller-saved under AAPCS. Host OSAL shims do not mutate it, so it safely
-    // carries the original HCI caller return address across allocate/send continuations.
+fn begin_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
+    // R12 and R3 are caller-saved under AAPCS. Host OSAL shims deliberately leave them
+    // untouched, so they carry the original return address and continuation stage.
     cpu.set_r(Reg::R12, cpu.get_r(Reg::LR));
+    cpu.set_r(Reg::R3, stage);
     cpu.set_r(Reg::R0, bytes);
-    cpu.set_r(Reg::LR, continuation | 1);
+    cpu.set_r(Reg::LR, CONT_TRAP | 1);
     cpu.set_pc(ROM_OSAL_MSG_ALLOC);
-    true
+    // Return false intentionally: HostOsal::handle sees the rewritten PC in the same
+    // dispatch call and executes msg_allocate before Cortex-M fetches vendor ROM.
+    false
 }
 
 fn write_common(cpu: &mut Processor, msg: u32, opcode: u16, ret_len: u32) -> bool {
@@ -80,15 +93,16 @@ fn route_to_gap(cpu: &mut Processor, msg: u32) -> bool {
         Ok(v) if v != 0xFF => v,
         _ => {
             eprintln!("BLE strict HCI GAP task is not registered");
-            return false;
+            return true;
         }
     };
-    cpu.set_r(Reg::R2, msg);
+    cpu.set_r(Reg::R3, STAGE_SEND_DONE);
     cpu.set_r(Reg::R0, u32::from(task));
     cpu.set_r(Reg::R1, msg);
-    cpu.set_r(Reg::LR, CONT_SEND_DONE | 1);
+    cpu.set_r(Reg::LR, CONT_TRAP | 1);
     cpu.set_pc(ROM_OSAL_MSG_SEND);
-    true
+    // Same handoff rule as begin_event: let HostOsal consume msg_send immediately.
+    false
 }
 
 fn finish_bdaddr_alloc(cpu: &mut Processor) -> bool {
@@ -165,5 +179,10 @@ mod tests {
     #[test]
     fn command_complete_layout_is_arm32_compatible() {
         assert_eq!(CMD_COMPLETE_BYTES, 12);
+    }
+
+    #[test]
+    fn continuation_trap_is_existing_boot_flash_bx_lr() {
+        assert_eq!(CONT_TRAP, 0xC2);
     }
 }
