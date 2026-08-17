@@ -1,3 +1,4 @@
+use crate::mailbox;
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
@@ -12,6 +13,7 @@ const ROM_HCI_LE_SET_ADV_ENABLE_CMD: u32 = 0x0000_1F68;
 const ROM_HCI_LE_SET_ADV_PARAM_CMD: u32 = 0x0000_1F84;
 const ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD: u32 = 0x0000_2254;
 const ROM_HCI_READ_BDADDR_CMD: u32 = 0x0000_2550;
+const ROM_HCI_SEND_DATA_PKT: u32 = 0x0000_27E8;
 const ROM_OSAL_MSG_ALLOC: u32 = 0x0001_4D1C;
 const ROM_OSAL_MSG_SEND: u32 = 0x0001_4F58;
 
@@ -20,15 +22,22 @@ const HCI_GAP_TASK_ID: u32 = 0x1FFF_090E;
 const HCI_L2CAP_TASK_ID: u32 = 0x1FFF_090F;
 const HCI_SMP_TASK_ID: u32 = 0x1FFF_0910;
 
+const RADIO_STATUS_SHADOW: u32 = mailbox::BASE + 0x300;
+const IDLE_BX_LR_ROM: u32 = 0x0000_A9C8;
 const CONT_TRAP: u32 = 0x0000_00C2;
 const CONT_MAGIC: u32 = 0x4843_4921;
 const STAGE_BDADDR_ALLOC: u32 = 1;
 const STAGE_BUF_SIZE_ALLOC: u32 = 2;
 const STAGE_SEND_DONE: u32 = 3;
+const STAGE_CONN_ALLOC: u32 = 4;
+const STAGE_DISCONN_ALLOC: u32 = 5;
 const STAGE_STATUS_FLAG: u32 = 0x8000_0000;
 
 const HCI_GAP_EVENT_EVENT: u8 = 0x91;
 const HCI_COMMAND_COMPLETE_EVENT_CODE: u8 = 0x0E;
+const HCI_DISCONNECTION_COMPLETE_EVENT_CODE: u8 = 0x05;
+const HCI_LE_EVENT_CODE: u8 = 0x3E;
+const HCI_BLE_CONNECTION_COMPLETE_EVENT: u8 = 0x01;
 const HCI_SUCCESS: u32 = 0;
 const HCI_ERROR_MEM_CAP_EXCEEDED: u32 = 0x07;
 const HCI_ERROR_INVALID_PARAMS: u32 = 0x12;
@@ -39,8 +48,13 @@ const OPCODE_LE_SET_ADV_DATA: u16 = 0x2008;
 const OPCODE_LE_SET_SCAN_RSP_DATA: u16 = 0x2009;
 const OPCODE_LE_SET_ADV_ENABLE: u16 = 0x200A;
 const CMD_COMPLETE_BYTES: u32 = 12;
+const CONN_COMPLETE_BYTES: u32 = 22;
+const DISCONN_COMPLETE_BYTES: u32 = 8;
 
 pub fn handle(cpu: &mut Processor) -> bool {
+    if poll_host_radio(cpu) {
+        return false;
+    }
     match cpu.get_pc() {
         ROM_HCI_INIT => register(cpu, HCI_TASK_ID, "HCI"),
         ROM_HCI_GAP_TASK_REGISTER => register(cpu, HCI_GAP_TASK_ID, "GAP"),
@@ -52,9 +66,35 @@ pub fn handle(cpu: &mut Processor) -> bool {
         ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD => set_payload_data(cpu, OPCODE_LE_SET_SCAN_RSP_DATA, "ScanRspData"),
         ROM_HCI_LE_SET_ADV_ENABLE_CMD => set_adv_enable(cpu),
         ROM_HCI_LE_SET_ADV_PARAM_CMD => set_adv_params(cpu),
+        ROM_HCI_SEND_DATA_PKT => send_data_pkt(cpu),
         CONT_TRAP if cpu.get_r(Reg::R2) == CONT_MAGIC => continue_event(cpu),
         _ => false,
     }
+}
+
+fn poll_host_radio(cpu: &mut Processor) -> bool {
+    if cpu.get_pc() != IDLE_BX_LR_ROM || cpu.get_r(Reg::R2) == CONT_MAGIC {
+        return false;
+    }
+    let gap_task = match cpu.read8(HCI_GAP_TASK_ID) {
+        Ok(v) if v > 0 && v < 64 => v,
+        _ => return false,
+    };
+    let status = match mailbox::status(cpu) { Ok(v) => v, Err(_) => return false };
+    let seen = cpu.read32(RADIO_STATUS_SHADOW).unwrap_or(0);
+    let connected = status & mailbox::STATUS_CONNECTED != 0;
+    let was_connected = seen & mailbox::STATUS_CONNECTED != 0;
+    if connected == was_connected {
+        return false;
+    }
+    if cpu.write32(RADIO_STATUS_SHADOW, status).is_err() {
+        return false;
+    }
+    let stage = if connected { STAGE_CONN_ALLOC } else { STAGE_DISCONN_ALLOC };
+    let bytes = if connected { CONN_COMPLETE_BYTES } else { DISCONN_COMPLETE_BYTES };
+    eprintln!("BLE host radio {} -> guest GAP task={gap_task}", if connected { "connect" } else { "disconnect" });
+    begin_async_event(cpu, bytes, stage);
+    true
 }
 
 fn continue_event(cpu: &mut Processor) -> bool {
@@ -63,6 +103,8 @@ fn continue_event(cpu: &mut Processor) -> bool {
         STAGE_BDADDR_ALLOC => finish_bdaddr_alloc(cpu),
         STAGE_BUF_SIZE_ALLOC => finish_buf_size_alloc(cpu),
         STAGE_SEND_DONE => finish_send(cpu),
+        STAGE_CONN_ALLOC => finish_conn_alloc(cpu),
+        STAGE_DISCONN_ALLOC => finish_disconn_alloc(cpu),
         _ if stage & STAGE_STATUS_FLAG != 0 => finish_status_alloc(cpu, (stage & 0xFFFF) as u16),
         _ => false,
     }
@@ -103,6 +145,34 @@ fn set_adv_params(cpu: &mut Processor) -> bool {
     begin_status_event(cpu, OPCODE_LE_SET_ADV_PARAM)
 }
 
+fn send_data_pkt(cpu: &mut Processor) -> bool {
+    let len = cpu.get_r(Reg::R2) as usize;
+    let ptr = cpu.get_r(Reg::R3);
+    let mut data = Vec::with_capacity(len);
+    for i in 0..len {
+        match cpu.read8(ptr.wrapping_add(i as u32)) { Ok(v) => data.push(v), Err(_) => return false }
+    }
+    if let Some(value) = att_notification_value(&data) {
+        let _ = mailbox::emit_tx(cpu, value);
+        eprintln!("BLE HCI ACL TX ATT notification bytes={}", value.len());
+    } else {
+        eprintln!("BLE HCI ACL TX bytes={len}");
+    }
+    cpu.set_r(Reg::R0, HCI_SUCCESS);
+    ret(cpu);
+    true
+}
+
+fn att_notification_value(data: &[u8]) -> Option<&[u8]> {
+    if data.len() >= 7 && data[2] == 0x04 && data[3] == 0x00 && matches!(data[4], 0x1B | 0x1D) {
+        return Some(&data[7..]);
+    }
+    if data.len() >= 3 && matches!(data[0], 0x1B | 0x1D) {
+        return Some(&data[3..]);
+    }
+    None
+}
+
 fn immediate_error(cpu: &mut Processor) -> bool {
     cpu.set_r(Reg::R0, HCI_ERROR_INVALID_PARAMS);
     ret(cpu);
@@ -115,6 +185,15 @@ fn begin_status_event(cpu: &mut Processor, opcode: u16) -> bool {
 
 fn begin_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
     cpu.set_r(Reg::R12, cpu.get_r(Reg::LR));
+    begin_event_common(cpu, bytes, stage)
+}
+
+fn begin_async_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
+    cpu.set_r(Reg::R12, cpu.get_pc() | 1);
+    begin_event_common(cpu, bytes, stage)
+}
+
+fn begin_event_common(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
     cpu.set_r(Reg::R2, CONT_MAGIC);
     cpu.set_r(Reg::R3, stage);
     cpu.set_r(Reg::R0, bytes);
@@ -174,6 +253,43 @@ fn finish_buf_size_alloc(cpu: &mut Processor) -> bool {
     route_to_gap(cpu, msg)
 }
 
+fn finish_conn_alloc(cpu: &mut Processor) -> bool {
+    let msg = cpu.get_r(Reg::R0);
+    if msg == 0 { return finish_failed_alloc(cpu); }
+    let peer = [0x06u8, 0x05, 0x04, 0x03, 0x02, 0x01];
+    if cpu.write8(msg, HCI_GAP_EVENT_EVENT).is_err()
+        || cpu.write8(msg + 1, HCI_LE_EVENT_CODE).is_err()
+        || cpu.write8(msg + 2, HCI_BLE_CONNECTION_COMPLETE_EVENT).is_err()
+        || cpu.write8(msg + 3, 0).is_err()
+        || cpu.write16(msg + 4, 0).is_err()
+        || cpu.write8(msg + 6, 1).is_err()
+        || cpu.write8(msg + 7, 0).is_err() { return false; }
+    for (i, byte) in peer.into_iter().enumerate() {
+        if cpu.write8(msg + 8 + i as u32, byte).is_err() { return false; }
+    }
+    if cpu.write16(msg + 14, 24).is_err()
+        || cpu.write16(msg + 16, 0).is_err()
+        || cpu.write16(msg + 18, 200).is_err()
+        || cpu.write8(msg + 20, 0).is_err()
+        || cpu.write8(msg + 21, 0).is_err() { return false; }
+    eprintln!("BLE HCI LE ConnectionComplete handle=0 interval=30ms");
+    route_to_gap(cpu, msg)
+}
+
+fn finish_disconn_alloc(cpu: &mut Processor) -> bool {
+    let msg = cpu.get_r(Reg::R0);
+    if msg == 0 { return finish_failed_alloc(cpu); }
+    if cpu.write8(msg, HCI_GAP_EVENT_EVENT).is_err()
+        || cpu.write8(msg + 1, HCI_DISCONNECTION_COMPLETE_EVENT_CODE).is_err()
+        || cpu.write8(msg + 2, 0).is_err()
+        || cpu.write8(msg + 3, 0).is_err()
+        || cpu.write16(msg + 4, 0).is_err()
+        || cpu.write8(msg + 6, 0x13).is_err()
+        || cpu.write8(msg + 7, 0).is_err() { return false; }
+    eprintln!("BLE HCI DisconnectionComplete handle=0 reason=0x13");
+    route_to_gap(cpu, msg)
+}
+
 fn finish_status_alloc(cpu: &mut Processor, opcode: u16) -> bool {
     let msg = cpu.get_r(Reg::R0);
     if msg == 0 { return finish_failed_alloc(cpu); }
@@ -215,11 +331,14 @@ mod tests {
     }
 
     #[test]
-    fn command_complete_layout_is_arm32_compatible() { assert_eq!(CMD_COMPLETE_BYTES, 12); }
+    fn connection_event_layout_is_arm32_sdk_layout() {
+        assert_eq!(CONN_COMPLETE_BYTES, 22);
+        assert_eq!(DISCONN_COMPLETE_BYTES, 8);
+    }
 
     #[test]
-    fn continuation_trap_is_existing_boot_flash_bx_lr() {
-        assert_eq!(CONT_TRAP, 0xC2);
-        assert_eq!(CONT_MAGIC, 0x4843_4921);
+    fn notification_parser_accepts_l2cap_att() {
+        let pdu = [3, 0, 4, 0, 0x1B, 1, 0, 0xAA];
+        assert_eq!(att_notification_value(&pdu), Some(&[0xAA][..]));
     }
 }
