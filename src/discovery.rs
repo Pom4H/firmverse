@@ -11,6 +11,7 @@ const UART0_BASE: u32 = 0x4000_4000;
 const UART1_BASE: u32 = 0x4000_9000;
 const PWM_BASE: u32 = 0x4000_E000;
 const VECTOR_MIRROR_BYTES: u32 = 8;
+const THUMB_BX_LR: u16 = 0x4770;
 
 const TIM_CURRENT: [u32; 6] = [
     0x4000_1004,
@@ -38,12 +39,19 @@ const KNOWN_STUB_REGS: &[(u32, &str)] = &[
     (0x4000_F03C, "PCRM.CLKSEL"),
 ];
 
+// Exact ROM ABI entry points that are intentionally replaced in the emulator.
+// drv_irq_init is a bootstrap IRQ-table initializer. Until IRQ delivery itself is modeled,
+// the host-side behavior is deliberately a no-op return instead of pretending the vendor ROM
+// body is present. The symbol is Thumb 0x0000_a9c9; the fetch address is 0x0000_a9c8.
+const ROM_NOOP_SHIMS: &[(u32, &str)] = &[(0x0000_A9C8, "drv_irq_init")];
+
 pub struct DiscoveryBus {
     inner: Phy6252Bus,
     strict: bool,
     sparse_mmio: RefCell<HashMap<u32, u32>>,
     seen_unknown: RefCell<HashSet<u32>>,
     seen_rom: RefCell<HashSet<u32>>,
+    seen_shims: RefCell<HashSet<u32>>,
 }
 
 impl DiscoveryBus {
@@ -54,6 +62,7 @@ impl DiscoveryBus {
             sparse_mmio: RefCell::new(HashMap::new()),
             seen_unknown: RefCell::new(HashSet::new()),
             seen_rom: RefCell::new(HashSet::new()),
+            seen_shims: RefCell::new(HashSet::new()),
         }
     }
 
@@ -66,6 +75,21 @@ impl DiscoveryBus {
         // which the emulator does not have. In strict discovery, stop at the first access
         // instead of executing the old all-zero ROM placeholder until 0x0002_0000.
         (VECTOR_MIRROR_BYTES..ROM_END).contains(&addr)
+    }
+
+    fn rom_noop_shim(addr: u32) -> Option<&'static str> {
+        ROM_NOOP_SHIMS
+            .iter()
+            .find_map(|(entry, name)| (*entry == (addr & !1)).then_some(*name))
+    }
+
+    fn rom_shim_read16(&self, addr: u32) -> Option<u16> {
+        let entry = addr & !1;
+        let name = Self::rom_noop_shim(entry)?;
+        if self.seen_shims.borrow_mut().insert(entry) {
+            eprintln!("ROM shim {name} entry={entry:#010x} behavior=noop-return");
+        }
+        Some(THUMB_BX_LR)
     }
 
     fn gpio_known(addr: u32, write: bool) -> bool {
@@ -189,6 +213,10 @@ impl DiscoveryBus {
 
 impl Bus for DiscoveryBus {
     fn read32(&mut self, addr: u32) -> Result<u32, Fault> {
+        if Self::rom_noop_shim(addr).is_some() {
+            let lo = u32::from(self.rom_shim_read16(addr).unwrap());
+            return Ok(lo | (u32::from(THUMB_BX_LR) << 16));
+        }
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("read32", addr);
         }
@@ -199,6 +227,9 @@ impl Bus for DiscoveryBus {
     }
 
     fn read16(&self, addr: u32) -> Result<u16, Fault> {
+        if let Some(value) = self.rom_shim_read16(addr) {
+            return Ok(value);
+        }
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("read16", addr);
         }
@@ -210,6 +241,10 @@ impl Bus for DiscoveryBus {
     }
 
     fn read8(&self, addr: u32) -> Result<u8, Fault> {
+        if let Some(_) = Self::rom_noop_shim(addr) {
+            let bytes = THUMB_BX_LR.to_le_bytes();
+            return Ok(bytes[(addr & 1) as usize]);
+        }
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("read8", addr);
         }
@@ -323,6 +358,13 @@ mod tests {
     fn strict_mode_stops_at_first_vendor_rom_access() {
         let bus = bus(true);
         assert!(matches!(bus.read16(0x0000_1000), Err(Fault::DAccViol)));
+    }
+
+    #[test]
+    fn explicit_rom_shim_is_a_thumb_noop_return() {
+        let bus = bus(true);
+        assert_eq!(bus.read16(0x0000_A9C8).unwrap(), THUMB_BX_LR);
+        assert!(matches!(bus.read16(0x0000_A9CA), Err(Fault::DAccViol)));
     }
 
     #[test]
