@@ -89,6 +89,7 @@ int main(void)
     uint32_t seen_rx = 0;
     uint32_t last_log = 0;
     uint32_t phase = 0;
+    uint32_t last_link = 0;
 
     *gpio_ddr = OUT_MASK;
     *gpio_dr = 0;
@@ -99,6 +100,7 @@ int main(void)
     *wdt = 0xAAAA;
 
     uart_puts(uart0, "kit-demo boot\n");
+    uart_puts(uart0, "ble adv PB03FKIT\n");
     uart_puts(uart1, "uart1\n");
 
     if (mb->magic != MAGIC_PHY2) {
@@ -111,22 +113,32 @@ int main(void)
         (void)tmr;
         *wdt = 0x5555;
 
+        int linked = (mb->status & STATUS_CONNECTED) != 0;
+        if ((uint32_t)linked != last_link) {
+            last_link = (uint32_t)linked;
+            uart_puts(uart0, linked ? "ble up\n" : "ble down\n");
+        }
+
         int btn = (*gpio_ext & BIT(PIN_BTN)) != 0;
 
         uint32_t rgb = 0;
-        switch ((tick >> 6) & 3u) {
-        case 0:
-            rgb = BIT(PIN_LED_R);
-            break;
-        case 1:
+        if (linked) {
             rgb = BIT(PIN_LED_G);
-            break;
-        case 2:
-            rgb = BIT(PIN_LED_B);
-            break;
-        default:
-            rgb = BIT(PIN_LED_WARM);
-            break;
+        } else {
+            switch ((tick >> 6) & 3u) {
+            case 0:
+                rgb = BIT(PIN_LED_R);
+                break;
+            case 1:
+                rgb = BIT(PIN_LED_G);
+                break;
+            case 2:
+                rgb = BIT(PIN_LED_B);
+                break;
+            default:
+                rgb = BIT(PIN_LED_WARM);
+                break;
+            }
         }
         if (btn) {
             rgb = RGB_MASK;

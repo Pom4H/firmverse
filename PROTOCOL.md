@@ -37,6 +37,7 @@ Unknown lines are ignored.
 |---|---|
 | `hex <path>` | Image loaded (stderr in `--live`). |
 | `READY` | Live pump is running. |
+| `ADV name=… service=…` | BLE advertisement the host radio should use. |
 | `GPIO <dr> <ddr>` | `AP_GPIO->swporta_dr` and `swporta_ddr`, 8 hex digits. |
 | `PWM <c0> … <c5>` | Duty of six PWM slots, 4 hex digits each. |
 | `UART <text>` | One line written to UART0 or UART1 THR. |
@@ -53,4 +54,18 @@ tx_seq, tx_len, tx[256]
 tick_ms u32
 ```
 
-The demo firmware echoes `WRITE` payloads on `FRAME` and, while notify is on, sends a 12-byte snapshot about every 100 ms of `tick_ms`.
+The demo firmware echoes `WRITE` payloads on `FRAME` and, while notify is on, sends a 12-byte snapshot about every 128 ms of `tick_ms`. On connect it logs `ble up` and holds the green LED.
+
+## BLE air
+
+`bash scripts/air.sh` (macOS) runs CoreBluetooth as the 2.4 GHz PHY:
+
+| BLE host | emu stdin / stdout |
+|---|---|
+| advertise `PB03FKIT` | `ADV …` |
+| central connects + CCCD | `CONNECT` then `CCCD 1` |
+| GATT write RX | `WRITE <hex>` |
+| `FRAME <hex>` | GATT notify TX |
+| disconnect | `DISCONNECT` |
+
+UUIDs: service `6B1D0001-7C8E-4A91-9F2B-E3A14C5B0001`, RX `…0002…`, TX `…0003…`.

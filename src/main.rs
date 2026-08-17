@@ -127,6 +127,7 @@ fn run() -> Result<ExitCode, String> {
 
     if live {
         println!("READY");
+        println!("ADV name=PB03FKIT service=6B1D0001-7C8E-4A91-9F2B-E3A14C5B0001");
         emit_gpio(&gpio);
         emit_pwm(&pwm);
     }
@@ -391,7 +392,8 @@ fn print_usage() {
     eprintln!(
         "usage: phy6252-emu [--live] [--max-insns N] [firmware.hex]\n\
          PHY6252 Cortex-M0 emulator. --live streams GPIO/UART/FRAME and reads stdin.\n\
-         stdin: IN <hex> | WRITE <hex> | CONNECT | DISCONNECT | CCCD <n> | TICK <ms> | ADC <p20> <p15> <p24> <p23>"
+         stdin: IN <hex> | WRITE <hex> | CONNECT | DISCONNECT | CCCD <n> | TICK <ms> | ADC <p20> <p15> <p24> <p23>\n\
+         BLE air (macOS): bash scripts/air.sh — laptop radio is the RF PHY, ATT goes to the hex mailbox."
     );
 }
 

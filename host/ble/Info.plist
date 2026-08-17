@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>dev.pom4h.phy6252-ble</string>
+  <key>CFBundleName</key>
+  <string>phy6252-ble</string>
+  <key>CFBundleExecutable</key>
+  <string>phy6252-ble</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Advertise the emulated PB-03F-Kit over Bluetooth LE.</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>Advertise the emulated PB-03F-Kit over Bluetooth LE.</string>
+</dict>
+</plist>
