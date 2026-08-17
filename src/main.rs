@@ -9,6 +9,7 @@ mod emu;
 mod hex;
 mod mailbox;
 mod osal;
+mod osal_power;
 mod silicon_regs;
 mod tui;
 
