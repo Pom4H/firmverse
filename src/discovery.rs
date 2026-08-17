@@ -1,4 +1,6 @@
-use crate::bus::{Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS};
+use crate::bus::{
+    Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS, ROM_END,
+};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use zmu_cortex_m::bus::Bus;
@@ -8,6 +10,7 @@ const GPIO_BASE: u32 = 0x4000_8000;
 const UART0_BASE: u32 = 0x4000_4000;
 const UART1_BASE: u32 = 0x4000_9000;
 const PWM_BASE: u32 = 0x4000_E000;
+const VECTOR_MIRROR_BYTES: u32 = 8;
 
 const TIM_CURRENT: [u32; 6] = [
     0x4000_1004,
@@ -40,6 +43,7 @@ pub struct DiscoveryBus {
     strict: bool,
     sparse_mmio: RefCell<HashMap<u32, u32>>,
     seen_unknown: RefCell<HashSet<u32>>,
+    seen_rom: RefCell<HashSet<u32>>,
 }
 
 impl DiscoveryBus {
@@ -49,11 +53,19 @@ impl DiscoveryBus {
             strict,
             sparse_mmio: RefCell::new(HashMap::new()),
             seen_unknown: RefCell::new(HashSet::new()),
+            seen_rom: RefCell::new(HashSet::new()),
         }
     }
 
     fn is_mmio(addr: u32) -> bool {
         (MMIO_BASE..MMIO_END).contains(&addr)
+    }
+
+    fn is_unmodeled_rom(addr: u32) -> bool {
+        // zmu owns the mirrored SP/reset pair at 0..8. Everything after that is vendor ROM,
+        // which the emulator does not have. In strict discovery, stop at the first access
+        // instead of executing the old all-zero ROM placeholder until 0x0002_0000.
+        (VECTOR_MIRROR_BYTES..ROM_END).contains(&addr)
     }
 
     fn gpio_known(addr: u32, write: bool) -> bool {
@@ -148,6 +160,16 @@ impl DiscoveryBus {
         }
     }
 
+    fn rom_unknown<T>(&self, op: &str, addr: u32) -> Result<T, Fault> {
+        let first = self.seen_rom.borrow_mut().insert(addr & !1);
+        if first {
+            eprintln!(
+                "ROM unknown {op} addr={addr:#010x} -- vendor ROM image/ABI not modeled; strict fault"
+            );
+        }
+        Err(Fault::DAccViol)
+    }
+
     fn read_fallback(&self, op: &str, addr: u32) -> Result<u32, Fault> {
         if Self::known_stub(addr).is_some() {
             return Ok(self.sparse_read(addr));
@@ -167,6 +189,9 @@ impl DiscoveryBus {
 
 impl Bus for DiscoveryBus {
     fn read32(&mut self, addr: u32) -> Result<u32, Fault> {
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("read32", addr);
+        }
         if !Self::is_mmio(addr) || Self::functional_read(addr) {
             return self.inner.read32(addr);
         }
@@ -174,6 +199,9 @@ impl Bus for DiscoveryBus {
     }
 
     fn read16(&self, addr: u32) -> Result<u16, Fault> {
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("read16", addr);
+        }
         if !Self::is_mmio(addr) || Self::functional_read(addr) {
             return self.inner.read16(addr);
         }
@@ -182,6 +210,9 @@ impl Bus for DiscoveryBus {
     }
 
     fn read8(&self, addr: u32) -> Result<u8, Fault> {
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("read8", addr);
+        }
         if !Self::is_mmio(addr) || Self::functional_read(addr) {
             return self.inner.read8(addr);
         }
@@ -190,6 +221,9 @@ impl Bus for DiscoveryBus {
     }
 
     fn write32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("write32", addr);
+        }
         if !Self::is_mmio(addr) || Self::functional_write(addr) {
             return self.inner.write32(addr, value);
         }
@@ -197,6 +231,9 @@ impl Bus for DiscoveryBus {
     }
 
     fn write16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("write16", addr);
+        }
         if !Self::is_mmio(addr) || Self::functional_write(addr) {
             return self.inner.write16(addr, value);
         }
@@ -204,6 +241,9 @@ impl Bus for DiscoveryBus {
     }
 
     fn write8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("write8", addr);
+        }
         if !Self::is_mmio(addr) || Self::functional_write(addr) {
             return self.inner.write8(addr, value);
         }
@@ -277,5 +317,17 @@ mod tests {
             bus.write32(addr, 0x5555).unwrap();
             assert_eq!(bus.read32(addr).unwrap(), 0x5555);
         }
+    }
+
+    #[test]
+    fn strict_mode_stops_at_first_vendor_rom_access() {
+        let bus = bus(true);
+        assert!(matches!(bus.read16(0x0000_1000), Err(Fault::DAccViol)));
+    }
+
+    #[test]
+    fn vector_mirror_is_not_treated_as_unknown_rom() {
+        let bus = bus(true);
+        assert!(bus.read32(0).is_ok());
     }
 }
