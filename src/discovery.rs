@@ -18,14 +18,21 @@ const TIM_CURRENT: [u32; 6] = [
     0x4000_1068,
 ];
 
-// Registers deliberately accepted as inert storage because the demo touches them.
-// Everything else must either have behavior below or be discovered from real firmware.
+// Registers deliberately accepted as inert read/write storage. Keep this list exact:
+// broad peripheral ranges would hide the next silicon behavior that real firmware needs.
+// The watchdog-startup entries come from the pinned PHY62XX SDK 3.1.2 drivers.
 const KNOWN_STUB_REGS: &[(u32, &str)] = &[
-    (0x4000_0000, "PCR"),
-    (0x4000_2000, "WDT"),
-    (0x4000_5000, "I2C0"),
+    (0x4000_0000, "PCR.SW_RESET0"),
+    (0x4000_000C, "PCR.SW_RESET2"),
+    (0x4000_0014, "PCR.SW_CLK1"),
+    (0x4000_2000, "WDT.CR"),
+    (0x4000_2004, "WDT.TORR"),
+    (0x4000_200C, "WDT.CRR"),
+    (0x4000_2014, "WDT.EOI"),
+    (0x4000_5000, "I2C0.IC_CON"),
     (0x4000_6000, "SPI0"),
-    (0x4000_F000, "AON"),
+    (0x4000_F000, "AON.PMCTL0"),
+    (0x4000_F03C, "PCRM.CLKSEL"),
 ];
 
 pub struct DiscoveryBus {
@@ -255,10 +262,20 @@ mod tests {
     }
 
     #[test]
-    fn strict_mode_accepts_explicit_demo_stub() {
+    fn strict_mode_accepts_explicit_watchdog_startup_regs() {
         let mut bus = bus(true);
-        let wdt = 0x4000_2000;
-        bus.write32(wdt, 0x5555).unwrap();
-        assert_eq!(bus.read32(wdt).unwrap(), 0x5555);
+        for addr in [
+            0x4000_F03C,
+            0x4000_0014,
+            0x4000_0000,
+            0x4000_000C,
+            0x4000_2000,
+            0x4000_2004,
+            0x4000_200C,
+            0x4000_2014,
+        ] {
+            bus.write32(addr, 0x5555).unwrap();
+            assert_eq!(bus.read32(addr).unwrap(), 0x5555);
+        }
     }
 }
