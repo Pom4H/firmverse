@@ -75,6 +75,18 @@ struct RomShim {
 // BX LR, padded so a 32-bit instruction fetch at the entry is still fully backed.
 const DRV_IRQ_INIT_CODE: &[u8] = &[0x70, 0x47, 0x70, 0x47];
 
+// efuse_read(index, uint32_t *out): the SDK callers observed in Test-DPLS provide an
+// 8-byte output buffer and treat r0 == 0 as success. The emulator deliberately exposes a
+// deterministic blank bank rather than inventing factory-programmed calibration/security data.
+//   movs r2, #0
+//   str  r2, [r1]
+//   str  r2, [r1, #4]
+//   movs r0, #0
+//   bx   lr
+const EFUSE_READ_CODE: &[u8] = &[
+    0x00, 0x22, 0x0A, 0x60, 0x4A, 0x60, 0x00, 0x20, 0x70, 0x47, 0x70, 0x47,
+];
+
 // enableSleep():
 //   movs r0, #1
 //   ldr  r1, [pc, #4]   ; literal at entry + 8
@@ -108,6 +120,12 @@ const ROM_SHIMS: &[RomShim] = &[
         name: "drv_irq_init",
         behavior: "noop-return",
         code: DRV_IRQ_INIT_CODE,
+    },
+    RomShim {
+        entry: 0x0000_ACE0,
+        name: "efuse_read",
+        behavior: "blank-8-byte-read-success",
+        code: EFUSE_READ_CODE,
     },
     RomShim {
         entry: 0x0000_A920,
@@ -546,6 +564,17 @@ mod tests {
         let bus = bus(true);
         assert_eq!(bus.read16(0x0000_A9C8).unwrap(), THUMB_BX_LR);
         assert!(matches!(bus.read16(0x0000_A9CC), Err(Fault::DAccViol)));
+    }
+
+    #[test]
+    fn efuse_read_shim_is_a_blank_eight_byte_success_read() {
+        let bus = bus(true);
+        assert_eq!(bus.read16(0x0000_ACE0).unwrap(), 0x2200); // movs r2,#0
+        assert_eq!(bus.read16(0x0000_ACE2).unwrap(), 0x600A); // str r2,[r1]
+        assert_eq!(bus.read16(0x0000_ACE4).unwrap(), 0x604A); // str r2,[r1,#4]
+        assert_eq!(bus.read16(0x0000_ACE6).unwrap(), 0x2000); // movs r0,#0
+        assert_eq!(bus.read16(0x0000_ACE8).unwrap(), THUMB_BX_LR);
+        assert!(matches!(bus.read16(0x0000_ACEC), Err(Fault::DAccViol)));
     }
 
     #[test]
