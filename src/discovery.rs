@@ -1,7 +1,5 @@
 use crate::aes::aes128_encrypt_block;
-use crate::bus::{
-    Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS, ROM_END, XIP_BASE,
-};
+use crate::bus::{Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS, ROM_END, XIP_BASE};
 use crate::silicon_regs;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -75,38 +73,166 @@ struct StubReg {
 }
 
 const KNOWN_STUB_REGS: &[StubReg] = &[
-    StubReg { addr: PCR_SW_RESET0, name: "PCR.SW_RESET0", reset: 0xFFFF_FFFF },
-    StubReg { addr: PCR_SW_RESET1, name: "PCR.SW_RESET1", reset: 0xFFFF_FFFF },
-    StubReg { addr: PCR_SW_CLK, name: "PCR.SW_CLK", reset: 0xFFFF_FFFF },
-    StubReg { addr: PCR_SW_RESET2, name: "PCR.SW_RESET2", reset: 0xFFFF_FFFF },
-    StubReg { addr: PCR_SW_RESET3, name: "PCR.SW_RESET3", reset: 0xFFFF_FFFF },
-    StubReg { addr: PCR_SW_CLK1, name: "PCR.SW_CLK1", reset: 0xFFFF_FFFF },
-    StubReg { addr: PCR_APB_CLK, name: "PCR.APB_CLK", reset: 0xFFFF_FFFF },
-    StubReg { addr: PCR_APB_CLK_UPDATE, name: "PCR.APB_CLK_UPDATE", reset: 0 },
-    StubReg { addr: PCR_CACHE_CLOCK_GATE, name: "PCR.CACHE_CLOCK_GATE", reset: 0 },
-    StubReg { addr: PCR_CACHE_RST, name: "PCR.CACHE_RST", reset: 0 },
-    StubReg { addr: PCR_CACHE_BYPASS, name: "PCR.CACHE_BYPASS", reset: 0 },
-    StubReg { addr: 0x4000_2000, name: "WDT.CR", reset: 0xFFFF_FFFF },
-    StubReg { addr: 0x4000_2004, name: "WDT.TORR", reset: 0xFFFF_FFFF },
-    StubReg { addr: 0x4000_200C, name: "WDT.CRR", reset: 0xFFFF_FFFF },
-    StubReg { addr: 0x4000_2014, name: "WDT.EOI", reset: 0xFFFF_FFFF },
-    StubReg { addr: 0x4000_5000, name: "I2C0.IC_CON", reset: 0xFFFF_FFFF },
-    StubReg { addr: 0x4000_6000, name: "SPI0", reset: 0xFFFF_FFFF },
-    StubReg { addr: AON_PWROFF, name: "AON.PWROFF", reset: 0 },
-    StubReg { addr: AON_PWRSLP, name: "AON.PWRSLP", reset: 0 },
-    StubReg { addr: AON_IOCTL0, name: "AON.IOCTL[0]", reset: 0 },
-    StubReg { addr: AON_IOCTL1, name: "AON.IOCTL[1]", reset: 0 },
-    StubReg { addr: AON_IOCTL2, name: "AON.IOCTL[2]", reset: 0 },
-    StubReg { addr: AON_PMCTL0, name: "AON.PMCTL0", reset: 0 },
-    StubReg { addr: AON_PMCTL1, name: "AON.PMCTL1", reset: 0 },
-    StubReg { addr: AON_PMCTL2_0, name: "AON.PMCTL2_0", reset: 0 },
-    StubReg { addr: AON_PMCTL2_1, name: "AON.PMCTL2_1", reset: 0 },
-    StubReg { addr: 0x4000_F03C, name: "PCRM.CLKSEL", reset: 0xFFFF_FFFF },
-    StubReg { addr: AON_XTAL_16M_CTRL, name: "AON.XTAL_16M_CTRL", reset: 0 },
-    StubReg { addr: AON_SLEEP_R1, name: "AON.SLEEP_R[1]", reset: 0 },
-    StubReg { addr: PCRM_EFUSE_CFG, name: "PCRM.efuse_cfg", reset: 0 },
-    StubReg { addr: PCRM_EFUSE_PROG0, name: "PCRM.EFUSE_PROG[0]", reset: 0 },
-    StubReg { addr: PCRM_EFUSE_PROG1, name: "PCRM.EFUSE_PROG[1]", reset: 0 },
+    StubReg {
+        addr: PCR_SW_RESET0,
+        name: "PCR.SW_RESET0",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: PCR_SW_RESET1,
+        name: "PCR.SW_RESET1",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: PCR_SW_CLK,
+        name: "PCR.SW_CLK",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: PCR_SW_RESET2,
+        name: "PCR.SW_RESET2",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: PCR_SW_RESET3,
+        name: "PCR.SW_RESET3",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: PCR_SW_CLK1,
+        name: "PCR.SW_CLK1",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: PCR_APB_CLK,
+        name: "PCR.APB_CLK",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: PCR_APB_CLK_UPDATE,
+        name: "PCR.APB_CLK_UPDATE",
+        reset: 0,
+    },
+    StubReg {
+        addr: PCR_CACHE_CLOCK_GATE,
+        name: "PCR.CACHE_CLOCK_GATE",
+        reset: 0,
+    },
+    StubReg {
+        addr: PCR_CACHE_RST,
+        name: "PCR.CACHE_RST",
+        reset: 0,
+    },
+    StubReg {
+        addr: PCR_CACHE_BYPASS,
+        name: "PCR.CACHE_BYPASS",
+        reset: 0,
+    },
+    StubReg {
+        addr: 0x4000_2000,
+        name: "WDT.CR",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: 0x4000_2004,
+        name: "WDT.TORR",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: 0x4000_200C,
+        name: "WDT.CRR",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: 0x4000_2014,
+        name: "WDT.EOI",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: 0x4000_5000,
+        name: "I2C0.IC_CON",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: 0x4000_6000,
+        name: "SPI0",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: AON_PWROFF,
+        name: "AON.PWROFF",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_PWRSLP,
+        name: "AON.PWRSLP",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_IOCTL0,
+        name: "AON.IOCTL[0]",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_IOCTL1,
+        name: "AON.IOCTL[1]",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_IOCTL2,
+        name: "AON.IOCTL[2]",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_PMCTL0,
+        name: "AON.PMCTL0",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_PMCTL1,
+        name: "AON.PMCTL1",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_PMCTL2_0,
+        name: "AON.PMCTL2_0",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_PMCTL2_1,
+        name: "AON.PMCTL2_1",
+        reset: 0,
+    },
+    StubReg {
+        addr: 0x4000_F03C,
+        name: "PCRM.CLKSEL",
+        reset: 0xFFFF_FFFF,
+    },
+    StubReg {
+        addr: AON_XTAL_16M_CTRL,
+        name: "AON.XTAL_16M_CTRL",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_SLEEP_R1,
+        name: "AON.SLEEP_R[1]",
+        reset: 0,
+    },
+    StubReg {
+        addr: PCRM_EFUSE_CFG,
+        name: "PCRM.efuse_cfg",
+        reset: 0,
+    },
+    StubReg {
+        addr: PCRM_EFUSE_PROG0,
+        name: "PCRM.EFUSE_PROG[0]",
+        reset: 0,
+    },
+    StubReg {
+        addr: PCRM_EFUSE_PROG1,
+        name: "PCRM.EFUSE_PROG[1]",
+        reset: 0,
+    },
 ];
 
 struct RomShim {
@@ -117,32 +243,26 @@ struct RomShim {
 }
 
 const AEABI_MEMCLR4_CODE: &[u8] = &[
-    0x00, 0x22, 0x00, 0x29, 0x03, 0xD0, 0x02, 0x70,
-    0x01, 0x30, 0x01, 0x39, 0xF9, 0xD1, 0x70, 0x47,
+    0x00, 0x22, 0x00, 0x29, 0x03, 0xD0, 0x02, 0x70, 0x01, 0x30, 0x01, 0x39, 0xF9, 0xD1, 0x70, 0x47,
 ];
 const DRV_IRQ_INIT_CODE: &[u8] = &[0x70, 0x47, 0x70, 0x47];
 const EFUSE_READ_CODE: &[u8] = &[
     0x00, 0x22, 0x0A, 0x60, 0x4A, 0x60, 0x00, 0x20, 0x70, 0x47, 0x70, 0x47,
 ];
 const AES128_ENCRYPT0_CODE: &[u8] = &[
-    0x03, 0x4B, 0x18, 0x60, 0x59, 0x60, 0x9A, 0x60,
-    0x01, 0x20, 0xD8, 0x60, 0x70, 0x47, 0x00, 0xBF,
+    0x03, 0x4B, 0x18, 0x60, 0x59, 0x60, 0x9A, 0x60, 0x01, 0x20, 0xD8, 0x60, 0x70, 0x47, 0x00, 0xBF,
     0x10, 0xFF, 0x00, 0x50,
 ];
 const OSAL_MEMCMP_CODE: &[u8] = &[
-    0x10, 0xB4, 0x00, 0x2A, 0x07, 0xD0, 0x03, 0x78,
-    0x0C, 0x78, 0xA3, 0x42, 0x06, 0xD1, 0x01, 0x30,
-    0x01, 0x31, 0x01, 0x3A, 0xF7, 0xD1, 0x01, 0x20,
-    0x10, 0xBC, 0x70, 0x47, 0x00, 0x20, 0x10, 0xBC,
+    0x10, 0xB4, 0x00, 0x2A, 0x07, 0xD0, 0x03, 0x78, 0x0C, 0x78, 0xA3, 0x42, 0x06, 0xD1, 0x01, 0x30,
+    0x01, 0x31, 0x01, 0x3A, 0xF7, 0xD1, 0x01, 0x20, 0x10, 0xBC, 0x70, 0x47, 0x00, 0x20, 0x10, 0xBC,
     0x70, 0x47,
 ];
 const FINIDV_CODE: &[u8] = &[
-    0x02, 0x4B, 0x01, 0x20, 0x18, 0x60, 0x58, 0x68,
-    0x70, 0x47, 0x00, 0xBF, 0x20, 0xFF, 0x00, 0x50,
+    0x02, 0x4B, 0x01, 0x20, 0x18, 0x60, 0x58, 0x68, 0x70, 0x47, 0x00, 0xBF, 0x20, 0xFF, 0x00, 0x50,
 ];
 const OSAL_MEM_SET_HEAP_CODE: &[u8] = &[
-    0x02, 0x4A, 0x10, 0x60, 0x51, 0x60, 0x70, 0x47,
-    0x00, 0xBF, 0xC0, 0x46, 0x30, 0xFF, 0x00, 0x50,
+    0x02, 0x4A, 0x10, 0x60, 0x51, 0x60, 0x70, 0x47, 0x00, 0xBF, 0xC0, 0x46, 0x30, 0xFF, 0x00, 0x50,
 ];
 const ENABLE_SLEEP_CODE: &[u8] = &[
     0x01, 0x20, 0x01, 0x49, 0x08, 0x60, 0x70, 0x47, 0x00, 0xFF, 0x00, 0x50,
@@ -155,16 +275,78 @@ const SET_SLEEP_MODE_CODE: &[u8] = &[
 ];
 
 const ROM_SHIMS: &[RomShim] = &[
-    RomShim { entry: 0x0000_0EB2, name: "__aeabi_memclr4", behavior: "cortex-m0-byte-clear", code: AEABI_MEMCLR4_CODE },
-    RomShim { entry: 0x0000_3FDC, name: "LL_ENC_AES128_Encrypt0", behavior: "host-aes128-key-plaintext-ciphertext", code: AES128_ENCRYPT0_CODE },
-    RomShim { entry: 0x0000_A2E0, name: "finidv", behavior: "secure-id-efuse-aes-compare", code: FINIDV_CODE },
-    RomShim { entry: 0x0000_A9C8, name: "drv_irq_init", behavior: "noop-return", code: DRV_IRQ_INIT_CODE },
-    RomShim { entry: 0x0000_ACE0, name: "efuse_read", behavior: "blank-8-byte-read-success", code: EFUSE_READ_CODE },
-    RomShim { entry: 0x0000_A920, name: "disableSleep", behavior: "sleep-allowed=false", code: DISABLE_SLEEP_CODE },
-    RomShim { entry: 0x0000_AEAC, name: "enableSleep", behavior: "sleep-allowed=true", code: ENABLE_SLEEP_CODE },
-    RomShim { entry: 0x0001_4CB4, name: "osal_mem_set_heap", behavior: "capture-heap-base-size", code: OSAL_MEM_SET_HEAP_CODE },
-    RomShim { entry: 0x0001_4CCC, name: "osal_memcmp", behavior: "cortex-m0-byte-compare", code: OSAL_MEMCMP_CODE },
-    RomShim { entry: 0x0001_6B44, name: "setSleepMode", behavior: "sleep-mode=r0", code: SET_SLEEP_MODE_CODE },
+    RomShim {
+        entry: 0x0000_8AA8,
+        name: "clk_init ROM helper 0x8AA9",
+        behavior: "identity-r0 (observed RC32M->XTAL16M boot path)",
+        code: DRV_IRQ_INIT_CODE,
+    },
+    RomShim {
+        entry: 0x0000_8C00,
+        name: "clk_init ROM helper 0x8C01",
+        behavior: "identity-r0 (observed RC32M->XTAL16M boot path)",
+        code: DRV_IRQ_INIT_CODE,
+    },
+    RomShim {
+        entry: 0x0000_0EB2,
+        name: "__aeabi_memclr4",
+        behavior: "cortex-m0-byte-clear",
+        code: AEABI_MEMCLR4_CODE,
+    },
+    RomShim {
+        entry: 0x0000_3FDC,
+        name: "LL_ENC_AES128_Encrypt0",
+        behavior: "host-aes128-key-plaintext-ciphertext",
+        code: AES128_ENCRYPT0_CODE,
+    },
+    RomShim {
+        entry: 0x0000_A2E0,
+        name: "finidv",
+        behavior: "secure-id-efuse-aes-compare",
+        code: FINIDV_CODE,
+    },
+    RomShim {
+        entry: 0x0000_A9C8,
+        name: "drv_irq_init",
+        behavior: "noop-return",
+        code: DRV_IRQ_INIT_CODE,
+    },
+    RomShim {
+        entry: 0x0000_ACE0,
+        name: "efuse_read",
+        behavior: "blank-8-byte-read-success",
+        code: EFUSE_READ_CODE,
+    },
+    RomShim {
+        entry: 0x0000_A920,
+        name: "disableSleep",
+        behavior: "sleep-allowed=false",
+        code: DISABLE_SLEEP_CODE,
+    },
+    RomShim {
+        entry: 0x0000_AEAC,
+        name: "enableSleep",
+        behavior: "sleep-allowed=true",
+        code: ENABLE_SLEEP_CODE,
+    },
+    RomShim {
+        entry: 0x0001_4CB4,
+        name: "osal_mem_set_heap",
+        behavior: "capture-heap-base-size",
+        code: OSAL_MEM_SET_HEAP_CODE,
+    },
+    RomShim {
+        entry: 0x0001_4CCC,
+        name: "osal_memcmp",
+        behavior: "cortex-m0-byte-compare",
+        code: OSAL_MEMCMP_CODE,
+    },
+    RomShim {
+        entry: 0x0001_6B44,
+        name: "setSleepMode",
+        behavior: "sleep-mode=r0",
+        code: SET_SLEEP_MODE_CODE,
+    },
 ];
 
 pub struct DiscoveryBus {
@@ -217,10 +399,18 @@ impl DiscoveryBus {
         eprintln!("SEC factory_profile=development deterministic-aes128");
     }
 
-    pub fn sleep_allowed(&self) -> bool { self.sleep_allowed.get() }
-    pub fn sleep_mode(&self) -> u32 { self.sleep_mode.get() }
-    fn is_mmio(addr: u32) -> bool { (MMIO_BASE..MMIO_END).contains(&addr) }
-    fn is_unmodeled_rom(addr: u32) -> bool { (VECTOR_MIRROR_BYTES..ROM_END).contains(&addr) }
+    pub fn sleep_allowed(&self) -> bool {
+        self.sleep_allowed.get()
+    }
+    pub fn sleep_mode(&self) -> u32 {
+        self.sleep_mode.get()
+    }
+    fn is_mmio(addr: u32) -> bool {
+        (MMIO_BASE..MMIO_END).contains(&addr)
+    }
+    fn is_unmodeled_rom(addr: u32) -> bool {
+        (VECTOR_MIRROR_BYTES..ROM_END).contains(&addr)
+    }
 
     fn rom_shim_for_addr(addr: u32) -> Option<(&'static RomShim, usize)> {
         ROM_SHIMS.iter().find_map(|shim| {
@@ -232,7 +422,10 @@ impl DiscoveryBus {
     fn rom_shim_byte(&self, addr: u32) -> Option<u8> {
         let (shim, offset) = Self::rom_shim_for_addr(addr)?;
         if self.seen_shims.borrow_mut().insert(shim.entry) {
-            eprintln!("ROM shim {} entry={:#010x} behavior={}", shim.name, shim.entry, shim.behavior);
+            eprintln!(
+                "ROM shim {} entry={:#010x} behavior={}",
+                shim.name, shim.entry, shim.behavior
+            );
         }
         Some(shim.code[offset])
     }
@@ -257,7 +450,10 @@ impl DiscoveryBus {
     fn uart_read_known(addr: u32) -> bool {
         let aligned = addr & !3;
         [UART0_BASE, UART1_BASE].iter().any(|base| {
-            matches!(aligned.wrapping_sub(*base), 0x08 | 0x14 | 0x7C | 0x80 | 0x84)
+            matches!(
+                aligned.wrapping_sub(*base),
+                0x08 | 0x14 | 0x7C | 0x80 | 0x84
+            )
         })
     }
 
@@ -276,7 +472,9 @@ impl DiscoveryBus {
         (0..PWM_CHANNELS as u32).any(|ch| aligned == PWM_BASE + ch * 16 + 8)
     }
 
-    fn timer_read_known(addr: u32) -> bool { TIM_CURRENT.contains(&(addr & !3)) }
+    fn timer_read_known(addr: u32) -> bool {
+        TIM_CURRENT.contains(&(addr & !3))
+    }
 
     fn functional_read(addr: u32) -> bool {
         Self::gpio_known(addr, false)
@@ -311,7 +509,11 @@ impl DiscoveryBus {
         let aligned = addr & !3;
         let shift = (addr & 3) * 8;
         let bits = width * 8;
-        let mask = if bits >= 32 { 0xFFFF_FFFF } else { ((1u32 << bits) - 1) << shift };
+        let mask = if bits >= 32 {
+            0xFFFF_FFFF
+        } else {
+            ((1u32 << bits) - 1) << shift
+        };
         let mut mmio = self.sparse_mmio.borrow_mut();
         let current = mmio
             .get(&aligned)
@@ -409,11 +611,22 @@ impl DiscoveryBus {
                 }
                 Ok(true)
             }
-            EMU_AES_KEY_PTR => { self.aes_key_ptr.set(value); Ok(true) }
-            EMU_AES_PLAINTEXT_PTR => { self.aes_plaintext_ptr.set(value); Ok(true) }
-            EMU_AES_CIPHERTEXT_PTR => { self.aes_ciphertext_ptr.set(value); Ok(true) }
+            EMU_AES_KEY_PTR => {
+                self.aes_key_ptr.set(value);
+                Ok(true)
+            }
+            EMU_AES_PLAINTEXT_PTR => {
+                self.aes_plaintext_ptr.set(value);
+                Ok(true)
+            }
+            EMU_AES_CIPHERTEXT_PTR => {
+                self.aes_ciphertext_ptr.set(value);
+                Ok(true)
+            }
             EMU_AES_TRIGGER => {
-                if value != 0 { self.run_guest_aes128()?; }
+                if value != 0 {
+                    self.run_guest_aes128()?;
+                }
                 Ok(true)
             }
             EMU_FINIDV_TRIGGER => {
@@ -423,10 +636,17 @@ impl DiscoveryBus {
                 }
                 Ok(true)
             }
-            EMU_HEAP_BASE => { self.heap_base.set(value); Ok(true) }
+            EMU_HEAP_BASE => {
+                self.heap_base.set(value);
+                Ok(true)
+            }
             EMU_HEAP_SIZE => {
                 self.heap_size.set(value);
-                eprintln!("OSAL heap base={:#010x} size={:#x}", self.heap_base.get(), value);
+                eprintln!(
+                    "OSAL heap base={:#010x} size={:#x}",
+                    self.heap_base.get(),
+                    value
+                );
                 Ok(true)
             }
             _ => Ok(false),
@@ -438,12 +658,20 @@ impl DiscoveryBus {
         let first = self.seen_unknown.borrow_mut().insert(aligned);
         if first {
             if self.strict {
-                eprintln!("MMIO unknown {op} addr={addr:#010x} aligned={aligned:#010x} -- strict fault");
+                eprintln!(
+                    "MMIO unknown {op} addr={addr:#010x} aligned={aligned:#010x} -- strict fault"
+                );
             } else {
-                eprintln!("MMIO unknown {op} addr={addr:#010x} aligned={aligned:#010x} -- sparse stub");
+                eprintln!(
+                    "MMIO unknown {op} addr={addr:#010x} aligned={aligned:#010x} -- sparse stub"
+                );
             }
         }
-        if self.strict { Err(Fault::DAccViol) } else { Ok(()) }
+        if self.strict {
+            Err(Fault::DAccViol)
+        } else {
+            Ok(())
+        }
     }
 
     fn rom_unknown<T>(&self, op: &str, addr: u32) -> Result<T, Fault> {
@@ -473,55 +701,91 @@ impl DiscoveryBus {
 
 impl Bus for DiscoveryBus {
     fn read32(&mut self, addr: u32) -> Result<u32, Fault> {
-        if let Some(value) = self.rom_shim_read(addr, 4) { return Ok(value); }
-        if let Some(value) = self.emu_control_read(addr) { return Ok(value); }
-        if self.strict && Self::is_unmodeled_rom(addr) { return self.rom_unknown("read32", addr); }
-        if !Self::is_mmio(addr) || Self::functional_read(addr) { return self.inner.read32(addr); }
+        if let Some(value) = self.rom_shim_read(addr, 4) {
+            return Ok(value);
+        }
+        if let Some(value) = self.emu_control_read(addr) {
+            return Ok(value);
+        }
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("read32", addr);
+        }
+        if !Self::is_mmio(addr) || Self::functional_read(addr) {
+            return self.inner.read32(addr);
+        }
         self.read_fallback("read32", addr)
     }
 
     fn read16(&self, addr: u32) -> Result<u16, Fault> {
-        if let Some(value) = self.rom_shim_read(addr, 2) { return Ok(value as u16); }
+        if let Some(value) = self.rom_shim_read(addr, 2) {
+            return Ok(value as u16);
+        }
         if let Some(value) = self.emu_control_read(addr) {
             return Ok((value >> ((addr & 3) * 8)) as u16);
         }
-        if self.strict && Self::is_unmodeled_rom(addr) { return self.rom_unknown("read16", addr); }
-        if !Self::is_mmio(addr) || Self::functional_read(addr) { return self.inner.read16(addr); }
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("read16", addr);
+        }
+        if !Self::is_mmio(addr) || Self::functional_read(addr) {
+            return self.inner.read16(addr);
+        }
         let word = self.read_fallback("read16", addr)?;
         Ok((word >> ((addr & 3) * 8)) as u16)
     }
 
     fn read8(&self, addr: u32) -> Result<u8, Fault> {
-        if let Some(value) = self.rom_shim_byte(addr) { return Ok(value); }
+        if let Some(value) = self.rom_shim_byte(addr) {
+            return Ok(value);
+        }
         if let Some(value) = self.emu_control_read(addr) {
             return Ok((value >> ((addr & 3) * 8)) as u8);
         }
-        if self.strict && Self::is_unmodeled_rom(addr) { return self.rom_unknown("read8", addr); }
-        if !Self::is_mmio(addr) || Self::functional_read(addr) { return self.inner.read8(addr); }
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("read8", addr);
+        }
+        if !Self::is_mmio(addr) || Self::functional_read(addr) {
+            return self.inner.read8(addr);
+        }
         let word = self.read_fallback("read8", addr)?;
         Ok((word >> ((addr & 3) * 8)) as u8)
     }
 
     fn write32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
-        if self.emu_control_write(addr, value)? { return Ok(()); }
-        if self.strict && Self::is_unmodeled_rom(addr) { return self.rom_unknown("write32", addr); }
-        if !Self::is_mmio(addr) || Self::functional_write(addr) { return self.inner.write32(addr, value); }
+        if self.emu_control_write(addr, value)? {
+            return Ok(());
+        }
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("write32", addr);
+        }
+        if !Self::is_mmio(addr) || Self::functional_write(addr) {
+            return self.inner.write32(addr, value);
+        }
         self.write_fallback("write32", addr, value, 4)
     }
 
     fn write16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
-        if self.strict && Self::is_unmodeled_rom(addr) { return self.rom_unknown("write16", addr); }
-        if !Self::is_mmio(addr) || Self::functional_write(addr) { return self.inner.write16(addr, value); }
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("write16", addr);
+        }
+        if !Self::is_mmio(addr) || Self::functional_write(addr) {
+            return self.inner.write16(addr, value);
+        }
         self.write_fallback("write16", addr, u32::from(value), 2)
     }
 
     fn write8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
-        if self.strict && Self::is_unmodeled_rom(addr) { return self.rom_unknown("write8", addr); }
-        if !Self::is_mmio(addr) || Self::functional_write(addr) { return self.inner.write8(addr, value); }
+        if self.strict && Self::is_unmodeled_rom(addr) {
+            return self.rom_unknown("write8", addr);
+        }
+        if !Self::is_mmio(addr) || Self::functional_write(addr) {
+            return self.inner.write8(addr, value);
+        }
         self.write_fallback("write8", addr, u32::from(value), 1)
     }
 
-    fn in_range(&self, addr: u32) -> bool { self.inner.in_range(addr) }
+    fn in_range(&self, addr: u32) -> bool {
+        self.inner.in_range(addr)
+    }
 }
 
 #[cfg(test)]
@@ -530,7 +794,10 @@ mod tests {
     use crate::bus::{SRAM_BASE, SRAM_SIZE, XIP_SIZE};
 
     fn bus(strict: bool) -> DiscoveryBus {
-        DiscoveryBus::new(Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]), strict)
+        DiscoveryBus::new(
+            Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]),
+            strict,
+        )
     }
 
     #[test]
@@ -555,9 +822,17 @@ mod tests {
     fn exact_pcr_register_block_supports_clock_reset_cache_rmw() {
         let mut bus = bus(true);
         let regs = [
-            PCR_SW_RESET0, PCR_SW_RESET1, PCR_SW_CLK, PCR_SW_RESET2, PCR_SW_RESET3,
-            PCR_SW_CLK1, PCR_APB_CLK, PCR_APB_CLK_UPDATE, PCR_CACHE_CLOCK_GATE,
-            PCR_CACHE_RST, PCR_CACHE_BYPASS,
+            PCR_SW_RESET0,
+            PCR_SW_RESET1,
+            PCR_SW_CLK,
+            PCR_SW_RESET2,
+            PCR_SW_RESET3,
+            PCR_SW_CLK1,
+            PCR_APB_CLK,
+            PCR_APB_CLK_UPDATE,
+            PCR_CACHE_CLOCK_GATE,
+            PCR_CACHE_RST,
+            PCR_CACHE_BYPASS,
         ];
         for addr in regs {
             let initial = bus.read32(addr).unwrap();
@@ -579,7 +854,15 @@ mod tests {
     #[test]
     fn aon_bootstrap_and_ram_retention_registers_are_exact_rmw_storage() {
         let mut bus = bus(true);
-        for addr in [AON_IOCTL0, AON_IOCTL1, AON_IOCTL2, AON_PMCTL0, AON_PMCTL1, AON_PMCTL2_0, AON_PMCTL2_1] {
+        for addr in [
+            AON_IOCTL0,
+            AON_IOCTL1,
+            AON_IOCTL2,
+            AON_PMCTL0,
+            AON_PMCTL1,
+            AON_PMCTL2_0,
+            AON_PMCTL2_1,
+        ] {
             assert_eq!(bus.read32(addr).unwrap(), 0);
             bus.write32(addr, 0x003E_0084).unwrap();
             assert_eq!(bus.read32(addr).unwrap(), 0x003E_0084);
@@ -594,20 +877,36 @@ mod tests {
         let key_addr = SRAM_BASE + 0x100;
         let plaintext_addr = SRAM_BASE + 0x120;
         let ciphertext_addr = SRAM_BASE + 0x140;
-        let key = [0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f];
-        let plaintext = [0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff];
+        let key = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ];
+        let plaintext = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ];
         bus.inner.sram[0x100..0x110].copy_from_slice(&key);
         bus.inner.sram[0x120..0x130].copy_from_slice(&plaintext);
         bus.write32(EMU_AES_KEY_PTR, key_addr).unwrap();
         bus.write32(EMU_AES_PLAINTEXT_PTR, plaintext_addr).unwrap();
-        bus.write32(EMU_AES_CIPHERTEXT_PTR, ciphertext_addr).unwrap();
+        bus.write32(EMU_AES_CIPHERTEXT_PTR, ciphertext_addr)
+            .unwrap();
         bus.write32(EMU_AES_TRIGGER, 1).unwrap();
-        assert_eq!(&bus.inner.sram[0x140..0x150], &[0x69,0xc4,0xe0,0xd8,0x6a,0x7b,0x04,0x30,0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a]);
+        assert_eq!(
+            &bus.inner.sram[0x140..0x150],
+            &[
+                0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4,
+                0xc5, 0x5a
+            ]
+        );
     }
 
     #[test]
     fn explicit_rom_thunks_remain_narrow() {
         let bus = bus(true);
+        assert_eq!(bus.read16(0x0000_8AA8).unwrap(), THUMB_BX_LR);
+        assert_eq!(bus.read16(0x0000_8C00).unwrap(), THUMB_BX_LR);
+        assert!(matches!(bus.read16(0x0000_8C04), Err(Fault::DAccViol)));
         assert_eq!(bus.read16(0x0000_A9C8).unwrap(), THUMB_BX_LR);
         assert_eq!(bus.read16(0x0000_0EB2).unwrap(), 0x2200);
         assert_eq!(bus.read16(0x0001_4CCC).unwrap(), 0xB410);
