@@ -29,3 +29,9 @@ jobs:
           grep -q 'UART kit-demo boot' /tmp/emu.log
           grep -q '^GPIO ' /tmp/emu.log
           grep -q 'UART rx ' /tmp/emu.log
+      - name: Emulator binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: phy6252-linux-x86_64
+          path: target/debug/phy6252
+          if-no-files-found: error
