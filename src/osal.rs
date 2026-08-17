@@ -1,3 +1,4 @@
+use crate::ble_rom;
 use crate::bus::{HOST_FLASH_ADDR, HOST_FLASH_ERASE, HOST_FLASH_PROGRAM, XIP_SIZE};
 use std::collections::{HashMap, HashSet, VecDeque};
 use zmu_cortex_m::bus::Bus;
@@ -93,6 +94,7 @@ impl HostOsal {
     pub fn handle(&mut self, cpu: &mut Processor) -> bool {
         let now = simulated_ms(cpu);
         self.expire(cpu, now);
+        if ble_rom::handle(cpu, &mut self.rng) { return true; }
         let pc = cpu.get_pc();
         if pc == IDLE_BX_LR_ROM && self.started && self.running.is_none() { return self.dispatch(cpu); }
         match pc {
