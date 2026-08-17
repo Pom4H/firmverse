@@ -5,6 +5,7 @@ mod discovery;
 mod emu;
 mod hex;
 mod mailbox;
+mod osal;
 mod silicon_regs;
 mod tui;
 
