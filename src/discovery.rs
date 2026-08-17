@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn vector_mirror_is_not_treated_as_unknown_rom() {
-        let bus = bus(true);
+        let mut bus = bus(true);
         assert!(bus.read32(0).is_ok());
     }
 }
