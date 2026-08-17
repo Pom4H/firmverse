@@ -23,6 +23,11 @@ use zmu_cortex_m::executor::Executor;
 use zmu_cortex_m::Processor;
 
 const VECTOR_MIRROR_BYTES: usize = 0xC0;
+const CPU_THUNK_DISABLE_IRQ: u32 = 0x0000_00C0;
+const CPU_THUNK_ENABLE_IRQ: u32 = 0x0000_00C4;
+const BOOT_FLASH_BYTES: usize = 0xC8;
+const ROM_DRV_DISABLE_IRQ: u32 = 0x0000_A974;
+const ROM_DRV_ENABLE_IRQ: u32 = 0x0000_A99C;
 
 pub struct RunOpts {
     pub hex: PathBuf,
@@ -63,6 +68,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     image.fill(XIP_BASE, &mut xip);
 
     let (vector_base, vectors) = locate_vector_table(&sram)?;
+    let boot_flash = build_boot_flash(&vectors);
     let device = Phy6252Bus::new(sram, xip);
     let gpio = Rc::clone(&device.gpio);
     let gpio_changed = Rc::clone(&device.gpio_changed);
@@ -92,10 +98,10 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let mut processor = Processor::new();
     processor.fault_trap_mode(FaultTrapMode::hardfault());
     processor.device(Some(Box::new(device)));
-    // zmu owns the Cortex-M vector lookup at address zero. SDK images keep their
-    // vectors in SRAM after jump/config tables, so mirror the complete vector block
-    // here while leaving all executable firmware at its original PHY6252 addresses.
-    processor.flash_memory(vectors.len(), &vectors);
+    // zmu owns Cortex-M exception-vector lookup at address zero. Mirror the complete
+    // SDK vector block and append two tiny CPU-local ROM ABI thunks. The thunks execute
+    // real CPSID/CPSIE instructions so PRIMASK semantics remain zmu/Cortex-M0 semantics.
+    processor.flash_memory(boot_flash.len(), &boot_flash);
     processor
         .reset()
         .map_err(|fault| format!("reset failed: {fault}"))?;
@@ -104,6 +110,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let mut last_tx_seq = 0u32;
     let mut uart_line = String::new();
     let mut clock_ms = 0u32;
+    let mut cpu_rom_seen = 0u8;
 
     if live {
         if raw {
@@ -121,6 +128,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let mut insn: u64 = 0;
     while insn < max_insns {
         apply_ext(&gpio, &ext_in);
+        redirect_cpu_rom_abi(&mut processor, &mut cpu_rom_seen);
         if let Some(trap) = processor.take_pending_fault_trap() {
             return report_stop(&mut processor, insn, live, raw, &gpio, &format!("fault {trap:?}"));
         }
@@ -140,6 +148,7 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
         }
 
         for _ in 0..burst {
+            redirect_cpu_rom_abi(&mut processor, &mut cpu_rom_seen);
             processor.step();
             insn += 1;
             if insn >= max_insns {
@@ -167,6 +176,33 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     }
 
     report_stop(&mut processor, insn, live, raw, &gpio, "max instructions")
+}
+
+fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8) {
+    let pc = processor.get_pc();
+    let (thunk, bit, name, behavior) = match pc {
+        ROM_DRV_DISABLE_IRQ => (CPU_THUNK_DISABLE_IRQ, 1u8, "drv_disable_irq", "CPSID i / PRIMASK=1"),
+        ROM_DRV_ENABLE_IRQ => (CPU_THUNK_ENABLE_IRQ, 2u8, "drv_enable_irq", "CPSIE i / PRIMASK=0"),
+        _ => return,
+    };
+    if *seen & bit == 0 {
+        eprintln!("ROM CPU shim {name} entry={pc:#010x} behavior={behavior}");
+        *seen |= bit;
+    }
+    processor.set_pc(thunk);
+}
+
+fn build_boot_flash(vectors: &[u8]) -> Vec<u8> {
+    let mut flash = vec![0u8; BOOT_FLASH_BYTES];
+    let vector_len = vectors.len().min(VECTOR_MIRROR_BYTES);
+    flash[..vector_len].copy_from_slice(&vectors[..vector_len]);
+    // Thumb: CPSID i = 0xB672, BX LR = 0x4770.
+    flash[CPU_THUNK_DISABLE_IRQ as usize..CPU_THUNK_DISABLE_IRQ as usize + 4]
+        .copy_from_slice(&[0x72, 0xB6, 0x70, 0x47]);
+    // Thumb: CPSIE i = 0xB662, BX LR = 0x4770.
+    flash[CPU_THUNK_ENABLE_IRQ as usize..CPU_THUNK_ENABLE_IRQ as usize + 4]
+        .copy_from_slice(&[0x62, 0xB6, 0x70, 0x47]);
+    flash
 }
 
 fn locate_vector_table(sram: &[u8]) -> Result<(u32, Vec<u8>), String> {
@@ -457,5 +493,13 @@ mod tests {
         assert_eq!(u32::from_le_bytes(vectors[4..8].try_into().unwrap()), 0x1FFF_19E1);
         assert_eq!(u32::from_le_bytes(vectors[12..16].try_into().unwrap()), 0x0000_28F1);
         assert_eq!(u32::from_le_bytes(vectors[0xBC..0xC0].try_into().unwrap()), 0x1FFF_2223);
+    }
+
+    #[test]
+    fn boot_flash_contains_real_cortex_m0_irq_mask_thunks() {
+        let vectors = vec![0u8; VECTOR_MIRROR_BYTES];
+        let flash = build_boot_flash(&vectors);
+        assert_eq!(&flash[0xC0..0xC4], &[0x72, 0xB6, 0x70, 0x47]);
+        assert_eq!(&flash[0xC4..0xC8], &[0x62, 0xB6, 0x70, 0x47]);
     }
 }
