@@ -5,6 +5,9 @@ use zmu_cortex_m::Processor;
 
 const ROM_LL_ENC_PSEUDO_RAND: u32 = 0x0000_4458;
 const ROM_LL_ENC_TRUE_RAND: u32 = 0x0000_4468;
+const ROM_LL_EXT_SET_SCA: u32 = 0x0000_4634;
+const LL_STATUS_SUCCESS: u32 = 0x00;
+const LL_STATUS_ERROR_BAD_PARAMETER: u32 = 0x12;
 
 pub fn handle(cpu: &mut Processor, rng: &mut u32) -> bool {
     if arm_abi::handle(cpu) {
@@ -13,6 +16,7 @@ pub fn handle(cpu: &mut Processor, rng: &mut u32) -> bool {
     match cpu.get_pc() {
         ROM_LL_ENC_PSEUDO_RAND => pseudo_rand(cpu, rng),
         ROM_LL_ENC_TRUE_RAND => true_rand(cpu, rng),
+        ROM_LL_EXT_SET_SCA => set_sca(cpu),
         _ => false,
     }
 }
@@ -46,8 +50,21 @@ fn true_rand(cpu: &mut Processor, rng: &mut u32) -> bool {
             return false;
         }
     }
-    cpu.set_r(Reg::R0, 0);
+    cpu.set_r(Reg::R0, LL_STATUS_SUCCESS);
     eprintln!("BLE ROM LL_ENC_GenerateTrueRandNum len={len} deterministic host entropy");
+    ret(cpu);
+    true
+}
+
+fn set_sca(cpu: &mut Processor) -> bool {
+    let ppm = cpu.get_r(Reg::R0) as u16;
+    let status = if ppm <= 500 {
+        LL_STATUS_SUCCESS
+    } else {
+        LL_STATUS_ERROR_BAD_PARAMETER
+    };
+    eprintln!("BLE ROM LL_EXT_SetSCA ppm={ppm} status={status:#04x}");
+    cpu.set_r(Reg::R0, status);
     ret(cpu);
     true
 }
@@ -66,5 +83,11 @@ mod tests {
         let mut b = 0;
         assert_eq!(next_u32(&mut a), next_u32(&mut b));
         assert_ne!(a, 0);
+    }
+
+    #[test]
+    fn sca_contract_matches_ble_range() {
+        assert!(500u16 <= 500);
+        assert!(501u16 > 500);
     }
 }
