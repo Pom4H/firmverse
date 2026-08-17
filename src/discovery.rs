@@ -10,6 +10,7 @@ const GPIO_BASE: u32 = 0x4000_8000;
 const UART0_BASE: u32 = 0x4000_4000;
 const UART1_BASE: u32 = 0x4000_9000;
 const PWM_BASE: u32 = 0x4000_E000;
+const SPIF_BASE: u32 = 0x4000_C800;
 const VECTOR_MIRROR_BYTES: u32 = 0xC0;
 const THUMB_BX_LR: u16 = 0x4770;
 
@@ -478,6 +479,17 @@ impl DiscoveryBus {
         (0..PWM_CHANNELS as u32).any(|ch| aligned == PWM_BASE + ch * 16 + 8)
     }
 
+    fn spif_bootstrap_write_name(addr: u32) -> Option<&'static str> {
+        match (addr & !3).wrapping_sub(SPIF_BASE) {
+            0x38 => Some("SPIF.WR_COMPLETION_CTRL"),
+            0x50 => Some("SPIF.LOW_WR_PROTECTION"),
+            0x54 => Some("SPIF.UP_WR_PROTECTION"),
+            0x58 => Some("SPIF.WR_PROTECTION"),
+            0x7C => Some("SPIF.INDIRECT_WR_CNT"),
+            _ => None,
+        }
+    }
+
     fn timer_read_known(addr: u32) -> bool {
         TIM_CURRENT.contains(&(addr & !3))
     }
@@ -763,6 +775,11 @@ impl Bus for DiscoveryBus {
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("write32", addr);
         }
+        if let Some(name) = Self::spif_bootstrap_write_name(addr) {
+            eprintln!("SPIF config {name}={value:#010x}");
+            self.sparse_write(addr, value, 4);
+            return Ok(());
+        }
         if !Self::is_mmio(addr) || Self::functional_write(addr) {
             return self.inner.write32(addr, value);
         }
@@ -846,6 +863,31 @@ mod tests {
             assert_eq!(bus.read32(addr).unwrap(), initial ^ 0x10);
         }
         assert_eq!(DiscoveryBus::storage_reset(PCR_CACHE_BYPASS), Some(0));
+    }
+
+    #[test]
+    fn spif_bootstrap_accepts_only_observed_word_writes() {
+        let mut bus = bus(true);
+        for (offset, value) in [
+            (0x38, 0xFF01_0005),
+            (0x50, 0),
+            (0x54, 0x10),
+            (0x58, 2),
+            (0x7C, 0x0004_0000),
+        ] {
+            let addr = SPIF_BASE + offset;
+            bus.write32(addr, value).unwrap();
+            assert_eq!(bus.sparse_mmio.borrow().get(&addr), Some(&value));
+            assert!(matches!(bus.read32(addr), Err(Fault::DAccViol)));
+        }
+        assert!(matches!(
+            bus.write32(SPIF_BASE + 0x3C, 1),
+            Err(Fault::DAccViol)
+        ));
+        assert!(matches!(
+            bus.write16(SPIF_BASE + 0x38, 1),
+            Err(Fault::DAccViol)
+        ));
     }
 
     #[test]
