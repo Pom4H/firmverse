@@ -22,6 +22,8 @@ use zmu_cortex_m::core::reset::Reset;
 use zmu_cortex_m::executor::Executor;
 use zmu_cortex_m::Processor;
 
+const VECTOR_MIRROR_BYTES: usize = 0xC0;
+
 pub struct RunOpts {
     pub hex: PathBuf,
     pub live: bool,
@@ -69,10 +71,13 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let pwm_changed = Rc::clone(&device.pwm_changed);
     let adc_mv = Rc::clone(&device.adc_mv);
     let device = DiscoveryBus::new(device, strict_mmio);
-    let sp = u32::from_le_bytes([vectors[0], vectors[1], vectors[2], vectors[3]]);
-    let reset = u32::from_le_bytes([vectors[4], vectors[5], vectors[6], vectors[7]]);
+    let sp = u32::from_le_bytes(vectors[0..4].try_into().unwrap());
+    let reset = u32::from_le_bytes(vectors[4..8].try_into().unwrap());
     eprintln!("hex {}", hex_path.display());
-    eprintln!("Vectors={vector_base:#010x} SP={sp:#010x} Reset={reset:#010x}");
+    eprintln!(
+        "Vectors={vector_base:#010x} bytes={:#x} SP={sp:#010x} Reset={reset:#010x}",
+        vectors.len()
+    );
     if strict_mmio {
         eprintln!("MMIO discovery: strict");
     }
@@ -87,8 +92,9 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     let mut processor = Processor::new();
     processor.fault_trap_mode(FaultTrapMode::hardfault());
     processor.device(Some(Box::new(device)));
-    // zmu resets from address zero. Mirror the selected PHY6252 vector pair there;
-    // the rest of the image remains at its real SRAM/XIP addresses on the device bus.
+    // zmu owns the Cortex-M vector lookup at address zero. SDK images keep their
+    // vectors in SRAM after jump/config tables, so mirror the complete vector block
+    // here while leaving all executable firmware at its original PHY6252 addresses.
     processor.flash_memory(vectors.len(), &vectors);
     processor
         .reset()
@@ -163,9 +169,9 @@ pub fn run(opts: RunOpts) -> Result<ExitCode, String> {
     report_stop(&mut processor, insn, live, raw, &gpio, "max instructions")
 }
 
-fn locate_vector_table(sram: &[u8]) -> Result<(u32, [u8; 8]), String> {
+fn locate_vector_table(sram: &[u8]) -> Result<(u32, Vec<u8>), String> {
     if vector_pair_plausible(sram, 0) {
-        return Ok((SRAM_BASE, vector_pair(sram, 0)));
+        return Ok((SRAM_BASE, vector_table(sram, 0)));
     }
 
     let mut best: Option<(u32, usize, u32)> = None;
@@ -187,7 +193,13 @@ fn locate_vector_table(sram: &[u8]) -> Result<(u32, [u8; 8]), String> {
             "no plausible Cortex-M vector table in PHY6252 SRAM (first SP={sp:#010x} Reset={reset:#010x})"
         ));
     };
-    Ok((base, vector_pair(sram, offset)))
+    Ok((base, vector_table(sram, offset)))
+}
+
+fn vector_table(sram: &[u8], offset: usize) -> Vec<u8> {
+    let available = sram.len().saturating_sub(offset);
+    let len = VECTOR_MIRROR_BYTES.min(available);
+    sram[offset..offset + len].to_vec()
 }
 
 fn vector_pair(sram: &[u8], offset: usize) -> [u8; 8] {
@@ -423,20 +435,27 @@ mod tests {
         let mut sram = vec![0u8; SRAM_SIZE];
         sram[0..4].copy_from_slice(&(SRAM_BASE + 0x8000).to_le_bytes());
         sram[4..8].copy_from_slice(&(SRAM_BASE + 0x101).to_le_bytes());
-        let (base, _) = locate_vector_table(&sram).unwrap();
+        sram[12..16].copy_from_slice(&(SRAM_BASE + 0x121).to_le_bytes());
+        let (base, vectors) = locate_vector_table(&sram).unwrap();
         assert_eq!(base, SRAM_BASE);
+        assert_eq!(vectors.len(), VECTOR_MIRROR_BYTES);
+        assert_eq!(u32::from_le_bytes(vectors[12..16].try_into().unwrap()), SRAM_BASE + 0x121);
     }
 
     #[test]
-    fn finds_sdk_vectors_after_jump_table() {
+    fn finds_sdk_vectors_after_jump_table_and_mirrors_exceptions() {
         let mut sram = vec![0u8; SRAM_SIZE];
         let offset = 0x1838usize;
         sram[offset..offset + 4].copy_from_slice(&0x1FFF_9000u32.to_le_bytes());
         sram[offset + 4..offset + 8].copy_from_slice(&0x1FFF_19E1u32.to_le_bytes());
         sram[offset + 8..offset + 12].copy_from_slice(&0x0000_8481u32.to_le_bytes());
         sram[offset + 12..offset + 16].copy_from_slice(&0x0000_28F1u32.to_le_bytes());
+        sram[offset + 0xBC..offset + 0xC0].copy_from_slice(&0x1FFF_2223u32.to_le_bytes());
         let (base, vectors) = locate_vector_table(&sram).unwrap();
         assert_eq!(base, SRAM_BASE + offset as u32);
+        assert_eq!(vectors.len(), VECTOR_MIRROR_BYTES);
         assert_eq!(u32::from_le_bytes(vectors[4..8].try_into().unwrap()), 0x1FFF_19E1);
+        assert_eq!(u32::from_le_bytes(vectors[12..16].try_into().unwrap()), 0x0000_28F1);
+        assert_eq!(u32::from_le_bytes(vectors[0xBC..0xC0].try_into().unwrap()), 0x1FFF_2223);
     }
 }
