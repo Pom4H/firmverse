@@ -22,15 +22,24 @@ jobs:
           fi
       - name: BlueZ helper syntax
         run: python3 -m py_compile host/ble/bluez.py
-      - name: ARM GCC
-        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
-      - name: Demo HEX
-        run: make -C firmware
       - name: Cargo test
         run: cargo test
+      - name: Emulator binary
+        run: cargo build --quiet
+      - name: Restore demo HEX
+        id: demo-cache
+        uses: actions/cache@v4
+        with:
+          path: firmware/kit-demo.hex
+          key: kit-demo-${{ runner.os }}-${{ hashFiles('firmware/**') }}
+      - name: ARM GCC
+        if: steps.demo-cache.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - name: Demo HEX
+        if: steps.demo-cache.outputs.cache-hit != 'true'
+        run: make -C firmware
       - name: Strict MMIO live smoke
         run: |
-          cargo build --quiet
           printf 'ADC 3300 1650 2500 3300\nIN 00400000\nCONNECT\nCCCD 1\nWRITE 4849\n' \
             | timeout 3 ./target/debug/phy6252 --strict-mmio --raw firmware/kit-demo.hex \
             | tee /tmp/emu.log || true
@@ -38,7 +47,7 @@ jobs:
           grep -q 'UART kit-demo boot' /tmp/emu.log
           grep -q '^GPIO ' /tmp/emu.log
           grep -q 'UART rx ' /tmp/emu.log
-      - name: Emulator binary
+      - name: Publish emulator binary
         uses: actions/upload-artifact@v4
         with:
           name: phy6252-linux-x86_64
