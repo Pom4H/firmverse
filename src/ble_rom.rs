@@ -1,3 +1,4 @@
+use crate::arm_abi;
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
@@ -6,6 +7,9 @@ const ROM_LL_ENC_PSEUDO_RAND: u32 = 0x0000_4458;
 const ROM_LL_ENC_TRUE_RAND: u32 = 0x0000_4468;
 
 pub fn handle(cpu: &mut Processor, rng: &mut u32) -> bool {
+    if arm_abi::handle(cpu) {
+        return true;
+    }
     match cpu.get_pc() {
         ROM_LL_ENC_PSEUDO_RAND => pseudo_rand(cpu, rng),
         ROM_LL_ENC_TRUE_RAND => true_rand(cpu, rng),
@@ -42,8 +46,6 @@ fn true_rand(cpu: &mut Processor, rng: &mut u32) -> bool {
             return false;
         }
     }
-    // LL status codes map success to zero. This is deterministic test entropy,
-    // deliberately not a cryptographic RNG supplied to production firmware.
     cpu.set_r(Reg::R0, 0);
     eprintln!("BLE ROM LL_ENC_GenerateTrueRandNum len={len} deterministic host entropy");
     ret(cpu);
