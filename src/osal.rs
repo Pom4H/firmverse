@@ -15,9 +15,14 @@ const ROM_HCI_TEST_APP_TASK_REGISTER: u32 = 0x0000_288C;
 const ROM_LL_INIT: u32 = 0x0000_4EB0;
 const ROM_CB_TIMER_INIT: u32 = 0x0001_4620;
 const ROM_CLOCK: u32 = 0x0001_4948;
+const ROM_BUFFER_UINT24: u32 = 0x0001_4A20;
+const ROM_BUFFER_UINT32: u32 = 0x0001_4A2E;
+const ROM_BUILD_UINT16: u32 = 0x0001_4A40;
+const ROM_BUILD_UINT32: u32 = 0x0001_4A4C;
 const ROM_CLEAR_EVENT: u32 = 0x0001_4A88;
 const ROM_GET_TIMEOUT: u32 = 0x0001_4AC8;
 const ROM_INIT: u32 = 0x0001_4AEC;
+const ROM_ISBUFSET: u32 = 0x0001_4B1C;
 const ROM_ALLOC: u32 = 0x0001_4B3C;
 const ROM_FREE: u32 = 0x0001_4C00;
 const ROM_MEMCPY: u32 = 0x0001_4CE8;
@@ -28,6 +33,7 @@ const ROM_MSG_DEALLOC: u32 = 0x0001_4D42;
 const ROM_MSG_RECEIVE: u32 = 0x0001_4EF4;
 const ROM_MSG_SEND: u32 = 0x0001_4F58;
 const ROM_NEXT_TIMEOUT: u32 = 0x0001_4F7C;
+const ROM_RAND: u32 = 0x0001_5128;
 const ROM_REVMEMCPY: u32 = 0x0001_5144;
 const ROM_SELF: u32 = 0x0001_51F4;
 const ROM_SET_EVENT: u32 = 0x0001_520C;
@@ -66,7 +72,7 @@ pub struct HostOsal {
     heap_next: Option<u32>, heap_end: u32,
     free: Vec<(u32, u32)>, allocs: HashMap<u32, u32>, messages: VecDeque<u32>,
     seen: HashSet<u32>, tasks: Option<u32>, events: Option<u32>, count: u8,
-    running: Option<u8>, started: bool, timers: Vec<Timer>,
+    running: Option<u8>, started: bool, timers: Vec<Timer>, rng: u32,
     ll_task: Option<u8>, hci_task: Option<u8>, cb_timer_task: Option<u8>,
     hci_ext_task: Option<u8>, gap_task: Option<u8>, l2cap_task: Option<u8>, smp_task: Option<u8>, test_app_task: Option<u8>,
 }
@@ -85,9 +91,10 @@ impl HostOsal {
             ROM_HCI_INIT => self.hci_init(cpu), ROM_HCI_L2CAP_TASK_REGISTER => self.hci_l2cap_task_register(cpu),
             ROM_HCI_SMP_TASK_REGISTER => self.hci_smp_task_register(cpu), ROM_HCI_TEST_APP_TASK_REGISTER => self.hci_test_app_task_register(cpu),
             ROM_LL_INIT => self.ll_init(cpu), ROM_CB_TIMER_INIT => self.cb_timer_init(cpu),
-            ROM_CLOCK => self.clock(cpu, now), ROM_CLEAR_EVENT => self.clear_event_call(cpu),
-            ROM_GET_TIMEOUT => self.get_timeout(cpu, now), ROM_NEXT_TIMEOUT => self.next_timeout(cpu, now),
-            ROM_TIMER_NUM_ACTIVE => self.timer_num_active(cpu),
+            ROM_CLOCK => self.clock(cpu, now), ROM_BUFFER_UINT24 => self.buffer_uint(cpu, 3), ROM_BUFFER_UINT32 => self.buffer_uint(cpu, 4),
+            ROM_BUILD_UINT16 => self.build_uint16(cpu), ROM_BUILD_UINT32 => self.build_uint32(cpu),
+            ROM_CLEAR_EVENT => self.clear_event_call(cpu), ROM_GET_TIMEOUT => self.get_timeout(cpu, now), ROM_NEXT_TIMEOUT => self.next_timeout(cpu, now),
+            ROM_ISBUFSET => self.isbufset(cpu), ROM_RAND => self.rand_call(cpu), ROM_TIMER_NUM_ACTIVE => self.timer_num_active(cpu),
             ROM_INIT => self.init(cpu), ROM_ALLOC => self.alloc_call(cpu), ROM_FREE => self.free_call(cpu),
             ROM_MEMCPY => self.memcpy_call(cpu), ROM_MEMDUP => self.memdup_call(cpu), ROM_MEMSET => self.memset(cpu),
             ROM_MSG_ALLOC => self.msg_alloc(cpu), ROM_MSG_DEALLOC => self.msg_dealloc(cpu),
@@ -114,6 +121,12 @@ impl HostOsal {
     fn hci_l2cap_task_register(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.l2cap_task=Some(task);self.once(ROM_HCI_L2CAP_TASK_REGISTER,||eprintln!("BLE HCI route L2CAP task={task}"));ret(cpu);true }
     fn hci_smp_task_register(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.smp_task=Some(task);self.once(ROM_HCI_SMP_TASK_REGISTER,||eprintln!("BLE HCI route SMP task={task}"));ret(cpu);true }
     fn hci_test_app_task_register(&mut self,cpu:&mut Processor)->bool { let task=cpu.get_r(Reg::R0)as u8;self.test_app_task=Some(task);self.once(ROM_HCI_TEST_APP_TASK_REGISTER,||eprintln!("BLE HCI route test-app task={task}"));ret(cpu);true }
+
+    fn buffer_uint(&mut self,cpu:&mut Processor,len:u32)->bool { let ptr=cpu.get_r(Reg::R0);let value=cpu.get_r(Reg::R1);for i in 0..len{if cpu.write8(ptr+i,((value>>(8*i))&0xff)as u8).is_err(){return false;}}let entry=if len==3{ROM_BUFFER_UINT24}else{ROM_BUFFER_UINT32};self.once(entry,||eprintln!("OSAL host buffer_uint{} little-endian",len*8));cpu.set_r(Reg::R0,ptr+len);ret(cpu);true }
+    fn build_uint16(&mut self,cpu:&mut Processor)->bool { let ptr=cpu.get_r(Reg::R0);let lo=match cpu.read8(ptr){Ok(v)=>v as u32,Err(_)=>return false};let hi=match cpu.read8(ptr+1){Ok(v)=>v as u32,Err(_)=>return false};self.once(ROM_BUILD_UINT16,||eprintln!("OSAL host build_uint16 little-endian"));cpu.set_r(Reg::R0,lo|(hi<<8));ret(cpu);true }
+    fn build_uint32(&mut self,cpu:&mut Processor)->bool { let ptr=cpu.get_r(Reg::R0);let len=(cpu.get_r(Reg::R1)as u8).min(4);let mut value=0u32;for i in 0..len{let b=match cpu.read8(ptr+u32::from(i)){Ok(v)=>v as u32,Err(_)=>return false};value|=b<<(8*u32::from(i));}self.once(ROM_BUILD_UINT32,||eprintln!("OSAL host build_uint32 little-endian"));cpu.set_r(Reg::R0,value);ret(cpu);true }
+    fn isbufset(&mut self,cpu:&mut Processor)->bool { let ptr=cpu.get_r(Reg::R0);let value=cpu.get_r(Reg::R1)as u8;let len=cpu.get_r(Reg::R2)as u8;let mut yes=true;for i in 0..u32::from(len){match cpu.read8(ptr+i){Ok(v)if v==value=>{},Ok(_)=>{yes=false;break;},Err(_)=>return false}}self.once(ROM_ISBUFSET,||eprintln!("OSAL host isbufset"));cpu.set_r(Reg::R0,u32::from(yes));ret(cpu);true }
+    fn rand_call(&mut self,cpu:&mut Processor)->bool { let mut x=if self.rng==0{0x6252_A5A5}else{self.rng};x^=x<<13;x^=x>>17;x^=x<<5;self.rng=x;self.once(ROM_RAND,||eprintln!("OSAL host deterministic PRNG"));cpu.set_r(Reg::R0,x&0xffff);ret(cpu);true }
 
     fn init(&mut self,cpu:&mut Processor)->bool { let entry=match cpu.read32(JT_INIT){Ok(v)if v&1==1=>v,Ok(v)=>{eprintln!("OSAL strict init callback={v:#010x} is not Thumb");return false;},Err(e)=>{eprintln!("OSAL strict init callback read: {e}");return false;}};self.once(ROM_INIT,||eprintln!("OSAL host init task_init={entry:#010x}"));cpu.set_pc(entry&!1);true }
     fn start(&mut self,cpu:&mut Processor)->bool { if self.running.is_some(){return self.finish(cpu);}if !self.started{if !self.resolve(cpu){return false;}self.started=true;self.once(ROM_START,||eprintln!("OSAL host cooperative scheduler started"));}self.dispatch(cpu) }
