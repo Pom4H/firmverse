@@ -13,6 +13,7 @@ const PWM_BASE: u32 = 0x4000_E000;
 const VECTOR_MIRROR_BYTES: u32 = 8;
 const THUMB_BX_LR: u16 = 0x4770;
 const AON_XTAL_16M_CTRL: u32 = 0x4000_F0BC;
+const AON_SLEEP_R1: u32 = 0x4000_F0C4;
 
 // Emulator-private MMIO cells used only by tiny ROM ABI thunks. Real firmware never sees
 // these addresses directly: the thunk bridges Cortex-M argument registers into DiscoveryBus
@@ -29,22 +30,33 @@ const TIM_CURRENT: [u32; 6] = [
     0x4000_1068,
 ];
 
+struct StubReg {
+    addr: u32,
+    name: &'static str,
+    reset: u32,
+}
+
 // Registers deliberately accepted as inert read/write storage. Keep this list exact:
 // broad peripheral ranges would hide the next silicon behavior that real firmware needs.
-// The watchdog-startup entries come from the pinned PHY62XX SDK 3.1.2 drivers.
-const KNOWN_STUB_REGS: &[(u32, &str)] = &[
-    (0x4000_0000, "PCR.SW_RESET0"),
-    (0x4000_000C, "PCR.SW_RESET2"),
-    (0x4000_0014, "PCR.SW_CLK1"),
-    (0x4000_2000, "WDT.CR"),
-    (0x4000_2004, "WDT.TORR"),
-    (0x4000_200C, "WDT.CRR"),
-    (0x4000_2014, "WDT.EOI"),
-    (0x4000_5000, "I2C0.IC_CON"),
-    (0x4000_6000, "SPI0"),
-    (0x4000_F000, "AON.PMCTL0"),
-    (0x4000_F03C, "PCRM.CLKSEL"),
-    (AON_XTAL_16M_CTRL, "AON.XTAL_16M_CTRL"),
+// Reset values are conservative emulator-visible values, not claims about undocumented
+// silicon bits. Registers whose startup code only writes before reading keep the historical
+// all-ones fallback; analog/tracking registers used via read-modify-write start clean.
+const KNOWN_STUB_REGS: &[StubReg] = &[
+    StubReg { addr: 0x4000_0000, name: "PCR.SW_RESET0", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_000C, name: "PCR.SW_RESET2", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_0014, name: "PCR.SW_CLK1", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_2000, name: "WDT.CR", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_2004, name: "WDT.TORR", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_200C, name: "WDT.CRR", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_2014, name: "WDT.EOI", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_5000, name: "I2C0.IC_CON", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_6000, name: "SPI0", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_F000, name: "AON.PMCTL0", reset: 0xFFFF_FFFF },
+    StubReg { addr: 0x4000_F03C, name: "PCRM.CLKSEL", reset: 0xFFFF_FFFF },
+    StubReg { addr: AON_XTAL_16M_CTRL, name: "AON.XTAL_16M_CTRL", reset: 0 },
+    // PHY62XX hal_rc32k_clk_tracking_init() executes AON_CLEAR_XTAL_TRACKING_AND_CALIB,
+    // which writes zero to AP_AON->SLEEP_R[1] before the ROM/efuse bootstrap.
+    StubReg { addr: AON_SLEEP_R1, name: "AON.SLEEP_R[1]", reset: 0 },
 ];
 
 struct RomShim {
@@ -227,22 +239,15 @@ impl DiscoveryBus {
         Self::gpio_known(addr, true) || Self::uart_write_known(addr) || Self::pwm_write_known(addr)
     }
 
-    fn known_stub(addr: u32) -> Option<&'static str> {
+    fn known_stub(addr: u32) -> Option<&'static StubReg> {
         let aligned = addr & !3;
-        KNOWN_STUB_REGS
-            .iter()
-            .find_map(|(reg, name)| (*reg == aligned).then_some(*name))
+        KNOWN_STUB_REGS.iter().find(|reg| reg.addr == aligned)
     }
 
     fn stub_reset(addr: u32) -> u32 {
-        match addr & !3 {
-            // PHY62XX SDK 3.1.2 configures this with read-modify-write. Its documented fields
-            // are XTAL cap [4:0] and current [6:5]. We do not know silicon reserved/reset bits,
-            // so keep the observable modeled fields clean instead of inheriting the old all-ones
-            // generic fallback, which would fabricate unrelated analog configuration.
-            AON_XTAL_16M_CTRL => 0,
-            _ => 0xFFFF_FFFF,
-        }
+        Self::known_stub(addr)
+            .map(|reg| reg.reset)
+            .unwrap_or(0xFFFF_FFFF)
     }
 
     fn emu_control_read(&self, addr: u32) -> Option<u32> {
@@ -513,6 +518,16 @@ mod tests {
         bus.write32(AON_XTAL_16M_CTRL, current3).unwrap();
 
         assert_eq!(bus.read32(AON_XTAL_16M_CTRL).unwrap(), 0x69);
+    }
+
+    #[test]
+    fn rc32k_tracking_state_is_an_exact_clean_aon_stub() {
+        let mut bus = bus(true);
+        assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0);
+        bus.write32(AON_SLEEP_R1, 0x1234_0084).unwrap();
+        assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0x1234_0084);
+        bus.write32(AON_SLEEP_R1, 0).unwrap();
+        assert_eq!(bus.read32(AON_SLEEP_R1).unwrap(), 0);
     }
 
     #[test]
