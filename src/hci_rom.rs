@@ -124,8 +124,6 @@ fn poll_host_radio(cpu: &mut Processor) -> bool {
     if connected == was_connected {
         return false;
     }
-    // A disconnect clears notification state too; consume both host-link bits
-    // atomically so a stale CCCD disable is not injected after link teardown.
     if cpu.write32(RADIO_STATUS_SHADOW, status).is_err() {
         return false;
     }
@@ -201,7 +199,7 @@ fn poll_host_rx(cpu: &mut Processor) -> bool {
     stage_att_write(cpu, handle, &value)
 }
 
-fn host_idle(cpu: &Processor) -> bool {
+fn host_idle(cpu: &mut Processor) -> bool {
     cpu.get_pc() == IDLE_BX_LR_ROM && cpu.get_r(Reg::R2) != CONT_MAGIC
 }
 
@@ -289,8 +287,6 @@ fn find_cccd_after(cpu: &mut Processor, value_attr: GuestAttribute) -> Option<Gu
                 && uuid_matches(cpu, uuid_ptr, &GATT_CLIENT_CHAR_CFG_UUID) {
                 return Some(GuestAttribute { addr, handle });
             }
-            // A later custom characteristic value means the descriptor window
-            // for the requested characteristic has ended.
             if len == 16 {
                 break;
             }
