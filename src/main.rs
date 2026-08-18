@@ -7,6 +7,7 @@ mod bus;
 mod cbtimer_rom;
 mod cmd;
 mod discovery;
+mod dma_bus;
 mod emu;
 mod flash_state;
 mod hci_caps;
