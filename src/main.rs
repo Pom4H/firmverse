@@ -5,6 +5,7 @@ mod arm_abi;
 mod ble_host;
 mod ble_rom;
 mod bm_rom;
+mod board;
 mod bus;
 mod cbtimer_rom;
 mod chip;
@@ -31,6 +32,7 @@ mod tui;
 mod world;
 
 use ble_host::BleHostOpts;
+use board::{profile, require_phy6252, BoardKind, PROFILES};
 use clap::{Parser, Subcommand};
 use emu::{default_hex, run, RunOpts};
 use std::path::PathBuf;
@@ -45,14 +47,17 @@ const DEFAULT_BLE_TX: &str = "6B1D0003-7C8E-4A91-9F2B-E3A14C5B0001";
 #[command(
     name = "phy6252",
     version,
-    about = "PHY6252 / PB-03F-Kit emulator",
-    after_help = "Live REPL is the default. `phy6252 sim` runs a shared RF world with one or more chips (mesh). Use --tui for a realtime pinout + logs dashboard or --ble to bridge the generic ATT mailbox to the host adapter (Linux BlueZ or macOS).",
+    about = "PHY6252 emulator with pluggable board profiles",
+    after_help = "Live REPL is the default. `phy6252 sim` runs a shared RF world with one or more chips (mesh). Use --board headless to remove PB-03F-Kit wiring assumptions. `phy6252 boards` lists known board profiles.",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
 )]
 struct Cli {
     /// Intel HEX image
     hex: Option<PathBuf>,
+    /// Board wiring/profile layered above the PHY6252 SoC
+    #[arg(long, value_enum, default_value_t = BoardKind::Pb03fKit)]
+    board: BoardKind,
     /// Run until halt or --max-insns, no REPL
     #[arg(long)]
     once: bool,
@@ -92,6 +97,8 @@ enum Command {
     Sim(SimCli),
     /// List built-in RF worlds
     Worlds,
+    /// List board profiles and the SoC each one requires
+    Boards,
 }
 
 #[derive(Parser)]
@@ -143,16 +150,28 @@ fn run_cli() -> Result<ExitCode, String> {
             sim::print_worlds();
             return Ok(ExitCode::SUCCESS);
         }
+        Some(Command::Boards) => {
+            print_boards();
+            return Ok(ExitCode::SUCCESS);
+        }
         Some(Command::Sim(sim_cli)) => return run_sim(sim_cli),
         None => {}
     }
 
+    let board = require_phy6252(cli.board)?;
     let hex = match cli.hex {
         Some(path) => path,
         None => default_hex()?,
     };
 
     if cli.tui {
+        if cli.board != BoardKind::Pb03fKit {
+            return Err(format!(
+                "TUI pinout currently models {}; use --raw for board {} until the TUI consumes BoardProfile",
+                profile(BoardKind::Pb03fKit).name,
+                board.id
+            ));
+        }
         return tui::run(TuiOpts {
             hex,
             strict: cli.strict_mmio,
@@ -179,11 +198,29 @@ fn run_cli() -> Result<ExitCode, String> {
         .unwrap_or(if live { 50_000_000 } else { 2_000_000 });
     run(RunOpts {
         hex,
+        board: cli.board,
         live,
         raw: cli.raw,
         strict_mmio: cli.strict_mmio,
         max_insns,
     })
+}
+
+fn print_boards() {
+    for board in PROFILES {
+        println!(
+            "{:<14} soc={:<8} {}{}",
+            board.id,
+            board.soc.id(),
+            board.name,
+            if board.soc == board::SocKind::Phy6252 {
+                ""
+            } else {
+                " [SoC not implemented]"
+            }
+        );
+        println!("  {}", board.description);
+    }
 }
 
 fn run_sim(cli: SimCli) -> Result<ExitCode, String> {
