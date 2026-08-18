@@ -65,6 +65,29 @@ jobs:
           path: target/debug/phy6252
           if-no-files-found: error
 
+  sdk312-ble-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: ARM GCC and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi
+          python3 -m pip install -r tools/requirements.txt
+      - name: Fetch pinned PHY62XX SDK 3.1.2 tree
+        run: |
+          git clone --filter=blob:none https://github.com/xuhongv/PHY6252_6222_SDK.git /tmp/phy62xx-sdk
+          git -C /tmp/phy62xx-sdk checkout b7202ee56e8d316ea3451dd61266f609e6a676e8
+      - name: Build and validate real vendor BLE image
+        run: |
+          python3 tools/phy6252_flash.py \
+            --sdk-root /tmp/phy62xx-sdk \
+            --vendor-ble-smoke \
+            --dry-run \
+            | tee /tmp/sdk312-ble.log
+          grep -q 'BLE provenance: GCC vendor RF + BLE host' /tmp/sdk312-ble.log
+          grep -q 'Dry run complete' /tmp/sdk312-ble.log
+
   demo-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -122,20 +145,22 @@ jobs:
 
   attest:
     if: always()
-    needs: [test, demo-smoke]
+    needs: [test, sdk312-ble-build, demo-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Publish combined commit status
         uses: actions/github-script@v8
         with:
           script: |
-            const ok = '${{ needs.test.result }}' === 'success' && '${{ needs.demo-smoke.result }}' === 'success';
+            const ok = '${{ needs.test.result }}' === 'success' &&
+              '${{ needs.sdk312-ble-build.result }}' === 'success' &&
+              '${{ needs.demo-smoke.result }}' === 'success';
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: context.sha,
               state: ok ? 'success' : 'failure',
               context: 'phy6252-emu/ci',
-              description: ok ? 'rust + flasher tests + capability stress passed' : 'One or more emulator CI jobs failed',
+              description: ok ? 'rust + flasher + SDK 3.1.2 BLE + stress passed' : 'One or more emulator CI jobs failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
