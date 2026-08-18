@@ -11,6 +11,7 @@ const C_STRCMP: u32 = 0x0000_0ED6;
 const C_MEMCMP: u32 = 0x0000_0EF2;
 const C_STRNCMP: u32 = 0x0000_0F0C;
 const AEABI_UREAD4: u32 = 0x0000_0F74;
+const ARM_COMMON_SWITCH8: u32 = 0x0000_8960;
 
 pub fn handle(cpu: &mut Processor) -> bool {
     match cpu.get_pc() {
@@ -23,6 +24,7 @@ pub fn handle(cpu: &mut Processor) -> bool {
         C_MEMCMP => memcmp(cpu),
         C_STRNCMP => strcmp(cpu, Some(cpu.get_r(Reg::R2))),
         AEABI_UREAD4 => uread4(cpu),
+        ARM_COMMON_SWITCH8 => common_switch8(cpu),
         _ => false,
     }
 }
@@ -144,6 +146,27 @@ fn uread4(cpu: &mut Processor) -> bool {
     true
 }
 
+fn common_switch8(cpu: &mut Processor) -> bool {
+    // ARMCC i.__ARM_common_switch8 ABI:
+    //   r3 = switch index
+    //   LR points at an inline byte table immediately after BL.
+    // Table byte 0 is the default/max slot. Remaining bytes are halfword
+    // offsets from the first entry byte. An out-of-range index selects the
+    // default slot. BX then enters the selected Thumb case target.
+    let table_count = cpu.get_r(Reg::LR) & !1;
+    let max_slot = match cpu.read8(table_count) { Ok(v) => v, Err(_) => return false };
+    let index = cpu.get_r(Reg::R3).min(u32::from(max_slot)) as u8;
+    let table = table_count.wrapping_add(1);
+    let halfwords = match cpu.read8(table.wrapping_add(u32::from(index))) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let target = table.wrapping_add(u32::from(halfwords) * 2);
+    eprintln!("ARMCC common_switch8 index={} slot={} target={:#010x}", cpu.get_r(Reg::R3), index, target & !1);
+    cpu.set_pc(target & !1);
+    true
+}
+
 fn ret(cpu: &mut Processor) {
     cpu.set_pc(cpu.get_r(Reg::LR) & !1);
 }
@@ -153,5 +176,12 @@ mod tests {
     #[test]
     fn byte_order_for_uread4_is_little_endian() {
         assert_eq!(u32::from_le_bytes([1, 2, 3, 4]), 0x0403_0201);
+    }
+
+    #[test]
+    fn switch8_default_slot_is_last_table_entry() {
+        let max_slot = 5u32;
+        assert_eq!(3u32.min(max_slot), 3);
+        assert_eq!(99u32.min(max_slot), 5);
     }
 }
