@@ -20,6 +20,10 @@ jobs:
             echo 'private product marker leaked into the generic emulator'
             exit 1
           fi
+          if git grep -inE 'CoreBluetooth|import Swift'; then
+            echo 'non-Linux BLE backend leaked into the generic emulator'
+            exit 1
+          fi
       - name: BlueZ helper syntax
         run: python3 -m py_compile host/ble/bluez.py
       - name: Cargo test
@@ -42,24 +46,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build emulator
         run: cargo build --quiet
-      - name: Restore demo HEX
-        id: demo-cache
-        uses: actions/cache@v4
-        with:
-          path: firmware/kit-demo.hex
-          key: kit-demo-${{ runner.os }}-${{ hashFiles('firmware/**') }}
       - name: ARM GCC
-        if: steps.demo-cache.outputs.cache-hit != 'true'
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
-      - name: Demo HEX
-        if: steps.demo-cache.outputs.cache-hit != 'true'
-        run: make -C firmware
-      - name: Strict MMIO live smoke
+      - name: Build demo firmware
+        run: make -C firmware clean all
+      - name: Simple board smoke
         run: |
           printf 'ADC 3300 1650 2500 3300\nIN 00400000\nCONNECT\nCCCD 1\nWRITE 4849\n' \
-            | timeout 3 ./target/debug/phy6252 --strict-mmio --raw firmware/kit-demo.hex \
-            | tee /tmp/emu.log || true
-          grep -q READY /tmp/emu.log
-          grep -q 'UART kit-demo boot' /tmp/emu.log
-          grep -q '^GPIO ' /tmp/emu.log
-          grep -q 'UART rx ' /tmp/emu.log
+            | timeout 3 ./target/debug/phy6252 --strict-mmio --raw firmware/build/kit-demo.hex \
+            | tee /tmp/kit.log || true
+          grep -q READY /tmp/kit.log
+          grep -q 'UART kit-demo boot' /tmp/kit.log
+          grep -q '^GPIO ' /tmp/kit.log
+          grep -q 'UART rx ' /tmp/kit.log
+      - name: Full capability stress
+        run: |
+          printf 'ADC 3000 1750 2250 3100\nIN 00400000\nCONNECT\nCCCD 1\nWRITE 434150\nTICK 512\n' \
+            | timeout 4 ./target/debug/phy6252 --strict-mmio --raw firmware/build/capability-demo.hex \
+            | tee /tmp/cap.log || true
+          grep -q READY /tmp/cap.log
+          grep -q 'UART capability-demo boot' /tmp/cap.log
+          grep -q 'UART capability-demo uart1' /tmp/cap.log
+          grep -q 'UART selftest osal=1 queue=1 flash=1 aes=1' /tmp/cap.log
+          grep -q '^GPIO ' /tmp/cap.log
+          grep -Eq '^PWM( [0-9a-f]{4}){6}$' /tmp/cap.log
+          grep -q '^FRAME 434150$' /tmp/cap.log
