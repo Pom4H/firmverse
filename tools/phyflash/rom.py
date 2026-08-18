@@ -19,9 +19,10 @@ class RomError(RuntimeError):
 
 
 class RomMonitor:
-    def __init__(self, port: str, baud: int = DEFAULT_BAUD):
+    def __init__(self, port: str, baud: int = DEFAULT_BAUD, *, auto_boot: bool = True):
         self.port_name = port
         self.run_baud = baud
+        self.auto_boot = auto_boot
         self.port = serial.Serial(port, START_BAUD, timeout=1)
         self.flash_size = 0x40000
         self.block_no = 0
@@ -46,17 +47,20 @@ class RomMonitor:
         if reply != b"#OK>>:":
             raise RomError(f"ROM command failed: {command!r}, reply={reply!r}")
 
-    def connect(self) -> str:
-        # Common USB-UART adapters expose RTS->RST_N and DTR->TM.
-        self.port.rts = True
-        self.port.dtr = True
-        time.sleep(0.1)
+    def _enter_monitor(self) -> None:
+        if self.auto_boot:
+            # Common adapters: RTS -> RST_N and DTR -> TM/test-mode control.
+            self.port.rts = True
+            self.port.dtr = True
+            time.sleep(0.1)
+            self.port.dtr = False
+            self.port.rts = False
         self.port.reset_input_buffer()
         self.port.reset_output_buffer()
-        self.port.dtr = False
-        self.port.rts = False
         self.port.timeout = 0.04
 
+    def connect(self) -> str:
+        self._enter_monitor()
         for _ in range(250):
             self.port.write(b"UXTDWU")
             reply = self.port.read(6)
@@ -65,10 +69,12 @@ class RomMonitor:
             if reply == b"fct>>:":
                 raise RomError("chip is in FCT mode; recover it with vendor tooling first")
         else:
-            raise RomError(
-                "ROM monitor did not answer; check TX/RX, GND, 3.3V, "
-                "RTS->RST_N and DTR->TM"
+            hint = (
+                "check TX/RX, GND, 3.3V, RTS->RST_N and DTR->TM"
+                if self.auto_boot
+                else "put the chip in ROM UART boot mode, then check TX/RX, GND and 3.3V"
             )
+            raise RomError(f"ROM monitor did not answer; {hint}")
 
         self.port.baudrate = DEFAULT_BAUD
         self.port.timeout = 0.2
