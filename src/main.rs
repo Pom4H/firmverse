@@ -12,6 +12,7 @@ mod hci_caps;
 mod hci_extra;
 mod hci_rom;
 mod hci_security;
+mod hci_task;
 mod hex;
 mod ll_crypto;
 mod ll_rom;
