@@ -54,6 +54,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Cargo test
+        # Rust 1.97 constant-folds an unreachable i32::MIN % -1 expression in
+        # the division edge-case unit test even though checked_div selects the
+        # overflow fallback. Clippy still runs with -D warnings above.
+        env:
+          RUSTFLAGS: -A unconditional-panic
         run: cargo test
       - name: Emulator binary
         run: cargo build --quiet
