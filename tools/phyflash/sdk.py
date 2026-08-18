@@ -79,7 +79,23 @@ def verify_sdk_312(root: pathlib.Path) -> Sdk312Info:
     return info
 
 
-def build_vendor_ble_example(info: Sdk312Info) -> pathlib.Path:
+def verify_ble_link_map(path: pathlib.Path) -> str:
+    """Verify that a linker map names the vendor RF and BLE host libraries."""
+    if not path.is_file():
+        raise SdkError(f"linker map not found: {path}")
+    text = path.read_text(encoding="utf-8", errors="ignore").lower()
+    gcc = "libphy6222_rf.a" in text and "libphy6222_host.a" in text
+    keil = "rf.lib" in text and "ble_host.lib" in text
+    if gcc:
+        return "GCC vendor RF + BLE host"
+    if keil:
+        return "Keil vendor RF + BLE host"
+    raise SdkError(
+        "linker map does not prove that PHY62XX SDK RF and BLE host libraries were linked"
+    )
+
+
+def build_vendor_ble_example(info: Sdk312Info) -> tuple[pathlib.Path, pathlib.Path]:
     """Build the SDK's own BLE peripheral with its vendor RF/host libraries."""
     if shutil.which("arm-none-eabi-gcc") is None:
         raise SdkError("arm-none-eabi-gcc is required to build the SDK 3.1.2 BLE example")
@@ -100,6 +116,10 @@ def build_vendor_ble_example(info: Sdk312Info) -> pathlib.Path:
         raise SdkError(f"SDK 3.1.2 BLE example build failed:\n{tail}")
 
     image = workdir / "output" / "sbp.ihex"
+    link_map = workdir / "build.map"
     if not image.is_file() or image.stat().st_size == 0:
         raise SdkError("SDK BLE build completed without output/sbp.ihex")
-    return image
+    if not link_map.is_file() or link_map.stat().st_size == 0:
+        raise SdkError("SDK BLE build completed without build.map")
+    verify_ble_link_map(link_map)
+    return image, link_map
