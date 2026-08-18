@@ -7,6 +7,7 @@ mod bus;
 mod cmd;
 mod discovery;
 mod emu;
+mod hci_extra;
 mod hci_rom;
 mod hex;
 mod mailbox;
