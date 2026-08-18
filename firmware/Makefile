@@ -7,7 +7,7 @@ KIT_HEX := $(OUT)/kit-demo.hex
 CAP_ELF := $(OUT)/capability-demo.elf
 CAP_HEX := $(OUT)/capability-demo.hex
 
-CFLAGS  := -mcpu=cortex-m0 -mthumb -ffreestanding -nostdlib -Os -Wall -Wextra -Werror
+CFLAGS  := -mcpu=cortex-m0 -mthumb -ffreestanding -fno-builtin -fno-tree-loop-distribute-patterns -nostdlib -Os -Wall -Wextra -Werror
 LDFLAGS := -T linker.ld -nostdlib -Wl,--no-warn-rwx-segments
 
 .PHONY: all clean
@@ -20,8 +20,8 @@ $(OUT):
 $(KIT_ELF): main.c board.h linker.ld | $(OUT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(OUT)/kit-demo.map -o $@ main.c
 
-$(CAP_ELF): capability.c controller_probe.c board.h linker.ld | $(OUT)
-	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(OUT)/capability-demo.map -o $@ capability.c controller_probe.c
+$(CAP_ELF): capability.c controller_probe.c runtime.c board.h linker.ld | $(OUT)
+	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(OUT)/capability-demo.map -o $@ capability.c controller_probe.c runtime.c
 
 $(KIT_HEX): $(KIT_ELF)
 	$(OBJCOPY) -O ihex $< $@
