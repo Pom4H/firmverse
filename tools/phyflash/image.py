@@ -104,14 +104,16 @@ def parse_intel_hex(path: pathlib.Path) -> list[Segment]:
     return segments
 
 
+def _overlaps(start: int, end: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start < other_end and end > other_start for other_start, other_end in ranges)
+
+
 def prepare_phy_hex(segments: list[Segment], entry: int = DEFAULT_ENTRY) -> list[Segment]:
     """Map SDK HEX load regions to PHY62xx flash and prepend ROM boot table."""
-    if entry & 1 == 0:
-        raise ImageError(f"entry address 0x{entry:08x} is not a Thumb address")
-
     mapped: list[Segment] = []
-    flash_end = 0
-    sram_total = 0
+    direct_ranges: list[tuple[int, int]] = []
+    sram_segments: list[Segment] = []
+
     for seg in segments:
         if not seg.data:
             continue
@@ -120,38 +122,42 @@ def prepare_phy_hex(segments: list[Segment], entry: int = DEFAULT_ENTRY) -> list
             raise ImageError("segment address overflow")
         if FLASH_BASE <= seg.load_addr and end <= FLASH_BASE + MAX_FLASH_SIZE:
             flash_addr = seg.load_addr - FLASH_BASE
+            flash_end = flash_addr + len(seg.data)
+            if _overlaps(flash_addr, flash_end, direct_ranges):
+                raise ImageError(
+                    f"HEX flash ranges overlap at 0x{flash_addr:x}..0x{flash_end:x}"
+                )
+            direct_ranges.append((flash_addr, flash_end))
             mapped.append(Segment(seg.load_addr, seg.data, flash_addr))
-            flash_end = max(flash_end, flash_addr + len(seg.data))
         elif SRAM_BASE <= seg.load_addr and end <= SRAM_BASE + 0x10000:
-            sram_total += len(seg.data)
-            mapped.append(seg)
+            sram_segments.append(seg)
         else:
             raise ImageError(
                 f"HEX segment 0x{seg.load_addr:08x}..0x{end:08x} is neither PHY62xx flash nor SRAM"
             )
 
+    sram_total = sum((len(seg.data) + 3) & ~3 for seg in sram_segments)
     ram_cursor = SRAM_IMAGE_ADDR
-    if ram_cursor < flash_end and ram_cursor + sram_total > 0:
+    if sram_total and _overlaps(ram_cursor, ram_cursor + sram_total, direct_ranges):
+        ram_cursor = max((end for _start, end in direct_ranges), default=ram_cursor)
+        ram_cursor = (ram_cursor + 3) & ~3
+
+    finalized = list(mapped)
+    ranges = list(direct_ranges)
+    for seg in sram_segments:
+        flash_addr = ram_cursor
+        flash_end = flash_addr + len(seg.data)
+        if flash_end > MAX_FLASH_SIZE:
+            raise ImageError("prepared image exceeds maximum supported flash size")
+        if _overlaps(flash_addr, flash_end, ranges):
+            raise ImageError(
+                f"prepared flash ranges overlap at 0x{flash_addr:x}..0x{flash_end:x}"
+            )
+        ranges.append((flash_addr, flash_end))
+        finalized.append(Segment(seg.load_addr, seg.data, flash_addr))
         ram_cursor = (flash_end + 3) & ~3
 
-    finalized: list[Segment] = []
-    ranges: list[tuple[int, int]] = []
-    for seg in mapped:
-        flash_addr = seg.flash_addr
-        if SRAM_BASE <= seg.load_addr < SRAM_BASE + 0x10000:
-            flash_addr = ram_cursor
-            ram_cursor = (ram_cursor + len(seg.data) + 3) & ~3
-        end = flash_addr + len(seg.data)
-        if end > MAX_FLASH_SIZE:
-            raise ImageError("prepared image exceeds maximum supported flash size")
-        for existing_start, existing_end in ranges:
-            if flash_addr < existing_end and end > existing_start:
-                raise ImageError(
-                    f"prepared flash ranges overlap at 0x{flash_addr:x}..0x{end:x}"
-                )
-        ranges.append((flash_addr, end))
-        finalized.append(Segment(seg.load_addr, seg.data, flash_addr))
-
+    finalized.sort(key=lambda seg: seg.flash_addr)
     header = bytearray(b"\xff" * 0x100)
     header[0:4] = len(finalized).to_bytes(4, "little")
     header[8:12] = entry.to_bytes(4, "little")
@@ -165,8 +171,7 @@ def prepare_phy_hex(segments: list[Segment], entry: int = DEFAULT_ENTRY) -> list
         pos += 16
 
     header_end = BOOT_HEADER_ADDR + len(header)
-    for start, end in ranges:
-        if start < header_end and end > BOOT_HEADER_ADDR:
-            raise ImageError("firmware data overlaps PHY62xx boot header at flash 0x2000")
+    if _overlaps(BOOT_HEADER_ADDR, header_end, ranges):
+        raise ImageError("firmware data overlaps PHY62xx boot header at flash 0x2000")
 
     return [Segment(0, bytes(header), BOOT_HEADER_ADDR), *finalized]
