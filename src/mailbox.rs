@@ -1,10 +1,14 @@
 //! Radio mailbox in Cortex-M SRAM at `0x20000000` (zmu's RAM window).
+//!
+//! Silicon-safe demos also keep a copy at `0x1FFF8000`, which is inside the
+//! PHY6252 64 KiB SRAM and can be used by guest firmware on real hardware.
 
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::fault::Fault;
 use zmu_cortex_m::Processor;
 
 pub const BASE: u32 = 0x2000_0000;
+pub const GUEST_SRAM: u32 = 0x1FFF_8000;
 pub const MAGIC_VALUE: u32 = 0x5048_5932; // "PHY2"
 pub const MAGIC: u32 = 0;
 pub const STATUS: u32 = 4;
@@ -20,7 +24,8 @@ pub const STATUS_CONNECTED: u32 = 1;
 pub const STATUS_NOTIFY: u32 = 2;
 
 fn write_u32(processor: &mut Processor, off: u32, value: u32) -> Result<(), Fault> {
-    processor.write32(BASE + off, value)
+    processor.write32(BASE + off, value)?;
+    processor.write32(GUEST_SRAM + off, value)
 }
 
 fn read_u32(processor: &mut Processor, off: u32) -> Result<u32, Fault> {
@@ -68,6 +73,7 @@ pub fn write_rx(processor: &mut Processor, payload: &[u8]) -> Result<(), Fault> 
     write_u32(processor, RX_LEN, n as u32)?;
     for (i, byte) in payload.iter().take(n).enumerate() {
         processor.write8(BASE + RX_BYTES + i as u32, *byte)?;
+        processor.write8(GUEST_SRAM + RX_BYTES + i as u32, *byte)?;
     }
     let seq = read_u32(processor, RX_SEQ)?.wrapping_add(1);
     write_u32(processor, RX_SEQ, seq)
@@ -78,6 +84,7 @@ pub fn emit_tx(processor: &mut Processor, payload: &[u8]) -> Result<(), Fault> {
     write_u32(processor, TX_LEN, n as u32)?;
     for (i, byte) in payload.iter().take(n).enumerate() {
         processor.write8(BASE + TX_BYTES + i as u32, *byte)?;
+        processor.write8(GUEST_SRAM + TX_BYTES + i as u32, *byte)?;
     }
     let seq = read_u32(processor, TX_SEQ)?.wrapping_add(1);
     write_u32(processor, TX_SEQ, seq)

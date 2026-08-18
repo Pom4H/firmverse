@@ -85,10 +85,22 @@ fn set_adv_param0(cpu: &mut Processor) -> bool {
     let event_type = cpu.get_r(Reg::R2) as u8;
     let own_addr_type = cpu.get_r(Reg::R3) as u8;
     let sp = cpu.get_r(Reg::SP);
-    let direct_addr_type = match cpu.read32(sp) { Ok(v) => v as u8, Err(_) => return false };
-    let direct_addr = match cpu.read32(sp + 4) { Ok(v) => v, Err(_) => return false };
-    let channel_map = match cpu.read32(sp + 8) { Ok(v) => v as u8, Err(_) => return false };
-    let wl_policy = match cpu.read32(sp + 12) { Ok(v) => v as u8, Err(_) => return false };
+    let direct_addr_type = match cpu.read32(sp) {
+        Ok(v) => v as u8,
+        Err(_) => return false,
+    };
+    let direct_addr = match cpu.read32(sp + 4) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let channel_map = match cpu.read32(sp + 8) {
+        Ok(v) => v as u8,
+        Err(_) => return false,
+    };
+    let wl_policy = match cpu.read32(sp + 12) {
+        Ok(v) => v as u8,
+        Err(_) => return false,
+    };
 
     let directed = matches!(event_type, 1 | 4);
     let direct_ok = !directed || (direct_addr_type <= 1 && readable(cpu, direct_addr, 6));
@@ -117,7 +129,9 @@ fn set_data_length0(cpu: &mut Processor) -> bool {
     let octets = cpu.get_r(Reg::R1) as u16;
     let time = cpu.get_r(Reg::R2) as u16;
     let status = data_length_status(cpu, handle, octets, time);
-    eprintln!("BLE LL SetDataLengh0 handle={handle} octets={octets} time={time} status={status:#04x}");
+    eprintln!(
+        "BLE LL SetDataLengh0 handle={handle} octets={octets} time={time} status={status:#04x}"
+    );
     cpu.set_r(Reg::R0, status);
     ret(cpu);
     true
@@ -127,7 +141,8 @@ pub fn data_length_status(cpu: &mut Processor, handle: u16, octets: u16, time: u
     let conn = connection_status(cpu, handle);
     if conn != LL_STATUS_SUCCESS {
         conn
-    } else if !(27..=MAX_DATA_OCTETS).contains(&octets) || !(328..=MAX_DATA_TIME_US).contains(&time) {
+    } else if !(27..=MAX_DATA_OCTETS).contains(&octets) || !(328..=MAX_DATA_TIME_US).contains(&time)
+    {
         LL_STATUS_ERROR_BAD_PARAMETER
     } else {
         LL_STATUS_SUCCESS
@@ -152,7 +167,11 @@ fn enqueue_ctrl(cpu: &mut Processor) -> bool {
         return true;
     }
     CTRL_QUEUES.with(|queues| {
-        queues.borrow_mut().entry(conn_ptr).or_default().push_back(ctrl_type);
+        queues
+            .borrow_mut()
+            .entry(conn_ptr)
+            .or_default()
+            .push_back(ctrl_type);
     });
     eprintln!("BLE LL control enqueue conn={conn_ptr:#010x} type={ctrl_type:#04x}");
     ret(cpu);

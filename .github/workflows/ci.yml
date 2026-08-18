@@ -37,16 +37,13 @@ jobs:
             echo 'private product marker leaked into the generic emulator'
             exit 1
           fi
-          forbidden_a="Core""Bluetooth"
-          forbidden_b="import ""Swift"
-          if git grep -inE "${forbidden_a}|${forbidden_b}"; then
-            echo 'non-Linux BLE backend leaked into the generic emulator'
-            exit 1
-          fi
       - name: Python tool dependencies
         run: python3 -m pip install -r tools/requirements.txt
-      - name: Python helper syntax
+      - name: BLE helpers and Python syntax
         run: |
+          test -f host/ble/bluez.py
+          test -f host/ble/darwin.swift
+          test -f host/ble/darwin.plist
           python3 -m py_compile host/ble/bluez.py tools/phy6252_flash.py tools/phyflash/*.py
       - name: PHY6252 flasher tests
         run: python3 -m unittest discover -s tests -p 'test_phyflash.py' -v
@@ -106,16 +103,50 @@ jobs:
         run: make -C firmware clean all
       - name: Simple board smoke
         run: |
-          printf 'ADC 3300 1650 2500 3300\nIN 00400000\nCONNECT\nCCCD 1\nWRITE 4849\n' \
+          printf 'ADC 3300 1650 2500 3300\nIN 00000200\nCONNECT\nCCCD 1\nWRITE 4849\n' \
             | timeout 3 ./target/debug/phy6252 --strict-mmio --raw firmware/build/kit-demo.hex \
             | tee /tmp/kit.log || true
           grep -q READY /tmp/kit.log
           grep -q 'UART kit-demo boot' /tmp/kit.log
           grep -q '^GPIO ' /tmp/kit.log
           grep -q 'UART rx ' /tmp/kit.log
+      - name: RSSI rank sticky colours
+        run: |
+          {
+            echo 'scan 111111111111 -40'
+            echo 'scan 222222222222 -50'
+            echo 'scan 333333333333 -60'
+            echo 'scan 444444444444 -70'
+            echo 'scan 555555555555 -80'
+            echo 'gone 111111111111'
+            echo 'scan 666666666666 -30'
+          } | timeout 3 ./target/debug/phy6252 --strict-mmio --raw firmware/build/rssi-rank.hex \
+            | tee /tmp/rank.log || true
+          grep -q READY /tmp/rank.log
+          grep -q 'UART rssi-rank boot' /tmp/rank.log
+          grep -q 'UART color R <- 111111111111' /tmp/rank.log
+          grep -q 'UART color Y <- 444444444444' /tmp/rank.log
+          grep -q 'UART color W <- 555555555555' /tmp/rank.log
+          grep -q 'UART vacant R 111111111111' /tmp/rank.log
+          grep -q 'UART color R <- 666666666666' /tmp/rank.log
+          grep -Eq '^GPIO [0-9a-f]{8} 00401091$' /tmp/rank.log
+      - name: Two-node mesh hears the neighbour
+        run: |
+          ./target/debug/phy6252 sim --strict --once --ticks 200 --raw --world mesh \
+            --node a=firmware/build/rssi-rank.hex \
+            --node b=firmware/build/rssi-rank.hex \
+            | tee /tmp/mesh.log
+          grep -q '^READY$' /tmp/mesh.log
+          grep -q '^WORLD mesh ' /tmp/mesh.log
+          grep -q '^NODE a ' /tmp/mesh.log
+          grep -q '^NODE b ' /tmp/mesh.log
+          grep -q '\[a\] UART rssi-rank boot' /tmp/mesh.log
+          grep -q '\[b\] UART rssi-rank boot' /tmp/mesh.log
+          grep -q '\[a\] UART color R <-' /tmp/mesh.log
+          grep -q '\[b\] UART color R <-' /tmp/mesh.log
       - name: Full capability stress
         run: |
-          printf 'ADC 3000 1750 2250 3100\nIN 00400000\nCONNECT\nCCCD 1\nWRITE 434150\nTICK 512\n' \
+          printf 'ADC 3000 1750 2250 3100\nIN 00000200\nCONNECT\nCCCD 1\nWRITE 434150\nTICK 512\n' \
             | timeout 4 ./target/debug/phy6252 --strict-mmio --raw firmware/build/capability-demo.hex \
             | tee /tmp/cap.log || true
           grep -q READY /tmp/cap.log

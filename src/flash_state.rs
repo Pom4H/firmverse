@@ -61,7 +61,11 @@ pub fn ensure_loaded(cpu: &mut Processor) -> bool {
             eprintln!("FLASH state: restore failed {}", path.display());
             return false;
         }
-        eprintln!("FLASH state: restored {} bytes from {}", XIP_SIZE, path.display());
+        eprintln!(
+            "FLASH state: restored {} bytes from {}",
+            XIP_SIZE,
+            path.display()
+        );
         true
     })
 }

@@ -1,4 +1,7 @@
-use crate::{arm_abi, bm_rom, cbtimer_rom, dma_engine, hci_caps, hci_extra, hci_rom, hci_security, hci_task, ll_crypto, ll_rom, osal_power, osal_queue};
+use crate::{
+    arm_abi, bm_rom, cbtimer_rom, dma_engine, hci_caps, hci_extra, hci_rom, hci_security, hci_task,
+    ll_crypto, ll_rom, osal_power, osal_queue,
+};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;

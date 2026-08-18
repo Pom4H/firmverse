@@ -32,25 +32,33 @@ pub fn handle(cpu: &mut Processor) -> bool {
 fn copy_bytes(cpu: &mut Processor, dst: u32, src: u32, len: u32) -> bool {
     let mut bytes = Vec::with_capacity(len as usize);
     for i in 0..len {
-        let Ok(byte) = cpu.read8(src.wrapping_add(i)) else { return false; };
+        let Ok(byte) = cpu.read8(src.wrapping_add(i)) else {
+            return false;
+        };
         bytes.push(byte);
     }
     for (i, byte) in bytes.into_iter().enumerate() {
-        if cpu.write8(dst.wrapping_add(i as u32), byte).is_err() { return false; }
+        if cpu.write8(dst.wrapping_add(i as u32), byte).is_err() {
+            return false;
+        }
     }
     true
 }
 
 fn fill(cpu: &mut Processor, dst: u32, len: u32, value: u8) -> bool {
     for i in 0..len {
-        if cpu.write8(dst.wrapping_add(i), value).is_err() { return false; }
+        if cpu.write8(dst.wrapping_add(i), value).is_err() {
+            return false;
+        }
     }
     true
 }
 
 fn memcpy(cpu: &mut Processor) -> bool {
     let dst = cpu.get_r(Reg::R0);
-    if !copy_bytes(cpu, dst, cpu.get_r(Reg::R1), cpu.get_r(Reg::R2)) { return false; }
+    if !copy_bytes(cpu, dst, cpu.get_r(Reg::R1), cpu.get_r(Reg::R2)) {
+        return false;
+    }
     cpu.set_r(Reg::R0, dst);
     ret(cpu);
     true
@@ -58,7 +66,9 @@ fn memcpy(cpu: &mut Processor) -> bool {
 
 fn aeabi_memset(cpu: &mut Processor) -> bool {
     let dst = cpu.get_r(Reg::R0);
-    if !fill(cpu, dst, cpu.get_r(Reg::R1), cpu.get_r(Reg::R2) as u8) { return false; }
+    if !fill(cpu, dst, cpu.get_r(Reg::R1), cpu.get_r(Reg::R2) as u8) {
+        return false;
+    }
     cpu.set_r(Reg::R0, dst);
     ret(cpu);
     true
@@ -66,7 +76,9 @@ fn aeabi_memset(cpu: &mut Processor) -> bool {
 
 fn memclr(cpu: &mut Processor) -> bool {
     let dst = cpu.get_r(Reg::R0);
-    if !fill(cpu, dst, cpu.get_r(Reg::R1), 0) { return false; }
+    if !fill(cpu, dst, cpu.get_r(Reg::R1), 0) {
+        return false;
+    }
     cpu.set_r(Reg::R0, dst);
     ret(cpu);
     true
@@ -74,7 +86,9 @@ fn memclr(cpu: &mut Processor) -> bool {
 
 fn c_memset(cpu: &mut Processor) -> bool {
     let dst = cpu.get_r(Reg::R0);
-    if !fill(cpu, dst, cpu.get_r(Reg::R2), cpu.get_r(Reg::R1) as u8) { return false; }
+    if !fill(cpu, dst, cpu.get_r(Reg::R2), cpu.get_r(Reg::R1) as u8) {
+        return false;
+    }
     cpu.set_r(Reg::R0, dst);
     ret(cpu);
     true
@@ -105,8 +119,14 @@ fn strcmp(cpu: &mut Processor, limit: Option<u32>) -> bool {
             ret(cpu);
             return true;
         }
-        let av = match cpu.read8(a.wrapping_add(i)) { Ok(v) => v, Err(_) => return false };
-        let bv = match cpu.read8(b.wrapping_add(i)) { Ok(v) => v, Err(_) => return false };
+        let av = match cpu.read8(a.wrapping_add(i)) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let bv = match cpu.read8(b.wrapping_add(i)) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         if av != bv || av == 0 {
             cpu.set_r(Reg::R0, (av as i32 - bv as i32) as u32);
             ret(cpu);
@@ -121,8 +141,14 @@ fn memcmp(cpu: &mut Processor) -> bool {
     let b = cpu.get_r(Reg::R1);
     let len = cpu.get_r(Reg::R2);
     for i in 0..len {
-        let av = match cpu.read8(a.wrapping_add(i)) { Ok(v) => v, Err(_) => return false };
-        let bv = match cpu.read8(b.wrapping_add(i)) { Ok(v) => v, Err(_) => return false };
+        let av = match cpu.read8(a.wrapping_add(i)) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let bv = match cpu.read8(b.wrapping_add(i)) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         if av != bv {
             cpu.set_r(Reg::R0, (av as i32 - bv as i32) as u32);
             ret(cpu);
@@ -138,7 +164,10 @@ fn uread4(cpu: &mut Processor) -> bool {
     let ptr = cpu.get_r(Reg::R0);
     let mut value = 0u32;
     for i in 0..4u32 {
-        let byte = match cpu.read8(ptr.wrapping_add(i)) { Ok(v) => v, Err(_) => return false };
+        let byte = match cpu.read8(ptr.wrapping_add(i)) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         value |= u32::from(byte) << (8 * i);
     }
     cpu.set_r(Reg::R0, value);
@@ -154,7 +183,10 @@ fn common_switch8(cpu: &mut Processor) -> bool {
     // offsets from the first entry byte. An out-of-range index selects the
     // default slot. BX then enters the selected Thumb case target.
     let table_count = cpu.get_r(Reg::LR) & !1;
-    let max_slot = match cpu.read8(table_count) { Ok(v) => v, Err(_) => return false };
+    let max_slot = match cpu.read8(table_count) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     let index = cpu.get_r(Reg::R3).min(u32::from(max_slot)) as u8;
     let table = table_count.wrapping_add(1);
     let halfwords = match cpu.read8(table.wrapping_add(u32::from(index))) {
@@ -162,7 +194,12 @@ fn common_switch8(cpu: &mut Processor) -> bool {
         Err(_) => return false,
     };
     let target = table.wrapping_add(u32::from(halfwords) * 2);
-    eprintln!("ARMCC common_switch8 index={} slot={} target={:#010x}", cpu.get_r(Reg::R3), index, target & !1);
+    eprintln!(
+        "ARMCC common_switch8 index={} slot={} target={:#010x}",
+        cpu.get_r(Reg::R3),
+        index,
+        target & !1
+    );
     cpu.set_pc(target & !1);
     true
 }

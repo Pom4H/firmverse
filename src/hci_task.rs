@@ -67,8 +67,14 @@ fn reverse_bytes(cpu: &mut Processor) -> bool {
     for i in 0..u32::from(len / 2) {
         let left = ptr.wrapping_add(i);
         let right = ptr.wrapping_add(u32::from(len) - 1 - i);
-        let a = match cpu.read8(left) { Ok(v) => v, Err(_) => return false };
-        let b = match cpu.read8(right) { Ok(v) => v, Err(_) => return false };
+        let a = match cpu.read8(left) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let b = match cpu.read8(right) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         if cpu.write8(left, b).is_err() || cpu.write8(right, a).is_err() {
             return false;
         }

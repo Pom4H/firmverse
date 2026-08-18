@@ -41,62 +41,257 @@ const fn dma_ch(ch: u32, reg: u32) -> u32 {
 }
 
 const STORAGE_REGS: &[StorageReg] = &[
-    StorageReg { addr: IOMUX_ANALOG_IO_EN, name: "IOMUX.Analog_IO_en", reset: 0 },
-    StorageReg { addr: IOMUX_FULL_MUX0_EN, name: "IOMUX.full_mux0_en", reset: 0 },
-    StorageReg { addr: IOMUX_GPIO_SEL1, name: "IOMUX.gpio_sel[1]", reset: 0 },
-    StorageReg { addr: AP_CACHE_CTRL0, name: "CACHE.CTRL0", reset: 0 },
-    StorageReg { addr: AP_CACHE_CTRL1, name: "CACHE.CTRL1", reset: 0 },
+    StorageReg {
+        addr: IOMUX_ANALOG_IO_EN,
+        name: "IOMUX.Analog_IO_en",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_FULL_MUX0_EN,
+        name: "IOMUX.full_mux0_en",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL1,
+        name: "IOMUX.gpio_sel[1]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: AP_CACHE_CTRL0,
+        name: "CACHE.CTRL0",
+        reset: 0,
+    },
+    StorageReg {
+        addr: AP_CACHE_CTRL1,
+        name: "CACHE.CTRL1",
+        reset: 0,
+    },
     // The SDK's SPIF_STATUS_WAIT_IDLE waits for CONFIG.bit31 and FCMD.bit1 to indicate
     // an idle controller. The host NOR backend completes commands synchronously, so these
     // reset values represent an immediately-ready controller while preserving command data.
-    StorageReg { addr: SPIF_CONFIG, name: "SPIF.CONFIG", reset: 0x8000_0000 },
-    StorageReg { addr: SPIF_FCMD, name: "SPIF.FCMD", reset: 0 },
-    StorageReg { addr: SPIF_FCMD_ADDR, name: "SPIF.FCMD_ADDR", reset: 0 },
-    StorageReg { addr: SPIF_FCMD_RDDATA0, name: "SPIF.FCMD_RDDATA[0]", reset: 0 },
-    StorageReg { addr: SPIF_FCMD_RDDATA1, name: "SPIF.FCMD_RDDATA[1]", reset: 0 },
-    StorageReg { addr: SPIF_FCMD_WRDATA0, name: "SPIF.FCMD_WRDATA[0]", reset: 0 },
-    StorageReg { addr: SPIF_FCMD_WRDATA1, name: "SPIF.FCMD_WRDATA[1]", reset: 0 },
-    StorageReg { addr: SPIF_POLL_FSTATUS, name: "SPIF.POLL_FSTATUS", reset: 0 },
-    StorageReg { addr: PCRM_CLKHF_CTL0, name: "PCRM.CLKHF_CTL0", reset: 0 },
-    StorageReg { addr: PCRM_CLKHF_CTL1, name: "PCRM.CLKHF_CTL1", reset: 0 },
-
+    StorageReg {
+        addr: SPIF_CONFIG,
+        name: "SPIF.CONFIG",
+        reset: 0x8000_0000,
+    },
+    StorageReg {
+        addr: SPIF_FCMD,
+        name: "SPIF.FCMD",
+        reset: 0,
+    },
+    StorageReg {
+        addr: SPIF_FCMD_ADDR,
+        name: "SPIF.FCMD_ADDR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: SPIF_FCMD_RDDATA0,
+        name: "SPIF.FCMD_RDDATA[0]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: SPIF_FCMD_RDDATA1,
+        name: "SPIF.FCMD_RDDATA[1]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: SPIF_FCMD_WRDATA0,
+        name: "SPIF.FCMD_WRDATA[0]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: SPIF_FCMD_WRDATA1,
+        name: "SPIF.FCMD_WRDATA[1]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: SPIF_POLL_FSTATUS,
+        name: "SPIF.POLL_FSTATUS",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_CLKHF_CTL0,
+        name: "PCRM.CLKHF_CTL0",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_CLKHF_CTL1,
+        name: "PCRM.CLKHF_CTL1",
+        reset: 0,
+    },
     // Public SDK AP_DMA_CH_CFG(n), AP_DMA_INT and AP_DMA_MISC registers used by
     // hal_dma_config_channel/start/stop/wait. Only identified words are exposed;
     // LLP remains visible so the behavioral model can reject non-zero linked lists.
-    StorageReg { addr: dma_ch(0, 0x00), name: "DMAC.CH0.SAR", reset: 0 },
-    StorageReg { addr: dma_ch(0, 0x08), name: "DMAC.CH0.DAR", reset: 0 },
-    StorageReg { addr: dma_ch(0, 0x10), name: "DMAC.CH0.LLP", reset: 0 },
-    StorageReg { addr: dma_ch(0, 0x18), name: "DMAC.CH0.CTL", reset: 0 },
-    StorageReg { addr: dma_ch(0, 0x1C), name: "DMAC.CH0.CTL_H", reset: 0 },
-    StorageReg { addr: dma_ch(0, 0x40), name: "DMAC.CH0.CFG", reset: 0 },
-    StorageReg { addr: dma_ch(0, 0x44), name: "DMAC.CH0.CFG_H", reset: 0 },
-    StorageReg { addr: dma_ch(1, 0x00), name: "DMAC.CH1.SAR", reset: 0 },
-    StorageReg { addr: dma_ch(1, 0x08), name: "DMAC.CH1.DAR", reset: 0 },
-    StorageReg { addr: dma_ch(1, 0x10), name: "DMAC.CH1.LLP", reset: 0 },
-    StorageReg { addr: dma_ch(1, 0x18), name: "DMAC.CH1.CTL", reset: 0 },
-    StorageReg { addr: dma_ch(1, 0x1C), name: "DMAC.CH1.CTL_H", reset: 0 },
-    StorageReg { addr: dma_ch(1, 0x40), name: "DMAC.CH1.CFG", reset: 0 },
-    StorageReg { addr: dma_ch(1, 0x44), name: "DMAC.CH1.CFG_H", reset: 0 },
-    StorageReg { addr: dma_ch(2, 0x00), name: "DMAC.CH2.SAR", reset: 0 },
-    StorageReg { addr: dma_ch(2, 0x08), name: "DMAC.CH2.DAR", reset: 0 },
-    StorageReg { addr: dma_ch(2, 0x10), name: "DMAC.CH2.LLP", reset: 0 },
-    StorageReg { addr: dma_ch(2, 0x18), name: "DMAC.CH2.CTL", reset: 0 },
-    StorageReg { addr: dma_ch(2, 0x1C), name: "DMAC.CH2.CTL_H", reset: 0 },
-    StorageReg { addr: dma_ch(2, 0x40), name: "DMAC.CH2.CFG", reset: 0 },
-    StorageReg { addr: dma_ch(2, 0x44), name: "DMAC.CH2.CFG_H", reset: 0 },
-    StorageReg { addr: dma_ch(3, 0x00), name: "DMAC.CH3.SAR", reset: 0 },
-    StorageReg { addr: dma_ch(3, 0x08), name: "DMAC.CH3.DAR", reset: 0 },
-    StorageReg { addr: dma_ch(3, 0x10), name: "DMAC.CH3.LLP", reset: 0 },
-    StorageReg { addr: dma_ch(3, 0x18), name: "DMAC.CH3.CTL", reset: 0 },
-    StorageReg { addr: dma_ch(3, 0x1C), name: "DMAC.CH3.CTL_H", reset: 0 },
-    StorageReg { addr: dma_ch(3, 0x40), name: "DMAC.CH3.CFG", reset: 0 },
-    StorageReg { addr: dma_ch(3, 0x44), name: "DMAC.CH3.CFG_H", reset: 0 },
-    StorageReg { addr: DMAC_RAW_TFR, name: "DMAC.RawTfr", reset: 0 },
-    StorageReg { addr: DMAC_STATUS_TFR, name: "DMAC.StatusTfr", reset: 0 },
-    StorageReg { addr: DMAC_MASK_TFR, name: "DMAC.MaskTfr", reset: 0 },
-    StorageReg { addr: DMAC_CLEAR_TFR, name: "DMAC.ClearTfr", reset: 0 },
-    StorageReg { addr: DMAC_CFG, name: "DMAC.DmaCfgReg", reset: 0 },
-    StorageReg { addr: DMAC_CH_EN, name: "DMAC.ChEnReg", reset: 0 },
+    StorageReg {
+        addr: dma_ch(0, 0x00),
+        name: "DMAC.CH0.SAR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(0, 0x08),
+        name: "DMAC.CH0.DAR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(0, 0x10),
+        name: "DMAC.CH0.LLP",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(0, 0x18),
+        name: "DMAC.CH0.CTL",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(0, 0x1C),
+        name: "DMAC.CH0.CTL_H",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(0, 0x40),
+        name: "DMAC.CH0.CFG",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(0, 0x44),
+        name: "DMAC.CH0.CFG_H",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(1, 0x00),
+        name: "DMAC.CH1.SAR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(1, 0x08),
+        name: "DMAC.CH1.DAR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(1, 0x10),
+        name: "DMAC.CH1.LLP",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(1, 0x18),
+        name: "DMAC.CH1.CTL",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(1, 0x1C),
+        name: "DMAC.CH1.CTL_H",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(1, 0x40),
+        name: "DMAC.CH1.CFG",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(1, 0x44),
+        name: "DMAC.CH1.CFG_H",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(2, 0x00),
+        name: "DMAC.CH2.SAR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(2, 0x08),
+        name: "DMAC.CH2.DAR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(2, 0x10),
+        name: "DMAC.CH2.LLP",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(2, 0x18),
+        name: "DMAC.CH2.CTL",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(2, 0x1C),
+        name: "DMAC.CH2.CTL_H",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(2, 0x40),
+        name: "DMAC.CH2.CFG",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(2, 0x44),
+        name: "DMAC.CH2.CFG_H",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(3, 0x00),
+        name: "DMAC.CH3.SAR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(3, 0x08),
+        name: "DMAC.CH3.DAR",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(3, 0x10),
+        name: "DMAC.CH3.LLP",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(3, 0x18),
+        name: "DMAC.CH3.CTL",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(3, 0x1C),
+        name: "DMAC.CH3.CTL_H",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(3, 0x40),
+        name: "DMAC.CH3.CFG",
+        reset: 0,
+    },
+    StorageReg {
+        addr: dma_ch(3, 0x44),
+        name: "DMAC.CH3.CFG_H",
+        reset: 0,
+    },
+    StorageReg {
+        addr: DMAC_RAW_TFR,
+        name: "DMAC.RawTfr",
+        reset: 0,
+    },
+    StorageReg {
+        addr: DMAC_STATUS_TFR,
+        name: "DMAC.StatusTfr",
+        reset: 0,
+    },
+    StorageReg {
+        addr: DMAC_MASK_TFR,
+        name: "DMAC.MaskTfr",
+        reset: 0,
+    },
+    StorageReg {
+        addr: DMAC_CLEAR_TFR,
+        name: "DMAC.ClearTfr",
+        reset: 0,
+    },
+    StorageReg {
+        addr: DMAC_CFG,
+        name: "DMAC.DmaCfgReg",
+        reset: 0,
+    },
+    StorageReg {
+        addr: DMAC_CH_EN,
+        name: "DMAC.ChEnReg",
+        reset: 0,
+    },
 ];
 
 pub fn dmac_channel_reg(ch: u32, reg: u32) -> Option<u32> {
@@ -130,7 +325,10 @@ mod tests {
 
     #[test]
     fn spi_flash_command_registers_are_exact_and_idle() {
-        assert_eq!(storage_reg(SPIF_CONFIG).unwrap().reset & 0x8000_0000, 0x8000_0000);
+        assert_eq!(
+            storage_reg(SPIF_CONFIG).unwrap().reset & 0x8000_0000,
+            0x8000_0000
+        );
         assert_eq!(storage_reg(SPIF_FCMD).unwrap().reset & 0x2, 0);
         assert_eq!(storage_reg(SPIF_FCMD_RDDATA0).unwrap().reset, 0);
         assert!(storage_reg(0x4000_C89C).is_none());

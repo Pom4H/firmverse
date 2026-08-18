@@ -21,8 +21,14 @@ fn aes_call(cpu: &mut Processor, returns_status: bool) -> bool {
     let key_ptr = cpu.get_r(Reg::R0);
     let plaintext_ptr = cpu.get_r(Reg::R1);
     let ciphertext_ptr = cpu.get_r(Reg::R2);
-    let key = match read_block(cpu, key_ptr) { Some(v) => v, None => return false };
-    let plaintext = match read_block(cpu, plaintext_ptr) { Some(v) => v, None => return false };
+    let key = match read_block(cpu, key_ptr) {
+        Some(v) => v,
+        None => return false,
+    };
+    let plaintext = match read_block(cpu, plaintext_ptr) {
+        Some(v) => v,
+        None => return false,
+    };
     let ciphertext = aes128_encrypt_block(key, plaintext);
     if !write_block(cpu, ciphertext_ptr, &ciphertext) {
         return false;
@@ -36,7 +42,9 @@ fn aes_call(cpu: &mut Processor, returns_status: bool) -> bool {
 }
 
 fn read_block(cpu: &mut Processor, ptr: u32) -> Option<[u8; 16]> {
-    if ptr == 0 { return None; }
+    if ptr == 0 {
+        return None;
+    }
     let mut out = [0u8; 16];
     for (i, byte) in out.iter_mut().enumerate() {
         *byte = cpu.read8(ptr.wrapping_add(i as u32)).ok()?;
@@ -45,10 +53,14 @@ fn read_block(cpu: &mut Processor, ptr: u32) -> Option<[u8; 16]> {
 }
 
 fn write_block(cpu: &mut Processor, ptr: u32, block: &[u8; 16]) -> bool {
-    if ptr == 0 { return false; }
-    block.iter().copied().enumerate().all(|(i, byte)| {
-        cpu.write8(ptr.wrapping_add(i as u32), byte).is_ok()
-    })
+    if ptr == 0 {
+        return false;
+    }
+    block
+        .iter()
+        .copied()
+        .enumerate()
+        .all(|(i, byte)| cpu.write8(ptr.wrapping_add(i as u32), byte).is_ok())
 }
 
 fn ret(cpu: &mut Processor) {

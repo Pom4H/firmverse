@@ -63,8 +63,12 @@ pub fn handle(cpu: &mut Processor) -> bool {
 fn encrypt_cmd(cpu: &mut Processor) -> bool {
     let key_ptr = cpu.get_r(Reg::R0);
     let plaintext_ptr = cpu.get_r(Reg::R1);
-    let Some(key) = read_block(cpu, key_ptr) else { return immediate(cpu, HCI_ERROR_INVALID_PARAMS); };
-    let Some(plaintext) = read_block(cpu, plaintext_ptr) else { return immediate(cpu, HCI_ERROR_INVALID_PARAMS); };
+    let Some(key) = read_block(cpu, key_ptr) else {
+        return immediate(cpu, HCI_ERROR_INVALID_PARAMS);
+    };
+    let Some(plaintext) = read_block(cpu, plaintext_ptr) else {
+        return immediate(cpu, HCI_ERROR_INVALID_PARAMS);
+    };
     let encrypted = aes128_encrypt_block(key, plaintext);
     let mut params = [0u8; 17];
     params[0] = HCI_SUCCESS;
@@ -126,9 +130,16 @@ fn begin_complete(cpu: &mut Processor, opcode: u16, params: &[u8]) -> bool {
         return false;
     }
     for (i, byte) in params.iter().take(len).copied().enumerate() {
-        if cpu.write8(SHADOW_PARAMS + i as u32, byte).is_err() { return false; }
+        if cpu.write8(SHADOW_PARAMS + i as u32, byte).is_err() {
+            return false;
+        }
     }
-    begin_alloc(cpu, CMD_COMPLETE_BYTES + len as u32, STAGE_COMPLETE_ALLOC, true)
+    begin_alloc(
+        cpu,
+        CMD_COMPLETE_BYTES + len as u32,
+        STAGE_COMPLETE_ALLOC,
+        true,
+    )
 }
 
 fn begin_status(cpu: &mut Processor, opcode: u16, status: u8, followup: bool) -> bool {
@@ -168,12 +179,22 @@ fn continue_event(cpu: &mut Processor) -> bool {
 
 fn finish_complete_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 { return finish_alloc_error(cpu); }
-    let opcode = match cpu.read16(SHADOW_OPCODE) { Ok(v) => v, Err(_) => return false };
-    let len = match cpu.read32(SHADOW_PARAM_LEN) { Ok(v) => v.min(MAX_PARAMS as u32), Err(_) => return false };
+    if msg == 0 {
+        return finish_alloc_error(cpu);
+    }
+    let opcode = match cpu.read16(SHADOW_OPCODE) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let len = match cpu.read32(SHADOW_PARAM_LEN) {
+        Ok(v) => v.min(MAX_PARAMS as u32),
+        Err(_) => return false,
+    };
     let ret_ptr = msg + CMD_COMPLETE_BYTES;
     if cpu.write8(msg, HCI_SMP_EVENT_EVENT).is_err()
-        || cpu.write8(msg + 1, HCI_COMMAND_COMPLETE_EVENT_CODE).is_err()
+        || cpu
+            .write8(msg + 1, HCI_COMMAND_COMPLETE_EVENT_CODE)
+            .is_err()
         || cpu.write8(msg + 2, 1).is_err()
         || cpu.write8(msg + 3, 0).is_err()
         || cpu.write16(msg + 4, opcode).is_err()
@@ -183,17 +204,30 @@ fn finish_complete_alloc(cpu: &mut Processor) -> bool {
         return false;
     }
     for i in 0..len {
-        let byte = match cpu.read8(SHADOW_PARAMS + i) { Ok(v) => v, Err(_) => return false };
-        if cpu.write8(ret_ptr + i, byte).is_err() { return false; }
+        let byte = match cpu.read8(SHADOW_PARAMS + i) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        if cpu.write8(ret_ptr + i, byte).is_err() {
+            return false;
+        }
     }
     route_smp(cpu, msg, STAGE_COMPLETE_SEND)
 }
 
 fn finish_status_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 { return finish_alloc_error(cpu); }
-    let opcode = match cpu.read16(SHADOW_OPCODE) { Ok(v) => v, Err(_) => return false };
-    let status = match cpu.read8(SHADOW_STATUS) { Ok(v) => v, Err(_) => return false };
+    if msg == 0 {
+        return finish_alloc_error(cpu);
+    }
+    let opcode = match cpu.read16(SHADOW_OPCODE) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let status = match cpu.read8(SHADOW_STATUS) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     if cpu.write8(msg, HCI_SMP_EVENT_EVENT).is_err()
         || cpu.write8(msg + 1, HCI_COMMAND_STATUS_EVENT_CODE).is_err()
         || cpu.write8(msg + 2, status).is_err()
@@ -218,11 +252,15 @@ fn finish_status_send(cpu: &mut Processor) -> bool {
 
 fn finish_enc_change_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 { return finish_alloc_error(cpu); }
+    if msg == 0 {
+        return finish_alloc_error(cpu);
+    }
     // ARM32 layout of hciEvt_EncryptChange_t:
     // hdr{event,status}, BLEEventCode, pad, connHandle, reason, encEnable.
     if cpu.write8(msg, HCI_SMP_EVENT_EVENT).is_err()
-        || cpu.write8(msg + 1, HCI_ENCRYPTION_CHANGE_EVENT_CODE).is_err()
+        || cpu
+            .write8(msg + 1, HCI_ENCRYPTION_CHANGE_EVENT_CODE)
+            .is_err()
         || cpu.write8(msg + 2, 0).is_err()
         || cpu.write8(msg + 3, 0).is_err()
         || cpu.write16(msg + 4, 0).is_err()
@@ -259,7 +297,14 @@ fn finish_alloc_error(cpu: &mut Processor) -> bool {
 
 fn finish_return(cpu: &mut Processor) -> bool {
     let send_status = cpu.get_r(Reg::R0);
-    cpu.set_r(Reg::R0, if send_status == 0 { HCI_SUCCESS as u32 } else { send_status });
+    cpu.set_r(
+        Reg::R0,
+        if send_status == 0 {
+            HCI_SUCCESS as u32
+        } else {
+            send_status
+        },
+    );
     cpu.set_r(Reg::R2, 0);
     cpu.set_r(Reg::R3, 0);
     cpu.set_pc(cpu.get_r(Reg::R12) & !1);
@@ -283,7 +328,9 @@ fn readable(cpu: &mut Processor, ptr: u32, len: usize) -> bool {
 }
 
 fn read_block(cpu: &mut Processor, ptr: u32) -> Option<[u8; 16]> {
-    if ptr == 0 { return None; }
+    if ptr == 0 {
+        return None;
+    }
     let mut out = [0u8; 16];
     for (i, byte) in out.iter_mut().enumerate() {
         *byte = cpu.read8(ptr.wrapping_add(i as u32)).ok()?;

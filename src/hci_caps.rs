@@ -44,13 +44,23 @@ pub fn handle(cpu: &mut Processor) -> bool {
     match cpu.get_pc() {
         ROM_HCI_LE_READ_LOCAL_SUPPORTED_FEATURES => read_features(cpu),
         ROM_HCI_LE_READ_MAX_DATA_LENGTH => read_max_data_length(cpu),
-        ROM_HCI_LE_READ_RESOLVING_LIST_SIZE => complete(cpu, OPCODE_LE_READ_RESOLVING_LIST_SIZE, &[HCI_SUCCESS, RESOLVING_LIST_SIZE]),
+        ROM_HCI_LE_READ_RESOLVING_LIST_SIZE => complete(
+            cpu,
+            OPCODE_LE_READ_RESOLVING_LIST_SIZE,
+            &[HCI_SUCCESS, RESOLVING_LIST_SIZE],
+        ),
         ROM_HCI_LE_READ_SUGGESTED_DEFAULT_DATA_LENGTH => read_suggested_data_length(cpu),
         ROM_HCI_LE_READ_SUPPORTED_STATES => read_supported_states(cpu),
-        ROM_HCI_LE_READ_WHITE_LIST_SIZE => complete(cpu, OPCODE_LE_READ_WHITE_LIST_SIZE, &[HCI_SUCCESS, WHITE_LIST_SIZE]),
+        ROM_HCI_LE_READ_WHITE_LIST_SIZE => complete(
+            cpu,
+            OPCODE_LE_READ_WHITE_LIST_SIZE,
+            &[HCI_SUCCESS, WHITE_LIST_SIZE],
+        ),
         ROM_HCI_LE_REMOVE_RESOLVING_LIST => remove_list_entry(cpu, OPCODE_LE_REMOVE_RESOLVING_LIST),
         ROM_HCI_LE_REMOVE_WHITE_LIST => remove_list_entry(cpu, OPCODE_LE_REMOVE_WHITE_LIST),
-        ROM_HCI_LE_SET_ADDRESS_RESOLUTION_ENABLE => set_bool(cpu, OPCODE_LE_SET_ADDRESS_RESOLUTION_ENABLE),
+        ROM_HCI_LE_SET_ADDRESS_RESOLUTION_ENABLE => {
+            set_bool(cpu, OPCODE_LE_SET_ADDRESS_RESOLUTION_ENABLE)
+        }
         ROM_HCI_LE_SET_DATA_LENGTH => set_data_length(cpu),
         ROM_HCI_LE_SET_EVENT_MASK => set_event_mask(cpu),
         ROM_HCI_LE_SET_RPA_TIMEOUT => set_rpa_timeout(cpu),
@@ -91,32 +101,60 @@ fn read_supported_states(cpu: &mut Processor) -> bool {
 fn remove_list_entry(cpu: &mut Processor, opcode: u16) -> bool {
     let addr_type = cpu.get_r(Reg::R0) as u8;
     let addr = cpu.get_r(Reg::R1);
-    let status = if addr_type <= 1 && readable(cpu, addr, 6) { HCI_SUCCESS } else { HCI_ERROR_INVALID_PARAMS };
+    let status = if addr_type <= 1 && readable(cpu, addr, 6) {
+        HCI_SUCCESS
+    } else {
+        HCI_ERROR_INVALID_PARAMS
+    };
     complete(cpu, opcode, &[status])
 }
 
 fn set_bool(cpu: &mut Processor, opcode: u16) -> bool {
     let value = cpu.get_r(Reg::R0) as u8;
-    complete(cpu, opcode, &[if value <= 1 { HCI_SUCCESS } else { HCI_ERROR_INVALID_PARAMS }])
+    complete(
+        cpu,
+        opcode,
+        &[if value <= 1 {
+            HCI_SUCCESS
+        } else {
+            HCI_ERROR_INVALID_PARAMS
+        }],
+    )
 }
 
 fn set_event_mask(cpu: &mut Processor) -> bool {
     let mask = cpu.get_r(Reg::R0);
-    let status = if readable(cpu, mask, 8) { HCI_SUCCESS } else { HCI_ERROR_INVALID_PARAMS };
+    let status = if readable(cpu, mask, 8) {
+        HCI_SUCCESS
+    } else {
+        HCI_ERROR_INVALID_PARAMS
+    };
     complete(cpu, OPCODE_LE_SET_EVENT_MASK, &[status])
 }
 
 fn set_rpa_timeout(cpu: &mut Processor) -> bool {
     let seconds = cpu.get_r(Reg::R0) as u16;
-    let status = if (1..=0xA1B8).contains(&seconds) { HCI_SUCCESS } else { HCI_ERROR_INVALID_PARAMS };
+    let status = if (1..=0xA1B8).contains(&seconds) {
+        HCI_SUCCESS
+    } else {
+        HCI_ERROR_INVALID_PARAMS
+    };
     complete(cpu, OPCODE_LE_SET_RPA_TIMEOUT, &[status])
 }
 
 fn write_suggested_data_length(cpu: &mut Processor) -> bool {
     let octets = cpu.get_r(Reg::R0) as u16;
     let time = cpu.get_r(Reg::R1) as u16;
-    let status = if valid_default_data_length(octets, time) { HCI_SUCCESS } else { HCI_ERROR_INVALID_PARAMS };
-    complete(cpu, OPCODE_LE_WRITE_SUGGESTED_DEFAULT_DATA_LENGTH, &[status])
+    let status = if valid_default_data_length(octets, time) {
+        HCI_SUCCESS
+    } else {
+        HCI_ERROR_INVALID_PARAMS
+    };
+    complete(
+        cpu,
+        OPCODE_LE_WRITE_SUGGESTED_DEFAULT_DATA_LENGTH,
+        &[status],
+    )
 }
 
 fn set_data_length(cpu: &mut Processor) -> bool {
@@ -134,9 +172,13 @@ fn valid_default_data_length(octets: u16, time: u16) -> bool {
 }
 
 fn complete(cpu: &mut Processor, opcode: u16, params: &[u8]) -> bool {
-    if params.len() > 32 { return false; }
+    if params.len() > 32 {
+        return false;
+    }
     for (i, byte) in params.iter().copied().enumerate() {
-        if cpu.write8(SHADOW + i as u32, byte).is_err() { return false; }
+        if cpu.write8(SHADOW + i as u32, byte).is_err() {
+            return false;
+        }
     }
     cpu.set_r(Reg::R0, u32::from(opcode));
     cpu.set_r(Reg::R1, params.len() as u32);

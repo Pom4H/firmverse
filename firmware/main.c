@@ -125,23 +125,23 @@ int main(void)
         if (linked) {
             rgb = BIT(PIN_LED_G);
         } else {
-            switch ((tick >> 6) & 3u) {
-            case 0:
+            uint32_t led_phase = (tick >> 6) & 7u;
+            if (led_phase == 0u) {
                 rgb = BIT(PIN_LED_R);
-                break;
-            case 1:
+            } else if (led_phase == 1u) {
                 rgb = BIT(PIN_LED_G);
-                break;
-            case 2:
+            } else if (led_phase == 2u) {
                 rgb = BIT(PIN_LED_B);
-                break;
-            default:
-                rgb = BIT(PIN_LED_WARM);
-                break;
+            } else if (led_phase == 3u) {
+                rgb = BIT(PIN_LED_YELLOW);
+            } else if (led_phase == 4u) {
+                rgb = BIT(PIN_LED_WHITE);
+            } else {
+                rgb = BIT(PIN_LED_R);
             }
         }
         if (btn) {
-            rgb = RGB_MASK;
+            rgb = KIT_LED_MASK;
         }
 
         static const uint32_t walk[] = {

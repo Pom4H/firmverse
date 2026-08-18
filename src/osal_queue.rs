@@ -36,12 +36,16 @@ fn next(cpu: &mut Processor, payload: u32) -> Option<u32> {
 }
 
 fn set_next(cpu: &mut Processor, payload: u32, value: u32) -> bool {
-    let Some(hdr) = header(payload) else { return false; };
+    let Some(hdr) = header(payload) else {
+        return false;
+    };
     cpu.write32(hdr, value).is_ok()
 }
 
 fn head(cpu: &mut Processor, q_ptr: u32) -> Option<u32> {
-    if q_ptr == 0 { return None; }
+    if q_ptr == 0 {
+        return None;
+    }
     cpu.read32(q_ptr).ok()
 }
 
@@ -53,13 +57,17 @@ fn enqueue(cpu: &mut Processor, q_ptr: u32, msg: u32) -> bool {
     if q_ptr == 0 || msg < MSG_HDR || !set_next(cpu, msg, 0) {
         return false;
     }
-    let Some(first) = head(cpu, q_ptr) else { return false; };
+    let Some(first) = head(cpu, q_ptr) else {
+        return false;
+    };
     if first == 0 {
         return set_head(cpu, q_ptr, msg);
     }
     let mut cur = first;
     for _ in 0..MAX_WALK {
-        let Some(n) = next(cpu, cur) else { return false; };
+        let Some(n) = next(cpu, cur) else {
+            return false;
+        };
         if n == 0 {
             return set_next(cpu, cur, msg);
         }
@@ -90,13 +98,17 @@ fn queue_len(cpu: &mut Processor, q_ptr: u32, limit: usize) -> Option<usize> {
 
 fn dequeue_call(cpu: &mut Processor) -> bool {
     let q_ptr = cpu.get_r(Reg::R0);
-    let Some(first) = head(cpu, q_ptr) else { return false; };
+    let Some(first) = head(cpu, q_ptr) else {
+        return false;
+    };
     if first == 0 {
         cpu.set_r(Reg::R0, 0);
         ret(cpu);
         return true;
     }
-    let Some(n) = next(cpu, first) else { return false; };
+    let Some(n) = next(cpu, first) else {
+        return false;
+    };
     if !set_head(cpu, q_ptr, n) || !set_next(cpu, first, 0) {
         return false;
     }
@@ -142,8 +154,12 @@ fn extract_call(cpu: &mut Processor) -> bool {
     if q_ptr == 0 || msg < MSG_HDR {
         return false;
     }
-    let Some(first) = head(cpu, q_ptr) else { return false; };
-    let Some(n) = next(cpu, msg) else { return false; };
+    let Some(first) = head(cpu, q_ptr) else {
+        return false;
+    };
+    let Some(n) = next(cpu, msg) else {
+        return false;
+    };
     let ok = if first == msg {
         set_head(cpu, q_ptr, n)
     } else if prev >= MSG_HDR && next(cpu, prev) == Some(msg) {
@@ -164,7 +180,9 @@ fn push_call(cpu: &mut Processor) -> bool {
     if q_ptr == 0 || msg < MSG_HDR {
         return false;
     }
-    let Some(first) = head(cpu, q_ptr) else { return false; };
+    let Some(first) = head(cpu, q_ptr) else {
+        return false;
+    };
     if !set_next(cpu, msg, first) || !set_head(cpu, q_ptr, msg) {
         return false;
     }

@@ -79,11 +79,26 @@ fn execute(cpu: &mut Processor, ch: u32) -> bool {
         return false;
     }
 
-    let sar = match reg(cpu, ch, CH_SAR) { Some(v) => v, None => return false };
-    let dar = match reg(cpu, ch, CH_DAR) { Some(v) => v, None => return false };
-    let llp = match reg(cpu, ch, CH_LLP) { Some(v) => v, None => return false };
-    let ctl = match reg(cpu, ch, CH_CTL) { Some(v) => v, None => return false };
-    let ctl_h = match reg(cpu, ch, CH_CTL_H) { Some(v) => v, None => return false };
+    let sar = match reg(cpu, ch, CH_SAR) {
+        Some(v) => v,
+        None => return false,
+    };
+    let dar = match reg(cpu, ch, CH_DAR) {
+        Some(v) => v,
+        None => return false,
+    };
+    let llp = match reg(cpu, ch, CH_LLP) {
+        Some(v) => v,
+        None => return false,
+    };
+    let ctl = match reg(cpu, ch, CH_CTL) {
+        Some(v) => v,
+        None => return false,
+    };
+    let ctl_h = match reg(cpu, ch, CH_CTL_H) {
+        Some(v) => v,
+        None => return false,
+    };
 
     if llp != 0 {
         eprintln!("DMAC strict ch={ch}: LLP={llp:#010x} is not modeled");
@@ -123,7 +138,10 @@ fn execute(cpu: &mut Processor, ch: u32) -> bool {
             let byte = match cpu.read8(src.wrapping_add(byte_index as u32)) {
                 Ok(v) => v,
                 Err(fault) => {
-                    eprintln!("DMAC strict ch={ch}: read {:#010x}: {fault}", src.wrapping_add(byte_index as u32));
+                    eprintln!(
+                        "DMAC strict ch={ch}: read {:#010x}: {fault}",
+                        src.wrapping_add(byte_index as u32)
+                    );
                     return false;
                 }
             };
@@ -140,8 +158,14 @@ fn execute(cpu: &mut Processor, ch: u32) -> bool {
                 return false;
             }
         }
-        src = match step(src, src_inc, src_width) { Some(v) => v, None => return false };
-        dst = match step(dst, dst_inc, dst_width) { Some(v) => v, None => return false };
+        src = match step(src, src_inc, src_width) {
+            Some(v) => v,
+            None => return false,
+        };
+        dst = match step(dst, dst_inc, dst_width) {
+            Some(v) => v,
+            None => return false,
+        };
     }
 
     let bit = 1u32 << ch;

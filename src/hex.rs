@@ -73,7 +73,10 @@ impl HexImage {
 
 fn decode_line(line: &str) -> io::Result<Vec<u8>> {
     if line.len() < 11 || (line.len() - 1) % 2 != 0 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated HEX line"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "truncated HEX line",
+        ));
     }
     let mut out = Vec::with_capacity((line.len() - 1) / 2);
     let chars: Vec<u8> = line[1..].bytes().collect();

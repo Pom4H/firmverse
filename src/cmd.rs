@@ -5,6 +5,8 @@ pub enum ChipCmd {
     In(u32),
     Pin { bit: u32, high: bool },
     Write(Vec<u8>),
+    Scan { addr: [u8; 6], rssi: i8 },
+    Gone { addr: [u8; 6] },
     Connect,
     Disconnect,
     Cccd(bool),
@@ -17,13 +19,16 @@ pub enum ChipCmd {
 pub const HELP: &str = "\
 phy6252  —  type a command, then enter
 
+  scan AA:BB:CC:DD:EE:FF -42   advertise / update RSSI
+  gone AA:BB:CC:DD:EE:FF       device left / timed out
   connect            BLE link up
   disconnect         BLE link down
   notify on|off      CCCD / indications
   write Hello        GATT write (text or hex)
   adc 3.3 1.65 2.5 3.3   P20 P15 P24 P23 (V or mV)
-  p34 on             button / reset pad
-  in 00400000        raw AP_GPIO ext mask
+  p15 on             Restore (P15, bit 9)
+  p34 on             white LED pad (P34, bit 22)
+  in 00000200        raw AP_GPIO ext mask (Restore)
   tick 80            advance mailbox clock
   help  quit
 ";
@@ -45,6 +50,19 @@ pub fn parse_line(line: &str) -> Result<Option<ChipCmd>, String> {
         return Ok(Some(cmd));
     }
     parse_friendly(line).map(Some)
+}
+
+pub const SCAN_PKT_MAGIC: u8 = 0xB1;
+pub const SCAN_PKT_SEEN: u8 = 0;
+pub const SCAN_PKT_GONE: u8 = 1;
+
+pub fn scan_packet(addr: &[u8; 6], rssi: i8, gone: bool) -> Vec<u8> {
+    let mut pkt = Vec::with_capacity(9);
+    pkt.push(SCAN_PKT_MAGIC);
+    pkt.push(if gone { SCAN_PKT_GONE } else { SCAN_PKT_SEEN });
+    pkt.extend_from_slice(addr);
+    pkt.push(rssi as u8);
+    pkt
 }
 
 fn parse_protocol(line: &str) -> Option<ChipCmd> {
@@ -72,6 +90,12 @@ fn parse_protocol(line: &str) -> Option<ChipCmd> {
     if let Some(rest) = line.strip_prefix("ADC ") {
         return parse_adc(rest);
     }
+    if let Some(rest) = line.strip_prefix("SCAN ") {
+        return parse_scan_args(rest, false);
+    }
+    if let Some(rest) = line.strip_prefix("GONE ") {
+        return parse_scan_args(rest, true);
+    }
     None
 }
 
@@ -89,9 +113,8 @@ fn parse_friendly(line: &str) -> Result<ChipCmd, String> {
                 .map(ChipCmd::Write)
                 .ok_or_else(|| "write needs text or even-length hex".into())
         }
-        "adc" => parse_adc(line[verb.len()..].trim()).ok_or_else(|| {
-            "adc P20 P15 P24 P23 — volts (3.3) or millivolts (3300)".into()
-        }),
+        "adc" => parse_adc(line[verb.len()..].trim())
+            .ok_or_else(|| "adc P20 P15 P24 P23 — volts (3.3) or millivolts (3300)".into()),
         "tick" => {
             let ms = parts
                 .next()
@@ -99,6 +122,10 @@ fn parse_friendly(line: &str) -> Result<ChipCmd, String> {
                 .ok_or("tick <ms>")?;
             Ok(ChipCmd::Tick(ms))
         }
+        "scan" => parse_scan_args(&line[verb.len()..], false)
+            .ok_or_else(|| "scan <aa:bb:cc:dd:ee:ff> <rssi>".into()),
+        "gone" | "lost" => parse_scan_args(&line[verb.len()..], true)
+            .ok_or_else(|| "gone <aa:bb:cc:dd:ee:ff>".into()),
         "in" => {
             let value = parts
                 .next()
@@ -113,6 +140,40 @@ fn parse_friendly(line: &str) -> Result<ChipCmd, String> {
         }
         other => Err(format!("unknown command {other:?} — help")),
     }
+}
+
+fn parse_scan_args(rest: &str, gone: bool) -> Option<ChipCmd> {
+    let mut parts = rest.split_whitespace();
+    let addr = parse_mac(parts.next()?)?;
+    if gone {
+        return Some(ChipCmd::Gone { addr });
+    }
+    let rssi = parse_rssi(parts.next()?)?;
+    Some(ChipCmd::Scan { addr, rssi })
+}
+
+fn parse_mac(text: &str) -> Option<[u8; 6]> {
+    let compact: String = text.chars().filter(|c| *c != ':' && *c != '-').collect();
+    if compact.len() != 12 {
+        return None;
+    }
+    let bytes = parse_hex_bytes(&compact)?;
+    bytes.try_into().ok()
+}
+
+fn parse_rssi(text: &str) -> Option<i8> {
+    if let Ok(value) = text.parse::<i16>() {
+        if (-128..=127).contains(&value) {
+            return Some(value as i8);
+        }
+    }
+    if text.len() == 2 {
+        let bytes = parse_hex_bytes(text)?;
+        if bytes.len() == 1 {
+            return Some(bytes[0] as i8);
+        }
+    }
+    None
 }
 
 fn parse_on_off(word: &str) -> Result<bool, String> {
@@ -255,6 +316,13 @@ mod tests {
             Some(ChipCmd::Adc(v)) => assert_eq!(v, [3300, 1650, 2500, 3300]),
             _ => panic!("volts"),
         }
+        match parse_line("p15 on").unwrap() {
+            Some(ChipCmd::Pin { bit, high }) => {
+                assert_eq!(bit, 9);
+                assert!(high);
+            }
+            _ => panic!("restore"),
+        }
         match parse_line("p34 on").unwrap() {
             Some(ChipCmd::Pin { bit, high }) => {
                 assert_eq!(bit, 22);
@@ -266,6 +334,28 @@ mod tests {
             Some(ChipCmd::Write(b)) => assert_eq!(b, b"hi"),
             _ => panic!("text write"),
         }
-        assert!(matches!(parse_line("connect").unwrap(), Some(ChipCmd::Connect)));
+        assert!(matches!(
+            parse_line("connect").unwrap(),
+            Some(ChipCmd::Connect)
+        ));
+        match parse_line("scan aa:bb:cc:dd:ee:01 -40").unwrap() {
+            Some(ChipCmd::Scan { addr, rssi }) => {
+                assert_eq!(addr, [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01]);
+                assert_eq!(rssi, -40);
+            }
+            _ => panic!("scan"),
+        }
+        match parse_line("GONE aabbccddee02").unwrap() {
+            Some(ChipCmd::Gone { addr }) => assert_eq!(addr, [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x02]),
+            _ => panic!("gone"),
+        }
+    }
+
+    #[test]
+    fn scan_packet_layout() {
+        let pkt = super::scan_packet(&[1, 2, 3, 4, 5, 6], -42, false);
+        assert_eq!(pkt, vec![0xB1, 0, 1, 2, 3, 4, 5, 6, (-42i8) as u8]);
+        let gone = super::scan_packet(&[1, 2, 3, 4, 5, 6], 0, true);
+        assert_eq!(gone[1], 1);
     }
 }

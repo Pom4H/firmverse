@@ -36,7 +36,9 @@ fn init(cpu: &mut Processor) -> bool {
     if cpu.write16(PWRMGR_ATTRIBUTE + TASK_STATE_OFF, 0).is_err()
         || cpu.write16(PWRMGR_ATTRIBUTE + NEXT_TIMEOUT_OFF, 0).is_err()
         || cpu.write16(PWRMGR_ATTRIBUTE + ACC_SLEEP_OFF, 0).is_err()
-        || cpu.write8(PWRMGR_ATTRIBUTE + DEVICE_OFF, PWRMGR_ALWAYS_ON).is_err()
+        || cpu
+            .write8(PWRMGR_ATTRIBUTE + DEVICE_OFF, PWRMGR_ALWAYS_ON)
+            .is_err()
     {
         return false;
     }
@@ -54,7 +56,14 @@ fn device(cpu: &mut Processor) -> bool {
     if cpu.write8(PWRMGR_ATTRIBUTE + DEVICE_OFF, mode).is_err() {
         return false;
     }
-    eprintln!("OSAL power manager device={}", if mode == PWRMGR_BATTERY { "BATTERY" } else { "ALWAYS_ON" });
+    eprintln!(
+        "OSAL power manager device={}",
+        if mode == PWRMGR_BATTERY {
+            "BATTERY"
+        } else {
+            "ALWAYS_ON"
+        }
+    );
     ret(cpu);
     true
 }
@@ -77,7 +86,10 @@ fn task_state(cpu: &mut Processor) -> bool {
     } else {
         votes &= !bit;
     }
-    if cpu.write16(PWRMGR_ATTRIBUTE + TASK_STATE_OFF, votes).is_err() {
+    if cpu
+        .write16(PWRMGR_ATTRIBUTE + TASK_STATE_OFF, votes)
+        .is_err()
+    {
         return false;
     }
     cpu.set_r(Reg::R0, SUCCESS);

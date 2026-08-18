@@ -24,12 +24,17 @@
 
 #define BIT(n) (1u << (n))
 
-/* AI-Thinker PB-03F-Kit A148 — DIP-30 silkscreen. */
+/* AI-Thinker PB-03F-Kit A148 — DIP-30 silkscreen.
+ * Datasheet: RGB P7/P11/P18, yellow/warm P0, white/cool P34, Restore P15. */
 #define PIN_LED_R GPIO_BIT_P7
 #define PIN_LED_G GPIO_BIT_P11
 #define PIN_LED_B GPIO_BIT_P18
 #define PIN_LED_WARM GPIO_BIT_P0
-#define PIN_BTN GPIO_BIT_P34
+#define PIN_LED_YELLOW PIN_LED_WARM
+#define PIN_LED_WHITE GPIO_BIT_P34
+#define PIN_LED_X PIN_LED_WHITE
+#define PIN_BTN GPIO_BIT_P15
+#define PIN_RESTORE PIN_BTN
 
 #define PIN_HDR_P14 GPIO_BIT_P14
 #define PIN_HDR_P16 GPIO_BIT_P16
@@ -38,10 +43,18 @@
 #define PIN_HDR_P32 GPIO_BIT_P32
 #define PIN_HDR_P33 GPIO_BIT_P33
 
-#define RGB_MASK (BIT(PIN_LED_R) | BIT(PIN_LED_G) | BIT(PIN_LED_B) | BIT(PIN_LED_WARM))
+#define RGB_MASK (BIT(PIN_LED_R) | BIT(PIN_LED_G) | BIT(PIN_LED_B))
+#define KIT_LED_MASK (RGB_MASK | BIT(PIN_LED_WARM) | BIT(PIN_LED_WHITE))
+#define RANK_LED_MASK KIT_LED_MASK
+#define RANK_LED_COUNT 5u
+
+#define SCAN_PKT_MAGIC 0xB1u
+#define SCAN_PKT_SEEN  0u
+#define SCAN_PKT_GONE  1u
+#define SCAN_PKT_BYTES 9u
 #define HDR_MASK (BIT(PIN_HDR_P14) | BIT(PIN_HDR_P16) | BIT(PIN_HDR_P17) | \
                   BIT(PIN_HDR_P31) | BIT(PIN_HDR_P32) | BIT(PIN_HDR_P33))
-#define OUT_MASK (RGB_MASK | HDR_MASK)
+#define OUT_MASK (KIT_LED_MASK | HDR_MASK)
 
 #define GPIO_BASE  0x40008000u
 #define UART0_BASE 0x40004000u

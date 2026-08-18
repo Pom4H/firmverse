@@ -98,9 +98,13 @@ pub fn handle(cpu: &mut Processor) -> bool {
         ROM_HCI_L2CAP_TASK_REGISTER => register(cpu, HCI_L2CAP_TASK_ID, "L2CAP"),
         ROM_HCI_SMP_TASK_REGISTER => register(cpu, HCI_SMP_TASK_ID, "SMP"),
         ROM_HCI_READ_BDADDR_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 7, STAGE_BDADDR_ALLOC),
-        ROM_HCI_LE_READ_BUF_SIZE_CMD => begin_event(cpu, CMD_COMPLETE_BYTES + 6, STAGE_BUF_SIZE_ALLOC),
+        ROM_HCI_LE_READ_BUF_SIZE_CMD => {
+            begin_event(cpu, CMD_COMPLETE_BYTES + 6, STAGE_BUF_SIZE_ALLOC)
+        }
         ROM_HCI_LE_SET_ADV_DATA_CMD => set_payload_data(cpu, OPCODE_LE_SET_ADV_DATA, "AdvData"),
-        ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD => set_payload_data(cpu, OPCODE_LE_SET_SCAN_RSP_DATA, "ScanRspData"),
+        ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD => {
+            set_payload_data(cpu, OPCODE_LE_SET_SCAN_RSP_DATA, "ScanRspData")
+        }
         ROM_HCI_LE_SET_ADV_ENABLE_CMD => set_adv_enable(cpu),
         ROM_HCI_LE_SET_ADV_PARAM_CMD => set_adv_params(cpu),
         ROM_HCI_SEND_DATA_PKT => send_data_pkt(cpu),
@@ -117,7 +121,10 @@ fn poll_host_radio(cpu: &mut Processor) -> bool {
         Ok(v) if v > 0 && v < 64 => v,
         _ => return false,
     };
-    let status = match mailbox::status(cpu) { Ok(v) => v, Err(_) => return false };
+    let status = match mailbox::status(cpu) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     let seen = cpu.read32(RADIO_STATUS_SHADOW).unwrap_or(0);
     let connected = status & mailbox::STATUS_CONNECTED != 0;
     let was_connected = seen & mailbox::STATUS_CONNECTED != 0;
@@ -127,9 +134,20 @@ fn poll_host_radio(cpu: &mut Processor) -> bool {
     if cpu.write32(RADIO_STATUS_SHADOW, status).is_err() {
         return false;
     }
-    let stage = if connected { STAGE_CONN_ALLOC } else { STAGE_DISCONN_ALLOC };
-    let bytes = if connected { CONN_COMPLETE_BYTES } else { DISCONN_COMPLETE_BYTES };
-    eprintln!("BLE host radio {} -> guest GAP task={gap_task}", if connected { "connect" } else { "disconnect" });
+    let stage = if connected {
+        STAGE_CONN_ALLOC
+    } else {
+        STAGE_DISCONN_ALLOC
+    };
+    let bytes = if connected {
+        CONN_COMPLETE_BYTES
+    } else {
+        DISCONN_COMPLETE_BYTES
+    };
+    eprintln!(
+        "BLE host radio {} -> guest GAP task={gap_task}",
+        if connected { "connect" } else { "disconnect" }
+    );
     begin_async_event(cpu, bytes, stage);
     true
 }
@@ -138,7 +156,10 @@ fn poll_host_cccd(cpu: &mut Processor) -> bool {
     if !host_idle(cpu) {
         return false;
     }
-    let status = match mailbox::status(cpu) { Ok(v) => v, Err(_) => return false };
+    let status = match mailbox::status(cpu) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     if status & mailbox::STATUS_CONNECTED == 0 {
         return false;
     }
@@ -156,7 +177,10 @@ fn poll_host_cccd(cpu: &mut Processor) -> bool {
         return false;
     };
     let value = if notify { [1u8, 0] } else { [0u8, 0] };
-    eprintln!("BLE host {} -> guest ATT CCCD handle={handle:#06x}", if notify { "subscribe" } else { "unsubscribe" });
+    eprintln!(
+        "BLE host {} -> guest ATT CCCD handle={handle:#06x}",
+        if notify { "subscribe" } else { "unsubscribe" }
+    );
     stage_att_write(cpu, handle, &value)
 }
 
@@ -164,7 +188,10 @@ fn poll_host_rx(cpu: &mut Processor) -> bool {
     if !host_idle(cpu) {
         return false;
     }
-    let status = match mailbox::status(cpu) { Ok(v) => v, Err(_) => return false };
+    let status = match mailbox::status(cpu) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     if status & mailbox::STATUS_CONNECTED == 0 {
         return false;
     }
@@ -172,7 +199,10 @@ fn poll_host_rx(cpu: &mut Processor) -> bool {
         Ok(v) if v < 64 => v,
         _ => return false,
     };
-    let seq = match cpu.read32(mailbox::BASE + mailbox::RX_SEQ) { Ok(v) => v, Err(_) => return false };
+    let seq = match cpu.read32(mailbox::BASE + mailbox::RX_SEQ) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     let seen = cpu.read32(RX_SEQ_SHADOW).unwrap_or(0);
     if seq == seen {
         return false;
@@ -205,8 +235,11 @@ fn host_idle(cpu: &mut Processor) -> bool {
 
 fn stage_att_write(cpu: &mut Processor, handle: u16, value: &[u8]) -> bool {
     let len = value.len().min(mailbox::PAYLOAD);
-    if cpu.write32(PENDING_HANDLE_SHADOW, u32::from(handle)).is_err()
-        || cpu.write32(PENDING_LEN_SHADOW, len as u32).is_err() {
+    if cpu
+        .write32(PENDING_HANDLE_SHADOW, u32::from(handle))
+        .is_err()
+        || cpu.write32(PENDING_LEN_SHADOW, len as u32).is_err()
+    {
         return false;
     }
     for (index, byte) in value.iter().take(len).copied().enumerate() {
@@ -229,7 +262,10 @@ fn resolve_rx_handle(cpu: &mut Processor) -> Option<u16> {
     let target = parse_uuid_bytes(&uuid)?;
     let attr = find_guest_attribute(cpu, &target, true)?;
     let _ = cpu.write32(RX_HANDLE_SHADOW, u32::from(attr.handle));
-    eprintln!("BLE guest writable attribute resolved handle={:#06x}", attr.handle);
+    eprintln!(
+        "BLE guest writable attribute resolved handle={:#06x}",
+        attr.handle
+    );
     Some(attr.handle)
 }
 
@@ -249,7 +285,11 @@ fn resolve_tx_cccd_handle(cpu: &mut Processor) -> Option<u16> {
     Some(descriptor.handle)
 }
 
-fn find_guest_attribute(cpu: &mut Processor, target: &[u8], require_write: bool) -> Option<GuestAttribute> {
+fn find_guest_attribute(
+    cpu: &mut Processor,
+    target: &[u8],
+    require_write: bool,
+) -> Option<GuestAttribute> {
     let mut addr = GUEST_SRAM_BASE;
     while addr + GATT_ATTRIBUTE_BYTES <= GUEST_SRAM_END {
         if cpu.read8(addr).ok()? == target.len() as u8 {
@@ -261,7 +301,8 @@ fn find_guest_attribute(cpu: &mut Processor, target: &[u8], require_write: bool)
                 && value_ptr != 0
                 && (!require_write || permissions & GATT_WRITE_PERMISSIONS != 0)
                 && guest_data_ptr(uuid_ptr, target.len())
-                && uuid_matches(cpu, uuid_ptr, target) {
+                && uuid_matches(cpu, uuid_ptr, target)
+            {
                 return Some(GuestAttribute { addr, handle });
             }
         }
@@ -284,7 +325,8 @@ fn find_cccd_after(cpu: &mut Processor, value_attr: GuestAttribute) -> Option<Gu
             if len == GATT_CLIENT_CHAR_CFG_UUID.len()
                 && permissions & GATT_WRITE_PERMISSIONS != 0
                 && guest_data_ptr(uuid_ptr, len)
-                && uuid_matches(cpu, uuid_ptr, &GATT_CLIENT_CHAR_CFG_UUID) {
+                && uuid_matches(cpu, uuid_ptr, &GATT_CLIENT_CHAR_CFG_UUID)
+            {
                 return Some(GuestAttribute { addr, handle });
             }
             if len == 16 {
@@ -303,19 +345,25 @@ fn guest_data_ptr(ptr: u32, len: usize) -> bool {
 }
 
 fn uuid_matches(cpu: &mut Processor, ptr: u32, target: &[u8]) -> bool {
-    let direct = target.iter().enumerate().all(|(i, expected)| {
-        cpu.read8(ptr + i as u32).ok() == Some(*expected)
-    });
+    let direct = target
+        .iter()
+        .enumerate()
+        .all(|(i, expected)| cpu.read8(ptr + i as u32).ok() == Some(*expected));
     if direct {
         return true;
     }
-    target.iter().rev().enumerate().all(|(i, expected)| {
-        cpu.read8(ptr + i as u32).ok() == Some(*expected)
-    })
+    target
+        .iter()
+        .rev()
+        .enumerate()
+        .all(|(i, expected)| cpu.read8(ptr + i as u32).ok() == Some(*expected))
 }
 
 fn parse_uuid_bytes(input: &str) -> Option<Vec<u8>> {
-    let compact: Vec<u8> = input.bytes().filter(|byte| byte.is_ascii_hexdigit()).collect();
+    let compact: Vec<u8> = input
+        .bytes()
+        .filter(|byte| byte.is_ascii_hexdigit())
+        .collect();
     if !matches!(compact.len(), 4 | 32) {
         return None;
     }
@@ -352,7 +400,9 @@ fn continue_event(cpu: &mut Processor) -> bool {
 
 fn register(cpu: &mut Processor, slot: u32, name: &str) -> bool {
     let task = cpu.get_r(Reg::R0) as u8;
-    if cpu.write8(slot, task).is_err() { return false; }
+    if cpu.write8(slot, task).is_err() {
+        return false;
+    }
     eprintln!("BLE HCI ROM register {name} task={task}");
     ret(cpu);
     true
@@ -361,14 +411,18 @@ fn register(cpu: &mut Processor, slot: u32, name: &str) -> bool {
 fn set_payload_data(cpu: &mut Processor, opcode: u16, label: &str) -> bool {
     let len = cpu.get_r(Reg::R0) as u8;
     let ptr = cpu.get_r(Reg::R1);
-    if len > 31 || (len != 0 && ptr == 0) { return immediate_error(cpu); }
+    if len > 31 || (len != 0 && ptr == 0) {
+        return immediate_error(cpu);
+    }
     eprintln!("BLE HCI LE_Set{label} len={len}");
     begin_status_event(cpu, opcode)
 }
 
 fn set_adv_enable(cpu: &mut Processor) -> bool {
     let enabled = cpu.get_r(Reg::R0) as u8;
-    if enabled > 1 { return immediate_error(cpu); }
+    if enabled > 1 {
+        return immediate_error(cpu);
+    }
     eprintln!("BLE HCI LE_SetAdvEnable enabled={enabled}");
     begin_status_event(cpu, OPCODE_LE_SET_ADV_ENABLE)
 }
@@ -381,7 +435,9 @@ fn set_adv_params(cpu: &mut Processor) -> bool {
     if min > max || min < 0x20 || max > 0x4000 || adv_type > 4 || own_addr_type > 1 {
         return immediate_error(cpu);
     }
-    eprintln!("BLE HCI LE_SetAdvParam interval={min}..{max} type={adv_type} own_addr={own_addr_type}");
+    eprintln!(
+        "BLE HCI LE_SetAdvParam interval={min}..{max} type={adv_type} own_addr={own_addr_type}"
+    );
     begin_status_event(cpu, OPCODE_LE_SET_ADV_PARAM)
 }
 
@@ -390,7 +446,10 @@ fn send_data_pkt(cpu: &mut Processor) -> bool {
     let ptr = cpu.get_r(Reg::R3);
     let mut data = Vec::with_capacity(len);
     for i in 0..len {
-        match cpu.read8(ptr.wrapping_add(i as u32)) { Ok(v) => data.push(v), Err(_) => return false }
+        match cpu.read8(ptr.wrapping_add(i as u32)) {
+            Ok(v) => data.push(v),
+            Err(_) => return false,
+        }
     }
     if let Some(value) = att_notification_value(&data) {
         let _ = mailbox::emit_tx(cpu, value);
@@ -420,7 +479,11 @@ fn immediate_error(cpu: &mut Processor) -> bool {
 }
 
 fn begin_status_event(cpu: &mut Processor, opcode: u16) -> bool {
-    begin_event(cpu, CMD_COMPLETE_BYTES + 1, STAGE_STATUS_FLAG | u32::from(opcode))
+    begin_event(
+        cpu,
+        CMD_COMPLETE_BYTES + 1,
+        STAGE_STATUS_FLAG | u32::from(opcode),
+    )
 }
 
 fn begin_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
@@ -451,7 +514,10 @@ fn finish_rx_msg_alloc(cpu: &mut Processor) -> bool {
     if cpu.write32(RX_MSG_SHADOW, msg).is_err() {
         return false;
     }
-    let value_len = match cpu.read32(PENDING_LEN_SHADOW) { Ok(v) => v, Err(_) => return false };
+    let value_len = match cpu.read32(PENDING_LEN_SHADOW) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     let l2cap_len = value_len.saturating_add(7);
     cpu.set_r(Reg::R2, CONT_MAGIC);
     cpu.set_r(Reg::R3, STAGE_RX_DATA_ALLOC);
@@ -466,9 +532,18 @@ fn finish_rx_data_alloc(cpu: &mut Processor) -> bool {
     if data == 0 {
         return finish_failed_alloc(cpu);
     }
-    let msg = match cpu.read32(RX_MSG_SHADOW) { Ok(v) if v != 0 => v, _ => return false };
-    let handle = match cpu.read32(PENDING_HANDLE_SHADOW) { Ok(v) => v as u16, Err(_) => return false };
-    let value_len = match cpu.read32(PENDING_LEN_SHADOW) { Ok(v) => v as usize, Err(_) => return false };
+    let msg = match cpu.read32(RX_MSG_SHADOW) {
+        Ok(v) if v != 0 => v,
+        _ => return false,
+    };
+    let handle = match cpu.read32(PENDING_HANDLE_SHADOW) {
+        Ok(v) => v as u16,
+        Err(_) => return false,
+    };
+    let value_len = match cpu.read32(PENDING_LEN_SHADOW) {
+        Ok(v) => v as usize,
+        Err(_) => return false,
+    };
     let att_len = value_len + 3;
     let l2cap_len = att_len + 4;
 
@@ -482,11 +557,15 @@ fn finish_rx_data_alloc(cpu: &mut Processor) -> bool {
         || cpu.write16(data, att_len as u16).is_err()
         || cpu.write16(data + 2, L2CAP_CID_ATT).is_err()
         || cpu.write8(data + 4, ATT_WRITE_CMD).is_err()
-        || cpu.write16(data + 5, handle).is_err() {
+        || cpu.write16(data + 5, handle).is_err()
+    {
         return false;
     }
     for i in 0..value_len {
-        let byte = match cpu.read8(PENDING_BYTES + i as u32) { Ok(v) => v, Err(_) => return false };
+        let byte = match cpu.read8(PENDING_BYTES + i as u32) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         if cpu.write8(data + 7 + i as u32, byte).is_err() {
             return false;
         }
@@ -508,12 +587,18 @@ fn write_common(cpu: &mut Processor, msg: u32, opcode: u16, ret_len: u32) -> boo
 }
 
 fn route_to_gap(cpu: &mut Processor, msg: u32) -> bool {
-    let task = match cpu.read8(HCI_GAP_TASK_ID) { Ok(v) if v != 0xFF => v, _ => return true };
+    let task = match cpu.read8(HCI_GAP_TASK_ID) {
+        Ok(v) if v != 0xFF => v,
+        _ => return true,
+    };
     route_message(cpu, task, msg)
 }
 
 fn route_to_l2cap(cpu: &mut Processor, msg: u32) -> bool {
-    let task = match cpu.read8(HCI_L2CAP_TASK_ID) { Ok(v) if v != 0xFF => v, _ => return true };
+    let task = match cpu.read8(HCI_L2CAP_TASK_ID) {
+        Ok(v) if v != 0xFF => v,
+        _ => return true,
+    };
     route_message(cpu, task, msg)
 }
 
@@ -529,13 +614,21 @@ fn route_message(cpu: &mut Processor, task: u8, msg: u32) -> bool {
 
 fn finish_bdaddr_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 { return finish_failed_alloc(cpu); }
-    if !write_common(cpu, msg, OPCODE_READ_BDADDR, 7) { return false; }
+    if msg == 0 {
+        return finish_failed_alloc(cpu);
+    }
+    if !write_common(cpu, msg, OPCODE_READ_BDADDR, 7) {
+        return false;
+    }
     let ret_ptr = msg + CMD_COMPLETE_BYTES;
     let addr = [0x01u8, 0x00, 0x00, 0x25, 0x62, 0x52];
-    if cpu.write8(ret_ptr, 0).is_err() { return false; }
+    if cpu.write8(ret_ptr, 0).is_err() {
+        return false;
+    }
     for (i, byte) in addr.into_iter().enumerate() {
-        if cpu.write8(ret_ptr + 1 + i as u32, byte).is_err() { return false; }
+        if cpu.write8(ret_ptr + 1 + i as u32, byte).is_err() {
+            return false;
+        }
     }
     eprintln!("BLE HCI ReadBDADDR -> 52:62:25:00:00:01");
     route_to_gap(cpu, msg)
@@ -543,60 +636,95 @@ fn finish_bdaddr_alloc(cpu: &mut Processor) -> bool {
 
 fn finish_buf_size_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 { return finish_failed_alloc(cpu); }
-    if !write_common(cpu, msg, OPCODE_LE_READ_BUF_SIZE, 6) { return false; }
+    if msg == 0 {
+        return finish_failed_alloc(cpu);
+    }
+    if !write_common(cpu, msg, OPCODE_LE_READ_BUF_SIZE, 6) {
+        return false;
+    }
     let ret_ptr = msg + CMD_COMPLETE_BYTES;
     if cpu.write8(ret_ptr, 0).is_err()
         || cpu.write8(ret_ptr + 1, 0).is_err()
         || cpu.write16(ret_ptr + 2, 251).is_err()
         || cpu.write8(ret_ptr + 4, 12).is_err()
-        || cpu.write8(ret_ptr + 5, 0).is_err() { return false; }
+        || cpu.write8(ret_ptr + 5, 0).is_err()
+    {
+        return false;
+    }
     eprintln!("BLE HCI LE_ReadBufSize len=251 packets=12");
     route_to_gap(cpu, msg)
 }
 
 fn finish_conn_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 { return finish_failed_alloc(cpu); }
+    if msg == 0 {
+        return finish_failed_alloc(cpu);
+    }
     let peer = [0x06u8, 0x05, 0x04, 0x03, 0x02, 0x01];
     if cpu.write8(msg, HCI_GAP_EVENT_EVENT).is_err()
         || cpu.write8(msg + 1, HCI_LE_EVENT_CODE).is_err()
-        || cpu.write8(msg + 2, HCI_BLE_CONNECTION_COMPLETE_EVENT).is_err()
+        || cpu
+            .write8(msg + 2, HCI_BLE_CONNECTION_COMPLETE_EVENT)
+            .is_err()
         || cpu.write8(msg + 3, 0).is_err()
         || cpu.write16(msg + 4, 0).is_err()
         || cpu.write8(msg + 6, 1).is_err()
-        || cpu.write8(msg + 7, 0).is_err() { return false; }
+        || cpu.write8(msg + 7, 0).is_err()
+    {
+        return false;
+    }
     for (i, byte) in peer.into_iter().enumerate() {
-        if cpu.write8(msg + 8 + i as u32, byte).is_err() { return false; }
+        if cpu.write8(msg + 8 + i as u32, byte).is_err() {
+            return false;
+        }
     }
     if cpu.write16(msg + 14, 24).is_err()
         || cpu.write16(msg + 16, 0).is_err()
         || cpu.write16(msg + 18, 200).is_err()
         || cpu.write8(msg + 20, 0).is_err()
-        || cpu.write8(msg + 21, 0).is_err() { return false; }
+        || cpu.write8(msg + 21, 0).is_err()
+    {
+        return false;
+    }
     eprintln!("BLE HCI LE ConnectionComplete handle=0 interval=30ms");
     route_to_gap(cpu, msg)
 }
 
 fn finish_disconn_alloc(cpu: &mut Processor) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 { return finish_failed_alloc(cpu); }
+    if msg == 0 {
+        return finish_failed_alloc(cpu);
+    }
     if cpu.write8(msg, HCI_GAP_EVENT_EVENT).is_err()
-        || cpu.write8(msg + 1, HCI_DISCONNECTION_COMPLETE_EVENT_CODE).is_err()
+        || cpu
+            .write8(msg + 1, HCI_DISCONNECTION_COMPLETE_EVENT_CODE)
+            .is_err()
         || cpu.write8(msg + 2, 0).is_err()
         || cpu.write8(msg + 3, 0).is_err()
         || cpu.write16(msg + 4, 0).is_err()
         || cpu.write8(msg + 6, 0x13).is_err()
-        || cpu.write8(msg + 7, 0).is_err() { return false; }
+        || cpu.write8(msg + 7, 0).is_err()
+    {
+        return false;
+    }
     eprintln!("BLE HCI DisconnectionComplete handle=0 reason=0x13");
     route_to_gap(cpu, msg)
 }
 
 fn finish_status_alloc(cpu: &mut Processor, opcode: u16) -> bool {
     let msg = cpu.get_r(Reg::R0);
-    if msg == 0 { return finish_failed_alloc(cpu); }
-    if !write_common(cpu, msg, opcode, 1) { return false; }
-    if cpu.write8(msg + CMD_COMPLETE_BYTES, HCI_SUCCESS as u8).is_err() { return false; }
+    if msg == 0 {
+        return finish_failed_alloc(cpu);
+    }
+    if !write_common(cpu, msg, opcode, 1) {
+        return false;
+    }
+    if cpu
+        .write8(msg + CMD_COMPLETE_BYTES, HCI_SUCCESS as u8)
+        .is_err()
+    {
+        return false;
+    }
     eprintln!("BLE HCI CommandComplete opcode={opcode:#06x} status=0");
     route_to_gap(cpu, msg)
 }
@@ -609,14 +737,23 @@ fn finish_failed_alloc(cpu: &mut Processor) -> bool {
 
 fn finish_send(cpu: &mut Processor) -> bool {
     let send_status = cpu.get_r(Reg::R0);
-    cpu.set_r(Reg::R0, if send_status == 0 { HCI_SUCCESS } else { send_status });
+    cpu.set_r(
+        Reg::R0,
+        if send_status == 0 {
+            HCI_SUCCESS
+        } else {
+            send_status
+        },
+    );
     cpu.set_r(Reg::R2, 0);
     cpu.set_r(Reg::R3, 0);
     cpu.set_pc(cpu.get_r(Reg::R12) & !1);
     true
 }
 
-fn ret(cpu: &mut Processor) { cpu.set_pc(cpu.get_r(Reg::LR) & !1); }
+fn ret(cpu: &mut Processor) {
+    cpu.set_pc(cpu.get_r(Reg::LR) & !1);
+}
 
 #[cfg(test)]
 mod tests {
@@ -647,7 +784,12 @@ mod tests {
 
     #[test]
     fn canonical_uuid_parser_accepts_128_and_16_bit() {
-        assert_eq!(parse_uuid_bytes("00112233-4455-6677-8899-AABBCCDDEEFF").unwrap().len(), 16);
+        assert_eq!(
+            parse_uuid_bytes("00112233-4455-6677-8899-AABBCCDDEEFF")
+                .unwrap()
+                .len(),
+            16
+        );
         assert_eq!(parse_uuid_bytes("2902"), Some(vec![0x29, 0x02]));
         assert!(parse_uuid_bytes("bad").is_none());
     }

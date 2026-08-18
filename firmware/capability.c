@@ -309,7 +309,7 @@ int main(void)
         };
         uint32_t rgb = linked ? BIT(PIN_LED_G) : BIT(PIN_LED_B);
         if (btn) {
-            rgb = RGB_MASK;
+            rgb = KIT_LED_MASK;
         }
         *gpio_dr = rgb | walk[phase];
 

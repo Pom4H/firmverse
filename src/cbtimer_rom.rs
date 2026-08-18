@@ -88,7 +88,14 @@ fn start(cpu: &mut Processor) -> bool {
         return false;
     }
     let deadline = now_ms(cpu).wrapping_add(timeout);
-    TIMERS.with(|timers| timers.borrow_mut().push(CbTimer { id, callback, data, deadline }));
+    TIMERS.with(|timers| {
+        timers.borrow_mut().push(CbTimer {
+            id,
+            callback,
+            data,
+            deadline,
+        })
+    });
     eprintln!("OSAL callback timer start id={id} timeout_ms={timeout} callback={callback:#010x}");
     cpu.set_r(Reg::R0, SUCCESS);
     ret(cpu);
@@ -130,11 +137,18 @@ fn dispatch_due(cpu: &mut Processor) -> bool {
     let now = now_ms(cpu);
     let due = TIMERS.with(|timers| {
         let mut timers = timers.borrow_mut();
-        let pos = timers.iter().position(|timer| reached(now, timer.deadline))?;
+        let pos = timers
+            .iter()
+            .position(|timer| reached(now, timer.deadline))?;
         Some(timers.remove(pos))
     });
-    let Some(timer) = due else { return false; };
-    eprintln!("OSAL callback timer fire id={} callback={:#010x}", timer.id, timer.callback);
+    let Some(timer) = due else {
+        return false;
+    };
+    eprintln!(
+        "OSAL callback timer fire id={} callback={:#010x}",
+        timer.id, timer.callback
+    );
     cpu.set_r(Reg::R0, timer.data);
     cpu.set_r(Reg::R3, CONT_MAGIC);
     cpu.set_r(Reg::LR, CONT_TRAP | 1);

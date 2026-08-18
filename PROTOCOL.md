@@ -4,9 +4,13 @@
 
 ```text
 phy6252 [--raw] [--once] [--strict] [--max-insns N] [firmware.hex]
+phy6252 sim [--raw] [--once] [--ticks N] [--world NAME] [--node id[@x,y]=firmware.hex]…
+phy6252 worlds
 ```
 
 Default image: `firmware/kit-demo.hex`, or `PHY6252_HEX`. Default is live. `--once` runs until halt or the insn cap.
+
+`phy6252 sim` shares one millisecond clock across every `--node`. Two or more chips default to world `mesh`; one chip defaults to `crowd`. Live runs wrap the world timeline; `--once --ticks N` is a finite scripted run (add `--loop` to wrap walkers). With more than one chip, stdout lines are tagged `[id]`. Stdin `a scan …` or `[b] gone …` targets one node; unprefixed commands go to every chip.
 
 `--strict` turns the emulator into a silicon-discovery runner: the first unmodeled MMIO register or vendor-ROM entry faults instead of being silently accepted. `--strict-mmio` remains an alias for compatibility. Outside strict mode, unknown MMIO registers use a sparse full-address backing store and are reported on stderr.
 
@@ -16,12 +20,25 @@ Default image: `firmware/kit-demo.hex`, or `PHY6252_HEX`. Default is live. `--on
 |---|---|
 | `IN <hex32>` | `AP_GPIO` external bits (`gpio_pin_e`, not silk numbers). |
 | `WRITE <hex\|text>` | ATT payload into the mailbox RX buffer. |
+| `SCAN <mac> <rssi>` | BLE advertiser seen (mailbox scan report). MAC is `aa:bb:cc:dd:ee:ff` or 12 hex digits; RSSI is signed decimal. |
+| `GONE <mac>` | Advertiser left range / disconnected. |
 | `CONNECT` / `DISCONNECT` | Link flag. |
 | `CCCD <n>` | Notify enable (`n != 0`). |
 | `TICK <ms>` | Mailbox `tick_ms`. |
 | `ADC <p20> <p15> <p24> <p23>` | Millivolts (or volts with a `.`). |
 
-P34 is bit 22 (`IN 00400000` or `p34 on`).
+Kit pads use `gpio_pin_e` bits, not silk numbers:
+
+| Silk | Bit | Mask | Role |
+|---|---|---|---|
+| P7 | 4 | `00000010` | red LED |
+| P11 | 7 | `00000080` | green LED |
+| P18 | 12 | `00001000` | blue LED |
+| P0 | 0 | `00000001` | yellow / warm LED |
+| P34 | 22 | `00400000` | white / cool LED |
+| P15 | 9 | `00000200` | Restore (`p15 on`) |
+
+P13 is on the DIP header but has no `gpio_pin_e` bit. P14 is a header pin, not an LED.
 
 ## Stdout (`--raw`)
 
@@ -34,6 +51,9 @@ P34 is bit 22 (`IN 00400000` or `p34 on`).
 | `UART <text>` | UART0/1 line. |
 | `FRAME <HEXBYTES>` | Mailbox TX. |
 | `STOP <reason>` | Exit. |
+| `WORLD <name> loop=<0|1> nodes=<n>` | Sim start (`phy6252 sim --raw`). |
+| `NODE <id> mac=… x=… y=… hex=…` | One sim chip. |
+| `[id] GPIO …` / `[id] UART …` | Same as GPIO/UART, tagged when several chips run. |
 
 Strict discovery diagnostics are written to stderr, for example:
 

@@ -72,7 +72,9 @@ fn command_complete_event(cpu: &mut Processor) -> bool {
     }
     let mut params = Vec::with_capacity(len);
     for i in 0..len {
-        let Ok(byte) = cpu.read8(src.wrapping_add(i as u32)) else { return false; };
+        let Ok(byte) = cpu.read8(src.wrapping_add(i as u32)) else {
+            return false;
+        };
         params.push(byte);
     }
     stage_complete(cpu, opcode, &params)
@@ -167,7 +169,11 @@ fn read_rssi_cmd(cpu: &mut Processor) -> bool {
     } else {
         HCI_ERROR_UNKNOWN_CONN_HANDLE
     };
-    let rssi = if status == HCI_SUCCESS { (-42i8) as u8 } else { HCI_RSSI_NOT_AVAILABLE };
+    let rssi = if status == HCI_SUCCESS {
+        (-42i8) as u8
+    } else {
+        HCI_RSSI_NOT_AVAILABLE
+    };
     let params = [status, conn_handle as u8, (conn_handle >> 8) as u8, rssi];
     eprintln!("BLE HCI ReadRSSI handle={conn_handle} status={status:#04x}");
     stage_complete(cpu, OPCODE_READ_RSSI, &params)
@@ -193,9 +199,7 @@ fn stage_complete(cpu: &mut Processor, opcode: u16, params: &[u8]) -> bool {
 }
 
 fn stage_status(cpu: &mut Processor, status: u8, opcode: u16) -> bool {
-    if cpu.write16(SHADOW_OPCODE, opcode).is_err()
-        || cpu.write8(SHADOW_PARAMS, status).is_err()
-    {
+    if cpu.write16(SHADOW_OPCODE, opcode).is_err() || cpu.write8(SHADOW_PARAMS, status).is_err() {
         return false;
     }
     begin(cpu, CMD_STATUS_BYTES, STAGE_STATUS_ALLOC)
@@ -225,11 +229,19 @@ fn finish_complete(cpu: &mut Processor) -> bool {
     if msg == 0 {
         return finish_alloc_failure(cpu);
     }
-    let opcode = match cpu.read16(SHADOW_OPCODE) { Ok(v) => v, Err(_) => return false };
-    let len = match cpu.read32(SHADOW_PARAM_LEN) { Ok(v) => (v as usize).min(MAX_PARAMS), Err(_) => return false };
+    let opcode = match cpu.read16(SHADOW_OPCODE) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let len = match cpu.read32(SHADOW_PARAM_LEN) {
+        Ok(v) => (v as usize).min(MAX_PARAMS),
+        Err(_) => return false,
+    };
     let param_ptr = msg + CMD_COMPLETE_BYTES;
     if cpu.write8(msg, HCI_GAP_EVENT_EVENT).is_err()
-        || cpu.write8(msg + 1, HCI_COMMAND_COMPLETE_EVENT_CODE).is_err()
+        || cpu
+            .write8(msg + 1, HCI_COMMAND_COMPLETE_EVENT_CODE)
+            .is_err()
         || cpu.write8(msg + 2, 1).is_err()
         || cpu.write8(msg + 3, 0).is_err()
         || cpu.write16(msg + 4, opcode).is_err()
@@ -239,7 +251,10 @@ fn finish_complete(cpu: &mut Processor) -> bool {
         return false;
     }
     for i in 0..len {
-        let byte = match cpu.read8(SHADOW_PARAMS + i as u32) { Ok(v) => v, Err(_) => return false };
+        let byte = match cpu.read8(SHADOW_PARAMS + i as u32) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
         if cpu.write8(param_ptr + i as u32, byte).is_err() {
             return false;
         }
@@ -252,8 +267,14 @@ fn finish_status(cpu: &mut Processor) -> bool {
     if msg == 0 {
         return finish_alloc_failure(cpu);
     }
-    let opcode = match cpu.read16(SHADOW_OPCODE) { Ok(v) => v, Err(_) => return false };
-    let status = match cpu.read8(SHADOW_PARAMS) { Ok(v) => v, Err(_) => return false };
+    let opcode = match cpu.read16(SHADOW_OPCODE) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let status = match cpu.read8(SHADOW_PARAMS) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
     if cpu.write8(msg, HCI_GAP_EVENT_EVENT).is_err()
         || cpu.write8(msg + 1, HCI_COMMAND_STATUS_EVENT_CODE).is_err()
         || cpu.write8(msg + 2, status).is_err()
@@ -292,7 +313,14 @@ fn finish_alloc_failure(cpu: &mut Processor) -> bool {
 
 fn finish_send(cpu: &mut Processor) -> bool {
     let status = cpu.get_r(Reg::R0);
-    cpu.set_r(Reg::R0, if status == 0 { HCI_SUCCESS as u32 } else { status });
+    cpu.set_r(
+        Reg::R0,
+        if status == 0 {
+            HCI_SUCCESS as u32
+        } else {
+            status
+        },
+    );
     cpu.set_r(Reg::R2, 0);
     cpu.set_r(Reg::R3, 0);
     cpu.set_pc(cpu.get_r(Reg::R12) & !1);

@@ -12,6 +12,10 @@ default-run = "phy6252"
 name = "phy6252"
 path = "src/main.rs"
 
+[[bin]]
+name = "phy6252-flash"
+path = "src/bin/phy6252-flash.rs"
+
 [lints.rust]
 warnings = { level = "deny", priority = -1 }
 
@@ -21,4 +25,5 @@ all = { level = "deny", priority = -1 }
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
+serialport = "4.7"
 zmu_cortex_m = { path = "third_party/zmu/zmu_cortex_m", default-features = false, features = ["armv6m"] }
