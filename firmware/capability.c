@@ -195,16 +195,30 @@ static int test_flash(void)
     uint8_t second[8] = {0xF0, 0x0F, 0xAA, 0x55, 0xC3, 0x3C, 0x5A, 0xA5};
     volatile uint8_t *xip = (volatile uint8_t *)TEST_FLASH_ADDR;
     if (ROM_SPIF_ERASE_SECTOR(TEST_FLASH_OFF) != 0) {
+        uart_puts(uart0, "flash erase failed\n");
         return 0;
     }
     if (ROM_SPIF_WRITE(TEST_FLASH_OFF, first, sizeof(first)) != 0) {
+        uart_puts(uart0, "flash pio failed\n");
         return 0;
     }
     if (ROM_SPIF_WRITE_DMA(TEST_FLASH_OFF + 8u, second, sizeof(second)) != 0) {
+        uart_puts(uart0, "flash dma failed\n");
         return 0;
     }
     for (uint32_t i = 0; i < 8u; i++) {
         if (xip[i] != first[i] || xip[8u + i] != second[i]) {
+            uart_puts(uart0, "flash mismatch i=");
+            uart_hex8(uart0, i);
+            uart_puts(uart0, " first=");
+            uart_hex8(uart0, first[i]);
+            uart_putc(uart0, '/');
+            uart_hex8(uart0, xip[i]);
+            uart_puts(uart0, " second=");
+            uart_hex8(uart0, second[i]);
+            uart_putc(uart0, '/');
+            uart_hex8(uart0, xip[8u + i]);
+            uart_putc(uart0, '\n');
             return 0;
         }
     }
