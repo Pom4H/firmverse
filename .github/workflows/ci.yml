@@ -67,7 +67,7 @@ jobs:
           grep -q READY /tmp/cap.log
           grep -q 'UART capability-demo boot' /tmp/cap.log
           grep -q 'UART capability-demo uart1' /tmp/cap.log
-          grep -q 'UART selftest osal=1 queue=1 flash=1 aes=1' /tmp/cap.log
+          grep -q 'UART selftest osal=1 queue=1 flash=1 aes=1 ctrl=1' /tmp/cap.log
           grep -q '^GPIO ' /tmp/cap.log
           grep -Eq '^PWM( [0-9a-f]{4}){6}$' /tmp/cap.log
           grep -q '^FRAME 434150$' /tmp/cap.log
@@ -78,9 +78,9 @@ jobs:
             ./target/debug/phy6252 --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
             > /tmp/flash-first.log 2>&1 || true
           test -s /tmp/phy6252-cap.flash
-          grep -q 'selftest osal=1 queue=1 flash=1 aes=1' /tmp/flash-first.log
+          grep -q 'selftest osal=1 queue=1 flash=1 aes=1 ctrl=1' /tmp/flash-first.log
           PHY6252_FLASH_STATE=/tmp/phy6252-cap.flash \
             ./target/debug/phy6252 --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
             > /tmp/flash-second.log 2>&1 || true
           grep -q 'FLASH state: restored 262144 bytes' /tmp/flash-second.log
-          grep -q 'selftest osal=1 queue=1 flash=1 aes=1' /tmp/flash-second.log
+          grep -q 'selftest osal=1 queue=1 flash=1 aes=1 ctrl=1' /tmp/flash-second.log
