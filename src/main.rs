@@ -18,6 +18,7 @@ mod ll_rom;
 mod mailbox;
 mod osal;
 mod osal_power;
+mod osal_queue;
 mod silicon_regs;
 mod tui;
 
