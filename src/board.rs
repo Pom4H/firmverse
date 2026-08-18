@@ -162,7 +162,10 @@ mod tests {
     #[test]
     fn headless_has_no_pb03f_wiring() {
         assert!(profile(BoardKind::Headless).indicators.is_empty());
-        assert_eq!(gpio_summary(BoardKind::Headless, 1, 1), "dr=00000001 ddr=00000001");
+        assert_eq!(
+            gpio_summary(BoardKind::Headless, 1, 1),
+            "dr=00000001 ddr=00000001"
+        );
     }
 
     #[test]
