@@ -4,6 +4,8 @@ use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
 
 const ROM_HCI_BM_ALLOC: u32 = 0x0000_28E8;
+const ROM_LL_RX_BM_ALLOC: u32 = 0x0000_5DF0;
+const ROM_LL_TX_BM_ALLOC: u32 = 0x0000_7F00;
 const ROM_OSAL_BM_ADJUST_HEADER: u32 = 0x0001_4954;
 const ROM_OSAL_BM_ADJUST_TAIL: u32 = 0x0001_497C;
 const ROM_OSAL_BM_ALLOC: u32 = 0x0001_49A8;
@@ -23,7 +25,7 @@ thread_local! {
 /// negative size removes header bytes (pointer moves forward).
 pub fn handle(cpu: &mut Processor) -> bool {
     match cpu.get_pc() {
-        ROM_HCI_BM_ALLOC | ROM_OSAL_BM_ALLOC => {
+        ROM_HCI_BM_ALLOC | ROM_LL_RX_BM_ALLOC | ROM_LL_TX_BM_ALLOC | ROM_OSAL_BM_ALLOC => {
             cpu.set_pc(ROM_OSAL_MEM_ALLOC);
             false
         }
