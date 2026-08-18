@@ -79,6 +79,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="flash a custom HEX without BLE library provenance (unsafe for BLE bring-up)",
     )
+    parser.add_argument(
+        "--manual-boot",
+        action="store_true",
+        help="do not toggle RTS/DTR; enter the PHY62xx ROM UART boot mode manually",
+    )
     parser.add_argument("--dry-run", action="store_true", help="validate and print the flash plan only")
     parser.add_argument("--no-reset", action="store_true", help="do not reset MCU after programming")
     return parser.parse_args(argv)
@@ -122,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.port:
             raise RomError("--port is required unless --dry-run is used")
 
-        with RomMonitor(args.port, args.baud) as mon:
+        with RomMonitor(args.port, args.baud, auto_boot=not args.manual_boot) as mon:
             revision = mon.connect()
             print(f"ROM connected: {revision or 'PHY62xx'}; flash={mon.flash_size // 1024} KiB")
             _flash_prepared(mon, prepared)
