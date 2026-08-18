@@ -8,6 +8,7 @@ mod cbtimer_rom;
 mod cmd;
 mod discovery;
 mod emu;
+mod flash_state;
 mod hci_caps;
 mod hci_extra;
 mod hci_rom;
