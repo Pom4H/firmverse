@@ -2,6 +2,7 @@ mod aes;
 mod arm_abi;
 mod ble_host;
 mod ble_rom;
+mod bm_rom;
 mod bus;
 mod cmd;
 mod discovery;
