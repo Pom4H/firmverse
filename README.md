@@ -1,6 +1,6 @@
 # PHY6252 emulator
 
-Cortex-M0 emulator for **PHY6252** (AI-Thinker **PB-03F-Kit**). One Rust CLI: `phy6252`.
+Cortex-M0 emulator for **PHY6252** and the AI-Thinker **PB-03F-Kit**. The project is intentionally small: one Rust binary, one raw line protocol, an optional terminal UI, and an optional Linux BlueZ bridge.
 
 ```sh
 git clone --recurse-submodules https://github.com/Pom4H/phy6252-emu.git
@@ -8,44 +8,104 @@ cd phy6252-emu
 cargo run --release
 ```
 
+## Run
+
+```sh
+phy6252 firmware/kit-demo.hex
+phy6252 --tui firmware/kit-demo.hex
+phy6252 --raw firmware/kit-demo.hex
+phy6252 --strict --once firmware/kit-demo.hex
+phy6252 --ble firmware/kit-demo.hex
+```
+
+`--strict-mmio` is kept as an alias for `--strict`.
+
+Install locally with:
+
+```sh
+cargo install --path .
+```
+
+The default REPL accepts the same commands as the raw/TUI frontends:
+
 ```text
 connect
-write hi
+cccd 1
+write 01020304
 adc 3.3 1.65 2.5 3.3
 p34 on
 help
 ```
 
-`p34 on` drives silkscreen P34. The demo lights every RGB LED while that pad is high. `connect` is the BLE link (ATT mailbox in the hex — there is no vendor BLE ROM here).
+## What is modeled
+
+The emulator currently executes real Cortex-M0 HEX images and models the PHY6252 surfaces needed by the bundled strict capability regression:
+
+- relocated Cortex-M0 vectors, SRAM and 256 KiB XIP flash;
+- GPIO, UART0/UART1, ADC, six PWM channels and timers;
+- exact/narrow PCR, AON, cache, clock, SPI-flash and DMAC register behavior used by firmware;
+- NOR erase/program semantics and optional persistent flash state;
+- eFuse/AES bootstrap behavior and ARM EABI helpers;
+- OSAL heap, memory, linked message queues, events, timers and cooperative task dispatch;
+- the exercised PHY6252 HCI/LL/GAP/GATT/security ROM ABI at a host-controller boundary;
+- generic ATT RX/TX mailbox transport;
+- Linux BlueZ advertising/GATT bridge;
+- strict discovery: unknown MMIO or vendor-ROM behavior stops instead of silently succeeding.
+
+The project is **not a cycle-accurate RF simulator**. Over-the-air scheduling and the physical BLE radio are delegated to the Linux Bluetooth controller when `--ble` is used. Unknown vendor behavior remains a strict fault until it is modeled explicitly.
+
+## Persistent NOR
+
+Set `PHY6252_FLASH_STATE` to preserve the complete 256 KiB NOR image across emulator restarts:
 
 ```sh
-phy6252 --help
-phy6252 firmware/kit-demo.hex
-phy6252 --tui                  # realtime pinout + logs dashboard
-phy6252 --ble                  # expose ATT mailbox through Linux BlueZ
-phy6252 --raw                  # GPIO / UART / FRAME lines
-phy6252 --once path.hex        # no REPL, stop at halt / insn cap
-phy6252 --strict --once path.hex # stop on the first missing silicon behavior
+PHY6252_FLASH_STATE=.state/device.flash \
+  phy6252 --strict firmware.hex
 ```
 
-`--strict-mmio` remains an alias for `--strict`.
+The state file is tied to the baseline firmware image. An incompatible snapshot is ignored instead of silently replacing a different firmware image. This sits below any guest filesystem/SNV format, so firmware persistence uses the same flash path as ordinary code.
 
-Install: `cargo install --path .` → `phy6252` on your PATH.
+## Terminal UI
 
-## Host Bluetooth LE
+```sh
+phy6252 --tui firmware.hex
+```
 
-`phy6252 --ble [firmware.hex]` exposes the emulator's generic ATT mailbox through the Linux host Bluetooth adapter using BlueZ. The emulator remains the source of RX/TX data; BlueZ only supplies the real radio, advertising and GATT transport.
+The TUI is only a frontend over `--raw`; it does not create a second emulator path. It shows:
 
-Defaults:
+- run/strict state and image name;
+- BLE link/notify state;
+- live ADC voltages;
+- the PB-03F-Kit bottom-view pinout with GPIO direction/level;
+- RGB/W LED state and all six PWM channels;
+- a rolling UART/ATT/ROM/MMIO diagnostic log;
+- one command line with Up/Down history.
 
-| | Value |
+For the full physical pinout use a terminal of at least `68x26`. Smaller terminals automatically switch to the compact status/log view.
+
+Keys: `Enter` sends, `Up/Down` browse history, `Esc` or `Ctrl-C` exits.
+
+## Linux Bluetooth LE
+
+`--ble` exposes the generic ATT mailbox through the host Bluetooth adapter using BlueZ. The firmware remains the source of application RX/TX data; BlueZ supplies the real radio, advertising and GATT transport.
+
+Requirements:
+
+- Linux + BlueZ / `bluetoothd`;
+- `python3-dbus`;
+- `python3-gi`;
+- an adapter exposing `GattManager1` and `LEAdvertisingManager1`.
+
+Default public test profile:
+
+| Setting | Value |
 |---|---|
 | Local name | `PB03FKIT` |
 | Service | `6B1D0001-7C8E-4A91-9F2B-E3A14C5B0001` |
 | RX write | `6B1D0002-7C8E-4A91-9F2B-E3A14C5B0001` |
 | TX notify | `6B1D0003-7C8E-4A91-9F2B-E3A14C5B0001` |
 
-All four values are runtime configuration, so the public emulator does not need product-specific BLE definitions:
+All values are runtime-configurable:
 
 ```sh
 phy6252 --ble \
@@ -56,95 +116,39 @@ phy6252 --ble \
   firmware.hex
 ```
 
-Host requirements are `bluez`, `python3-dbus` and `python3-gi`; `bluetoothd` must expose `GattManager1` and `LEAdvertisingManager1`. `--ble` powers the selected adapter, registers one service with RX/TX characteristics, starts connectable advertising, and bridges writes/notifies to the existing `WRITE`/`FRAME` protocol.
+## Strict discovery
 
-## Realtime terminal dashboard
-
-`phy6252 --tui [firmware.hex]` runs the exact same emulator through its stable `--raw` protocol and renders a live terminal dashboard instead of creating a second execution path.
-
-The dashboard shows:
-
-- PB-03F silkscreen pin → `gpio_pin_e` mapping for P0, P2, P3, P7, P11, P14, P15, P16, P17, P18, P20, P23, P24, P31, P32, P33 and P34;
-- GPIO direction and current level (`OUT` reads DR, `IN` reads the externally driven level);
-- live ADC voltages for P20 / P15 / P24 / P23;
-- RGB/W LED levels and all six PWM channels;
-- BLE mailbox link + notify state;
-- a rolling log combining UART, ATT frames and emulator stderr, including strict discovery, ROM shims, power state and secure-boot diagnostics;
-- command history with Up/Down and the same commands as the normal REPL.
-
-Example commands can be typed directly into the TUI:
-
-```text
-connect
-notify on
-adc 3.3 1.65 2.5 3.3
-p34 on
-write 01020304
-```
-
-Esc or Ctrl-C exits. `--tui` is intentionally separate from `--raw`: automation keeps the line protocol, while humans get the dashboard.
-
-## Firmware-driven silicon discovery
-
-The emulator can use a real firmware image as a probe for missing PHY6252 behavior instead of silently pretending unsupported silicon works.
-
-### Relocated vectors
-
-PHY6252 SDK images do not have to place the Cortex-M vector table at the first byte of SRAM. The emulator scans SRAM for a plausible vector table, keeps the image at its real addresses, and mirrors the selected SDK vector block into the Cortex-M exception-vector window used by zmu.
-
-This allows images with jump/config areas before `.vectors` to reach their actual reset handler and exception handlers without rewriting the firmware.
-
-### MMIO discovery
-
-By default, an MMIO access that is not modeled is kept in a sparse register store keyed by the full 32-bit address and reported once on stderr:
-
-```text
-MMIO unknown write32 addr=0x40012340 aligned=0x40012340 -- sparse stub
-```
-
-This replaces the old modulo-1024 fallback, where unrelated peripheral addresses could alias the same backing cell.
-
-With `--strict`, an unknown MMIO access raises `DAccViol` instead of being silently accepted:
+Use a firmware image as the executable specification for the next missing chip behavior:
 
 ```sh
-phy6252 --strict --once vendor-firmware.hex
+phy6252 --strict --once firmware.hex
 ```
 
-Functional GPIO/UART/ADC/PWM/timer registers are delegated to the current PHY6252 model. Bootstrap registers that are intentionally inert are whitelisted by exact address, not by broad peripheral range, so the next missing register remains observable.
+Unknown MMIO stops with a `DAccViol`; unknown vendor-ROM entrypoints stop as unmodeled ROM ABI. Confirmed functions are then implemented narrowly from the public chip/SDK contract. Blanket `BX LR` stubs are intentionally avoided.
 
-### Vendor ROM discovery
-
-The repository does not contain the PHY6252 vendor ROM. In strict mode, execution therefore stops at the first unmodeled ROM entry rather than executing an all-zero placeholder until the end of the ROM address range:
+This keeps one source of truth:
 
 ```text
-ROM unknown read16 addr=0x0000abcd -- vendor ROM image/ABI not modeled; strict fault
+firmware
+  -> Cortex-M0 / OSAL / vendor ABI
+  -> generic host-controller boundary
+  -> Linux BlueZ (optional)
+  -> real Bluetooth adapter
 ```
 
-Known ROM ABI functions are replaced only when their semantics are identified. Current executable shims cover bootstrap IRQ init, sleep policy, eFuse reads, AES-128/secure identity checks, ARM EABI memory clearing, OSAL memory comparison and OSAL heap setup. The goal is to execute the SDK contract, not to hide unknown ROM behind blanket no-op returns.
+## Demo and regression firmware
 
-The intended workflow is iterative:
+```sh
+make -C firmware clean all
+```
 
-1. boot the real HEX with `--strict`;
-2. stop at the first unknown MMIO register or ROM entry;
-3. identify it from the SDK/link map;
-4. model the required behavior or add a narrowly documented shim;
-5. run the same firmware again and repeat.
+Requires `arm-none-eabi-gcc`.
 
-That turns the firmware itself into an executable checklist for the missing PHY6252 model.
+Two freestanding images are built:
 
-## Demo firmware
+- `kit-demo.hex` - small interactive board demo;
+- `capability-demo.hex` - strict regression covering OSAL memory/queues, NOR, AES, controller ABI, GPIO/ADC/PWM/UART and DMAC paths.
 
-Bare-metal C, no vendor SDK. `make -C firmware` if you change it; `firmware/kit-demo.hex` is in the tree.
+The CI runs Rust tests, both strict firmware smokes, and a two-run persistent-NOR restore check. CI installs Node via `actions/setup-node` with `lts/*`; GitHub JavaScript actions used by the workflow target the current Node 24 action runtime.
 
-| Block | Kit | Demo |
-|---|---|---|
-| RGB | P7 / P11 / P18 | chase; green while BLE connected |
-| Warm LED | P0 | fourth RGB phase |
-| Header GPIO | P14 P16 P17 P31 P32 P33 | walking one |
-| Button | P34 | all LEDs on |
-| ADC | P20 P15 P24 P23 | `adc …` |
-| UART0 / UART1 | TX | status / heartbeat |
-| PWM, timer, WDT, I2C0, SPI0, PCR, AON | MMIO | poked |
-| ATT mailbox | SRAM `0x20000000` | `connect` / `write` / notifies |
-
-Machine protocol: [PROTOCOL.md](PROTOCOL.md) (`phy6252 --raw`).
+Machine protocol: [PROTOCOL.md](PROTOCOL.md).
