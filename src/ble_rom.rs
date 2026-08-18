@@ -1,4 +1,4 @@
-use crate::{arm_abi, bm_rom, hci_extra, hci_rom, osal_power};
+use crate::{arm_abi, bm_rom, hci_extra, hci_rom, ll_rom, osal_power};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
@@ -21,6 +21,9 @@ pub fn handle(cpu: &mut Processor, rng: &mut u32) -> bool {
         return true;
     }
     if hci_rom::handle(cpu) {
+        return true;
+    }
+    if ll_rom::handle(cpu) {
         return true;
     }
     match cpu.get_pc() {
