@@ -71,3 +71,16 @@ jobs:
           grep -q '^GPIO ' /tmp/cap.log
           grep -Eq '^PWM( [0-9a-f]{4}){6}$' /tmp/cap.log
           grep -q '^FRAME 434150$' /tmp/cap.log
+      - name: Persistent NOR restart
+        run: |
+          rm -f /tmp/phy6252-cap.flash /tmp/flash-first.log /tmp/flash-second.log
+          PHY6252_FLASH_STATE=/tmp/phy6252-cap.flash \
+            ./target/debug/phy6252 --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
+            > /tmp/flash-first.log 2>&1 || true
+          test -s /tmp/phy6252-cap.flash
+          grep -q 'selftest osal=1 queue=1 flash=1 aes=1' /tmp/flash-first.log
+          PHY6252_FLASH_STATE=/tmp/phy6252-cap.flash \
+            ./target/debug/phy6252 --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
+            > /tmp/flash-second.log 2>&1 || true
+          grep -q 'FLASH state: restored 262144 bytes' /tmp/flash-second.log
+          grep -q 'selftest osal=1 queue=1 flash=1 aes=1' /tmp/flash-second.log
