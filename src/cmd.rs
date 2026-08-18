@@ -26,9 +26,9 @@ phy6252  —  type a command, then enter
   notify on|off      CCCD / indications
   write Hello        GATT write (text or hex)
   adc 3.3 1.65 2.5 3.3   P20 P15 P24 P23 (V or mV)
-  p15 on             Restore (P15, bit 9)
-  p34 on             white LED pad (P34, bit 22)
-  in 00000200        raw AP_GPIO ext mask (Restore)
+  p15 on             PHY6252 pad P15 (PB-03F Restore)
+  p34 on             PHY6252 pad P34 (PB-03F white LED)
+  in 00000200        raw AP_GPIO ext mask
   tick 80            advance mailbox clock
   help  quit
 ";
@@ -134,7 +134,7 @@ fn parse_friendly(line: &str) -> Result<ChipCmd, String> {
             Ok(ChipCmd::In(value))
         }
         pin if pin.starts_with('p') || pin.starts_with('P') => {
-            let bit = silk_bit(pin).ok_or_else(|| format!("unknown pad {pin}"))?;
+            let bit = silk_bit(pin).ok_or_else(|| format!("unknown PHY6252 pad {pin}"))?;
             let high = parse_on_off(parts.next().unwrap_or("on"))?;
             Ok(ChipCmd::Pin { bit, high })
         }
@@ -244,6 +244,8 @@ fn hex_digit(c: u8) -> Option<u8> {
     }
 }
 
+/// PHY6252 package pad to AP_GPIO bit mapping.
+/// This belongs to the SoC/package contract, not to a particular development board.
 fn silk_bit(label: &str) -> Option<u32> {
     match label.to_ascii_uppercase().as_str() {
         "P0" => Some(0),
@@ -268,30 +270,7 @@ fn silk_bit(label: &str) -> Option<u32> {
 }
 
 pub fn gpio_silk(dr: u32, ddr: u32) -> String {
-    const PADS: [(&str, u32); 11] = [
-        ("R", 4),
-        ("G", 7),
-        ("B", 12),
-        ("W", 0),
-        ("P14", 8),
-        ("P16", 10),
-        ("P17", 11),
-        ("P31", 19),
-        ("P32", 20),
-        ("P33", 21),
-        ("P34", 22),
-    ];
-    let mut on = Vec::new();
-    for (name, bit) in PADS {
-        if ((ddr >> bit) & 1) == 1 && ((dr >> bit) & 1) == 1 {
-            on.push(name);
-        }
-    }
-    if on.is_empty() {
-        "—".into()
-    } else {
-        on.join(" ")
-    }
+    crate::board::gpio_summary(crate::board::BoardKind::Pb03fKit, dr, ddr)
 }
 
 #[cfg(test)]
