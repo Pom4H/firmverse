@@ -54,30 +54,38 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Cargo test
-        # Rust 1.97 constant-folds an unreachable i32::MIN % -1 expression in
-        # the division edge-case unit test even though checked_div selects the
-        # overflow fallback. Clippy still runs with -D warnings above.
         env:
           RUSTFLAGS: -A unconditional-panic
         run: cargo test
       - name: Emulator binary
         run: cargo build --quiet
       - name: Publish emulator binary
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: phy6252-linux-x86_64
           path: target/debug/phy6252
           if-no-files-found: error
 
-  sdk312-ble-build:
+  demo-smoke:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: ARM GCC and Python dependencies
+      - name: Download tested emulator
+        uses: actions/download-artifact@v8
+        with:
+          name: phy6252-linux-x86_64
+          path: target/debug
+      - name: Make emulator executable
+        run: chmod +x target/debug/phy6252
+      - name: ARM toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi
-          python3 -m pip install -r tools/requirements.txt
+      - name: Build demo firmware
+        run: make -C firmware clean all
+      - name: Python tool dependencies
+        run: python3 -m pip install -r tools/requirements.txt
       - name: Fetch pinned PHY62XX SDK 3.1.2 tree
         run: |
           git clone --filter=blob:none https://github.com/xuhongv/PHY6252_6222_SDK.git /tmp/phy62xx-sdk
@@ -91,23 +99,6 @@ jobs:
             | tee /tmp/sdk312-ble.log
           grep -q 'BLE provenance: GCC vendor RF + BLE host' /tmp/sdk312-ble.log
           grep -q 'Dry run complete' /tmp/sdk312-ble.log
-
-  demo-smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: recursive
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 'lts/*'
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Linux build deps
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libudev-dev gcc-arm-none-eabi
-      - name: Build emulator
-        run: cargo build --quiet
-      - name: Build demo firmware
-        run: make -C firmware clean all
       - name: Simple board smoke
         run: |
           printf 'ADC 3300 1650 2500 3300\nIN 00000200\nCONNECT\nCCCD 1\nWRITE 4849\n' \
@@ -183,7 +174,7 @@ jobs:
 
   attest:
     if: always()
-    needs: [test, sdk312-ble-build, demo-smoke]
+    needs: [test, demo-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Publish combined commit status
@@ -191,7 +182,6 @@ jobs:
         with:
           script: |
             const ok = '${{ needs.test.result }}' === 'success' &&
-              '${{ needs.sdk312-ble-build.result }}' === 'success' &&
               '${{ needs.demo-smoke.result }}' === 'success';
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
