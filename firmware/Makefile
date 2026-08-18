@@ -20,8 +20,8 @@ $(OUT):
 $(KIT_ELF): main.c board.h linker.ld | $(OUT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(OUT)/kit-demo.map -o $@ main.c
 
-$(CAP_ELF): capability.c board.h linker.ld | $(OUT)
-	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(OUT)/capability-demo.map -o $@ capability.c
+$(CAP_ELF): capability.c controller_probe.c board.h linker.ld | $(OUT)
+	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(OUT)/capability-demo.map -o $@ capability.c controller_probe.c
 
 $(KIT_HEX): $(KIT_ELF)
 	$(OBJCOPY) -O ihex $< $@
