@@ -12,6 +12,10 @@ default-run = "phy6252"
 name = "phy6252"
 path = "src/main.rs"
 
+[lints.rust]
+warnings = { level = "deny", priority = -1 }
+dead_code = "allow"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
