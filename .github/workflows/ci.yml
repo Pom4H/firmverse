@@ -20,11 +20,15 @@ jobs:
         with:
           node-version: 'lts/*'
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - name: Tool versions
         run: |
           node --version
           rustc --version
           cargo --version
+          cargo clippy --version
+          rustfmt --version
       - name: Public repo leak guard
         run: |
           private_marker="dp""ls"
@@ -40,6 +44,10 @@ jobs:
           fi
       - name: BlueZ helper syntax
         run: python3 -m py_compile host/ble/bluez.py
+      - name: Rustfmt
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Cargo test
         run: cargo test
       - name: Emulator binary
@@ -122,6 +130,6 @@ jobs:
               sha: context.sha,
               state: ok ? 'success' : 'failure',
               context: 'phy6252-emu/ci',
-              description: ok ? 'Rust tests + full capability stress passed' : 'One or more emulator CI jobs failed',
+              description: ok ? 'rustfmt + Clippy + tests + capability stress passed' : 'One or more emulator CI jobs failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
