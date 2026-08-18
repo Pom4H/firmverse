@@ -22,20 +22,15 @@ impl SocKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub enum BoardKind {
+    #[default]
     #[value(name = "pb03f-kit")]
     Pb03fKit,
     #[value(name = "headless")]
     Headless,
     #[value(name = "weact-ch592f")]
     WeactCh592f,
-}
-
-impl Default for BoardKind {
-    fn default() -> Self {
-        Self::Pb03fKit
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
