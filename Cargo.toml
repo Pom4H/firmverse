@@ -14,7 +14,9 @@ path = "src/main.rs"
 
 [lints.rust]
 warnings = { level = "deny", priority = -1 }
-dead_code = "allow"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
