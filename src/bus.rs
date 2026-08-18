@@ -133,7 +133,7 @@ impl Phy6252Bus {
     }
 
     fn gpio_off(addr: u32) -> Option<u32> {
-        if addr < GPIO_BASE || addr >= GPIO_BASE + GPIO_WINDOW {
+        if !(GPIO_BASE..GPIO_BASE + GPIO_WINDOW).contains(&addr) {
             return None;
         }
         Some(addr - GPIO_BASE)
@@ -190,7 +190,7 @@ impl Phy6252Bus {
     }
 
     fn mmio_index(addr: u32) -> Option<usize> {
-        if addr < MMIO_BASE || addr >= MMIO_END {
+        if !(MMIO_BASE..MMIO_END).contains(&addr) {
             return None;
         }
         Some(((addr - MMIO_BASE) >> 2) as usize % 1024)
@@ -201,7 +201,7 @@ impl Phy6252Bus {
             return None;
         }
         let off = (addr - ADC_CH_BASE) as usize;
-        if off % 4 != 0 {
+        if !off.is_multiple_of(4) {
             return None;
         }
         let ch = off / 4;
@@ -212,7 +212,7 @@ impl Phy6252Bus {
     }
 
     fn pwm_write(&self, addr: u32, value: u32) -> bool {
-        if addr < PWM_BASE || addr >= PWM_BASE + 0x80 {
+        if !(PWM_BASE..PWM_BASE + 0x80).contains(&addr) {
             return false;
         }
         let off = addr - PWM_BASE;
@@ -232,9 +232,9 @@ impl Phy6252Bus {
     }
 
     fn uart_port(addr: u32) -> Option<(usize, u32)> {
-        if addr >= UART0_BASE && addr < UART0_BASE + UART_WINDOW {
+        if (UART0_BASE..UART0_BASE + UART_WINDOW).contains(&addr) {
             Some((0, addr - UART0_BASE))
-        } else if addr >= UART1_BASE && addr < UART1_BASE + UART_WINDOW {
+        } else if (UART1_BASE..UART1_BASE + UART_WINDOW).contains(&addr) {
             Some((1, addr - UART1_BASE))
         } else {
             None
@@ -505,7 +505,7 @@ impl Bus for Phy6252Bus {
         ) || offset_in(&self.sram, SRAM_BASE, addr).is_some()
             || offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr).is_some()
             || offset_in(&self.xip, XIP_BASE, addr).is_some()
-            || (addr >= MMIO_BASE && addr < MMIO_END)
+            || (MMIO_BASE..MMIO_END).contains(&addr)
             || addr < ROM_END
     }
 }
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn nor_controls_are_outside_zmu_cortex_m_sram_shadow() {
-        assert!(HOST_FLASH_ADDR >= 0x6000_0000);
+        const { assert!(HOST_FLASH_ADDR >= 0x6000_0000) };
         let bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0xff; XIP_SIZE]);
         assert!(bus.in_range(HOST_FLASH_ADDR));
         assert!(bus.in_range(HOST_FLASH_PROGRAM));

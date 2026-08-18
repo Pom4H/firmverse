@@ -72,7 +72,7 @@ impl HexImage {
 }
 
 fn decode_line(line: &str) -> io::Result<Vec<u8>> {
-    if line.len() < 11 || (line.len() - 1) % 2 != 0 {
+    if line.len() < 11 || !(line.len() - 1).is_multiple_of(2) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "truncated HEX line",

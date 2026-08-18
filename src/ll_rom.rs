@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn host_controller_exposes_one_handle_inside_phy6252_range() {
         assert_eq!(HOST_CONN_HANDLE, 0);
-        assert!(HOST_CONN_HANDLE < PHY6252_MAX_CONNECTIONS);
+        const { assert!(HOST_CONN_HANDLE < PHY6252_MAX_CONNECTIONS) };
     }
 
     #[test]

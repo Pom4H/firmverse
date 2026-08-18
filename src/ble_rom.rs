@@ -90,7 +90,7 @@ fn true_rand(cpu: &mut Processor, rng: &mut u32) -> bool {
 
 fn set_sca(cpu: &mut Processor) -> bool {
     let ppm = cpu.get_r(Reg::R0) as u16;
-    let status = if ppm <= 500 {
+    let status = if sca_ok(ppm) {
         LL_STATUS_SUCCESS
     } else {
         LL_STATUS_ERROR_BAD_PARAMETER
@@ -112,6 +112,10 @@ fn ret(cpu: &mut Processor) {
     cpu.set_pc(cpu.get_r(Reg::LR) & !1);
 }
 
+fn sca_ok(ppm: u16) -> bool {
+    ppm <= 500
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,8 +129,8 @@ mod tests {
     }
 
     #[test]
-    fn sca_contract_matches_ble_range() {
-        assert!(500u16 <= 500);
-        assert!(501u16 > 500);
+    fn sca_accepted_at_500ppm_and_rejected_above() {
+        assert!(sca_ok(500));
+        assert!(!sca_ok(501));
     }
 }

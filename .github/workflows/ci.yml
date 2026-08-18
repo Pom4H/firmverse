@@ -47,6 +47,8 @@ jobs:
           python3 -m py_compile host/ble/bluez.py tools/phy6252_flash.py tools/phyflash/*.py
       - name: PHY6252 flasher tests
         run: python3 -m unittest discover -s tests -p 'test_phyflash.py' -v
+      - name: Linux serialport deps
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev
       - name: Rustfmt
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -95,10 +97,10 @@ jobs:
         with:
           node-version: 'lts/*'
       - uses: dtolnay/rust-toolchain@stable
+      - name: Linux build deps
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev gcc-arm-none-eabi
       - name: Build emulator
         run: cargo build --quiet
-      - name: ARM GCC
-        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
       - name: Build demo firmware
         run: make -C firmware clean all
       - name: Simple board smoke

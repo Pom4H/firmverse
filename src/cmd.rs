@@ -197,7 +197,7 @@ fn parse_mv(text: &str) -> Option<u16> {
     if text.contains('.') {
         let volts: f64 = text.parse().ok()?;
         let mv = (volts * 1000.0).round();
-        if mv < 0.0 || mv > 65535.0 {
+        if !(0.0..=65535.0).contains(&mv) {
             return None;
         }
         return Some(mv as u16);
@@ -207,7 +207,7 @@ fn parse_mv(text: &str) -> Option<u16> {
 
 fn parse_write_payload(text: &str) -> Option<Vec<u8>> {
     let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    if compact.len() >= 2 && compact.len() % 2 == 0 && compact.bytes().all(is_hex_byte) {
+    if compact.len() >= 2 && compact.len().is_multiple_of(2) && compact.bytes().all(is_hex_byte) {
         return parse_hex_bytes(&compact);
     }
     if text.is_empty() {
@@ -218,7 +218,7 @@ fn parse_write_payload(text: &str) -> Option<Vec<u8>> {
 
 pub fn parse_hex_bytes(text: &str) -> Option<Vec<u8>> {
     let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    if compact.len() % 2 != 0 || compact.is_empty() {
+    if !compact.len().is_multiple_of(2) || compact.is_empty() {
         return None;
     }
     let mut out = Vec::with_capacity(compact.len() / 2);

@@ -478,7 +478,7 @@ impl DiscoveryBus {
 
     fn adc_read_known(addr: u32) -> bool {
         let aligned = addr & !3;
-        aligned >= ADC_CH_BASE && aligned < ADC_CH_BASE + 9 * 4
+        (ADC_CH_BASE..ADC_CH_BASE + 9 * 4).contains(&aligned)
     }
 
     fn pwm_write_known(addr: u32) -> bool {

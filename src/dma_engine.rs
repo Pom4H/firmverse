@@ -121,7 +121,7 @@ fn execute(cpu: &mut Processor, ch: u32) -> bool {
     if items == 0 || src_width != dst_width {
         return unsupported(ch, ctl, "zero transfer or width conversion");
     }
-    if !matches!(src_inc, 0 | 1 | 2) || !matches!(dst_inc, 0 | 1 | 2) {
+    if !matches!(src_inc, 0..=2) || !matches!(dst_inc, 0..=2) {
         return unsupported(ch, ctl, "increment mode");
     }
     match transfer_type {
