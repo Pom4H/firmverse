@@ -6,6 +6,7 @@ extern uint32_t _ebss;
 
 void Reset_Handler(void);
 int main(void);
+int test_controller_abi(void);
 
 __attribute__((section(".vectors"), used))
 void * const vectors[2] = {
@@ -251,6 +252,7 @@ int main(void)
     int queue_ok = test_osal_queue();
     int flash_ok = test_flash();
     int aes_ok = test_aes();
+    int ctrl_ok = test_controller_abi();
 
     uart_puts(uart0, "selftest osal=");
     uart_bool(uart0, osal_ok);
@@ -260,6 +262,8 @@ int main(void)
     uart_bool(uart0, flash_ok);
     uart_puts(uart0, " aes=");
     uart_bool(uart0, aes_ok);
+    uart_puts(uart0, " ctrl=");
+    uart_bool(uart0, ctrl_ok);
     uart_putc(uart0, '\n');
 
     if (mb->magic != MAGIC_PHY2) {
@@ -338,7 +342,7 @@ int main(void)
             snap[9] = (uint8_t)queue_ok;
             snap[10] = (uint8_t)flash_ok;
             snap[11] = (uint8_t)aes_ok;
-            snap[12] = (uint8_t)timer_mix;
+            snap[12] = (uint8_t)ctrl_ok;
             snap[13] = (uint8_t)(timer_mix >> 8);
             snap[14] = btn ? 1u : 0u;
             snap[15] = (uint8_t)mb->status;
