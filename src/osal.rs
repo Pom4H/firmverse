@@ -190,7 +190,10 @@ impl HostOsal {
     fn uidiv(&mut self, cpu: &mut Processor) -> bool {
         let n = cpu.get_r(Reg::R0);
         let d = cpu.get_r(Reg::R1);
-        let (q, r) = if d == 0 { (0, n) } else { (n / d, n % d) };
+        let (q, r) = match n.checked_div(d) {
+            Some(q) => (q, n % d),
+            None => (0, n),
+        };
         self.once(ROM_UIDIV, || eprintln!("EABI host uidiv/uidivmod"));
         cpu.set_r(Reg::R0, q);
         cpu.set_r(Reg::R1, r);
@@ -200,12 +203,10 @@ impl HostOsal {
     fn idiv(&mut self, cpu: &mut Processor) -> bool {
         let n = cpu.get_r(Reg::R0) as i32;
         let d = cpu.get_r(Reg::R1) as i32;
-        let (q, r) = if d == 0 {
-            (0, n)
-        } else if n == i32::MIN && d == -1 {
-            (i32::MIN, 0)
-        } else {
-            (n / d, n % d)
+        let (q, r) = match n.checked_div(d) {
+            Some(q) => (q, n % d),
+            None if d == 0 => (0, n),
+            None => (i32::MIN, 0),
         };
         self.once(ROM_IDIV, || eprintln!("EABI host idiv/idivmod"));
         cpu.set_r(Reg::R0, q as u32);
@@ -1082,10 +1083,10 @@ mod tests {
     fn division_edge_cases() {
         let n = i32::MIN;
         let d = -1;
-        let (q, r) = if n == i32::MIN && d == -1 {
-            (i32::MIN, 0)
-        } else {
-            (n / d, n % d)
+        let (q, r) = match n.checked_div(d) {
+            Some(q) => (q, n % d),
+            None if d == 0 => (0, n),
+            None => (i32::MIN, 0),
         };
         assert_eq!(q, i32::MIN);
         assert_eq!(r, 0);
