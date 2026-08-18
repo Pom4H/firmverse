@@ -21,9 +21,12 @@ class Sdk312Info:
     gcc_host: pathlib.Path
     gcc_sec_boot: pathlib.Path
     ble_example_makefile: pathlib.Path
+    ppsp_impl_source: pathlib.Path
 
 
 _REQUIRED_MARKER = "PHY62XX_SDK_3.1.2"
+_GCC13_BAD_PPSP_LOG_CALL = 'logs_war("!! MSGS LOSS, ALLS DROP !! \\r\\n",);'
+_GCC13_FIXED_PPSP_LOG_CALL = 'logs_war("!! MSGS LOSS, ALLS DROP !! \\r\\n");'
 
 
 def verify_sdk_312(root: pathlib.Path) -> Sdk312Info:
@@ -33,6 +36,7 @@ def verify_sdk_312(root: pathlib.Path) -> Sdk312Info:
     recipe = root / "_bld_script" / "bld_v312.yml"
     components = root / "components" / "gcc" / "components.mk"
     example = root / "example" / "ble_peripheral" / "simpleBlePeripheral" / "gcc" / "Makefile"
+    ppsp_impl = root / "components" / "profiles" / "ppsp" / "ppsp_impl.c"
     info = Sdk312Info(
         root=root,
         keil_rf=root / "lib" / "rf.lib",
@@ -41,6 +45,7 @@ def verify_sdk_312(root: pathlib.Path) -> Sdk312Info:
         gcc_host=root / "lib" / "libphy6222_host.a",
         gcc_sec_boot=root / "lib" / "libphy6222_sec_boot.a",
         ble_example_makefile=example,
+        ppsp_impl_source=ppsp_impl,
     )
 
     required = [
@@ -48,6 +53,7 @@ def verify_sdk_312(root: pathlib.Path) -> Sdk312Info:
         recipe,
         components,
         example,
+        ppsp_impl,
         info.keil_rf,
         info.keil_host,
         info.gcc_rf,
@@ -79,6 +85,33 @@ def verify_sdk_312(root: pathlib.Path) -> Sdk312Info:
     return info
 
 
+def apply_sdk_312_gcc_compat(info: Sdk312Info) -> bool:
+    """Patch the one known SDK 3.1.2 C syntax bug rejected by modern GCC.
+
+    The upstream SDK contains a trailing empty variadic argument in ppsp_impl.c:
+    ``logs_war("...",);``. GCC 13 rejects the resulting expansion. Keep this
+    compatibility shim fail-closed so an upstream source change cannot silently
+    mutate arbitrary vendor code.
+    """
+    path = info.ppsp_impl_source
+    text = path.read_text(encoding="utf-8", errors="strict")
+    bad_count = text.count(_GCC13_BAD_PPSP_LOG_CALL)
+    fixed_count = text.count(_GCC13_FIXED_PPSP_LOG_CALL)
+
+    if bad_count == 0 and fixed_count == 1:
+        return False
+    if bad_count != 1 or fixed_count != 0:
+        raise SdkError(
+            "SDK 3.1.2 PPSP GCC compatibility signature changed; refusing to patch vendor source"
+        )
+
+    path.write_text(
+        text.replace(_GCC13_BAD_PPSP_LOG_CALL, _GCC13_FIXED_PPSP_LOG_CALL, 1),
+        encoding="utf-8",
+    )
+    return True
+
+
 def verify_ble_link_map(path: pathlib.Path) -> str:
     """Verify that a linker map names the vendor RF and BLE host libraries."""
     if not path.is_file():
@@ -102,6 +135,7 @@ def build_vendor_ble_example(info: Sdk312Info) -> tuple[pathlib.Path, pathlib.Pa
     if shutil.which("make") is None:
         raise SdkError("make is required to build the SDK 3.1.2 BLE example")
 
+    apply_sdk_312_gcc_compat(info)
     workdir = info.ble_example_makefile.parent
     result = subprocess.run(
         ["make", "clean", "all"],

@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from phyflash.cli import _erase_plan
 from phyflash.image import BOOT_HEADER_ADDR, ImageError, Segment, parse_intel_hex, prepare_phy_hex
-from phyflash.sdk import SdkError, verify_ble_link_map, verify_sdk_312
+from phyflash.sdk import SdkError, apply_sdk_312_gcc_compat, verify_ble_link_map, verify_sdk_312
 
 
 def hex_record(address: int, kind: int, data: bytes = b"") -> str:
@@ -81,6 +81,9 @@ class SdkTests(unittest.TestCase):
                 "LIBS += -lphy6222_host\n"
                 "LIBS += -lphy6222_sec_boot\n"
             ),
+            "components/profiles/ppsp/ppsp_impl.c": (
+                'logs_war("!! MSGS LOSS, ALLS DROP !! \\r\\n",);\n'
+            ),
             "example/ble_peripheral/simpleBlePeripheral/gcc/Makefile": (
                 "include $(ROOT)/components/gcc/components.mk\narm-none-eabi-gcc\n"
             ),
@@ -101,6 +104,27 @@ class SdkTests(unittest.TestCase):
             self._fake_sdk(root)
             info = verify_sdk_312(root)
             self.assertEqual(info.root, root.resolve())
+
+    def test_sdk_312_gcc_compat_patches_known_ppsp_bug(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            self._fake_sdk(root)
+            info = verify_sdk_312(root)
+            self.assertTrue(apply_sdk_312_gcc_compat(info))
+            self.assertIn(
+                'logs_war("!! MSGS LOSS, ALLS DROP !! \\r\\n");',
+                info.ppsp_impl_source.read_text(encoding="utf-8"),
+            )
+            self.assertFalse(apply_sdk_312_gcc_compat(info))
+
+    def test_sdk_312_gcc_compat_fails_closed_on_unknown_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            self._fake_sdk(root)
+            info = verify_sdk_312(root)
+            info.ppsp_impl_source.write_text("unexpected vendor source\n", encoding="utf-8")
+            with self.assertRaisesRegex(SdkError, "signature changed"):
+                apply_sdk_312_gcc_compat(info)
 
     def test_link_map_proves_gcc_ble_libraries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

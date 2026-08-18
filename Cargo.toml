@@ -25,5 +25,5 @@ all = { level = "deny", priority = -1 }
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
-serialport = "4.7"
+serialport = { version = "4.7", default-features = false }
 zmu_cortex_m = { path = "third_party/zmu/zmu_cortex_m", default-features = false, features = ["armv6m"] }
