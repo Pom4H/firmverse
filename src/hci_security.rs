@@ -132,9 +132,10 @@ fn begin_complete(cpu: &mut Processor, opcode: u16, params: &[u8]) -> bool {
 }
 
 fn begin_status(cpu: &mut Processor, opcode: u16, status: u8, followup: bool) -> bool {
+    let followup_word = if followup { 1 } else { 0 };
     if cpu.write16(SHADOW_OPCODE, opcode).is_err()
         || cpu.write8(SHADOW_STATUS, status).is_err()
-        || cpu.write32(SHADOW_FOLLOWUP, u32::from(followup)).is_err()
+        || cpu.write32(SHADOW_FOLLOWUP, followup_word).is_err()
     {
         return false;
     }
