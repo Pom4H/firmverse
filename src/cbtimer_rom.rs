@@ -3,6 +3,7 @@ use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
 
+const ROM_CB_TIMER_PROCESS_EVENT: u32 = 0x0001_4640;
 const ROM_CB_TIMER_START: u32 = 0x0001_46A8;
 const ROM_CB_TIMER_STOP: u32 = 0x0001_4710;
 const ROM_CB_TIMER_UPDATE: u32 = 0x0001_4750;
@@ -38,12 +39,26 @@ pub fn handle(cpu: &mut Processor) -> bool {
     }
 
     match cpu.get_pc() {
+        ROM_CB_TIMER_PROCESS_EVENT => process_event(cpu),
         ROM_CB_TIMER_START => start(cpu),
         ROM_CB_TIMER_STOP => stop(cpu),
         ROM_CB_TIMER_UPDATE => update(cpu),
         IDLE_BX_LR_ROM => dispatch_due(cpu),
         _ => false,
     }
+}
+
+fn process_event(cpu: &mut Processor) -> bool {
+    let task = cpu.get_r(Reg::R0) as u8;
+    let events = cpu.get_r(Reg::R1) as u16;
+    // Timer expiry is dispatched directly by this host-side deadline model, so
+    // any OSAL event bits for the callback-timer task are already consumed.
+    if events != 0 {
+        eprintln!("OSAL callback timer ProcessEvent task={task} consumed={events:#06x}");
+    }
+    cpu.set_r(Reg::R0, 0);
+    ret(cpu);
+    true
 }
 
 fn start(cpu: &mut Processor) -> bool {
