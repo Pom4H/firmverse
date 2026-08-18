@@ -1,4 +1,4 @@
-use crate::{arm_abi, bm_rom, cbtimer_rom, hci_extra, hci_rom, ll_crypto, ll_rom, osal_power};
+use crate::{arm_abi, bm_rom, cbtimer_rom, hci_extra, hci_rom, hci_security, ll_crypto, ll_rom, osal_power};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
@@ -18,6 +18,9 @@ pub fn handle(cpu: &mut Processor, rng: &mut u32) -> bool {
         return true;
     }
     if bm_rom::handle(cpu) {
+        return true;
+    }
+    if hci_security::handle(cpu) {
         return true;
     }
     if hci_extra::handle(cpu, rng) {
