@@ -24,7 +24,9 @@ jobs:
             echo 'private product marker leaked into the generic emulator'
             exit 1
           fi
-          if git grep -inE 'CoreBluetooth|import Swift'; then
+          forbidden_a="Core""Bluetooth"
+          forbidden_b="import ""Swift"
+          if git grep -inE "${forbidden_a}|${forbidden_b}"; then
             echo 'non-Linux BLE backend leaked into the generic emulator'
             exit 1
           fi
