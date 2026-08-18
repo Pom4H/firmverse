@@ -27,6 +27,19 @@ pub const SPIF_POLL_FSTATUS: u32 = 0x4000_C8B0;
 pub const PCRM_CLKHF_CTL0: u32 = 0x4000_F040;
 pub const PCRM_CLKHF_CTL1: u32 = 0x4000_F044;
 
+pub const DMAC_BASE: u32 = 0x4001_0000;
+pub const DMAC_CH_STRIDE: u32 = 0x58;
+pub const DMAC_RAW_TFR: u32 = DMAC_BASE + 0x2C0;
+pub const DMAC_STATUS_TFR: u32 = DMAC_BASE + 0x2E8;
+pub const DMAC_MASK_TFR: u32 = DMAC_BASE + 0x310;
+pub const DMAC_CLEAR_TFR: u32 = DMAC_BASE + 0x338;
+pub const DMAC_CFG: u32 = DMAC_BASE + 0x398;
+pub const DMAC_CH_EN: u32 = DMAC_BASE + 0x3A0;
+
+const fn dma_ch(ch: u32, reg: u32) -> u32 {
+    DMAC_BASE + ch * DMAC_CH_STRIDE + reg
+}
+
 const STORAGE_REGS: &[StorageReg] = &[
     StorageReg { addr: IOMUX_ANALOG_IO_EN, name: "IOMUX.Analog_IO_en", reset: 0 },
     StorageReg { addr: IOMUX_FULL_MUX0_EN, name: "IOMUX.full_mux0_en", reset: 0 },
@@ -46,7 +59,49 @@ const STORAGE_REGS: &[StorageReg] = &[
     StorageReg { addr: SPIF_POLL_FSTATUS, name: "SPIF.POLL_FSTATUS", reset: 0 },
     StorageReg { addr: PCRM_CLKHF_CTL0, name: "PCRM.CLKHF_CTL0", reset: 0 },
     StorageReg { addr: PCRM_CLKHF_CTL1, name: "PCRM.CLKHF_CTL1", reset: 0 },
+
+    // Public SDK AP_DMA_CH_CFG(n), AP_DMA_INT and AP_DMA_MISC registers used by
+    // hal_dma_config_channel/start/stop/wait. Only identified words are exposed;
+    // LLP remains visible so the behavioral model can reject non-zero linked lists.
+    StorageReg { addr: dma_ch(0, 0x00), name: "DMAC.CH0.SAR", reset: 0 },
+    StorageReg { addr: dma_ch(0, 0x08), name: "DMAC.CH0.DAR", reset: 0 },
+    StorageReg { addr: dma_ch(0, 0x10), name: "DMAC.CH0.LLP", reset: 0 },
+    StorageReg { addr: dma_ch(0, 0x18), name: "DMAC.CH0.CTL", reset: 0 },
+    StorageReg { addr: dma_ch(0, 0x1C), name: "DMAC.CH0.CTL_H", reset: 0 },
+    StorageReg { addr: dma_ch(0, 0x40), name: "DMAC.CH0.CFG", reset: 0 },
+    StorageReg { addr: dma_ch(0, 0x44), name: "DMAC.CH0.CFG_H", reset: 0 },
+    StorageReg { addr: dma_ch(1, 0x00), name: "DMAC.CH1.SAR", reset: 0 },
+    StorageReg { addr: dma_ch(1, 0x08), name: "DMAC.CH1.DAR", reset: 0 },
+    StorageReg { addr: dma_ch(1, 0x10), name: "DMAC.CH1.LLP", reset: 0 },
+    StorageReg { addr: dma_ch(1, 0x18), name: "DMAC.CH1.CTL", reset: 0 },
+    StorageReg { addr: dma_ch(1, 0x1C), name: "DMAC.CH1.CTL_H", reset: 0 },
+    StorageReg { addr: dma_ch(1, 0x40), name: "DMAC.CH1.CFG", reset: 0 },
+    StorageReg { addr: dma_ch(1, 0x44), name: "DMAC.CH1.CFG_H", reset: 0 },
+    StorageReg { addr: dma_ch(2, 0x00), name: "DMAC.CH2.SAR", reset: 0 },
+    StorageReg { addr: dma_ch(2, 0x08), name: "DMAC.CH2.DAR", reset: 0 },
+    StorageReg { addr: dma_ch(2, 0x10), name: "DMAC.CH2.LLP", reset: 0 },
+    StorageReg { addr: dma_ch(2, 0x18), name: "DMAC.CH2.CTL", reset: 0 },
+    StorageReg { addr: dma_ch(2, 0x1C), name: "DMAC.CH2.CTL_H", reset: 0 },
+    StorageReg { addr: dma_ch(2, 0x40), name: "DMAC.CH2.CFG", reset: 0 },
+    StorageReg { addr: dma_ch(2, 0x44), name: "DMAC.CH2.CFG_H", reset: 0 },
+    StorageReg { addr: dma_ch(3, 0x00), name: "DMAC.CH3.SAR", reset: 0 },
+    StorageReg { addr: dma_ch(3, 0x08), name: "DMAC.CH3.DAR", reset: 0 },
+    StorageReg { addr: dma_ch(3, 0x10), name: "DMAC.CH3.LLP", reset: 0 },
+    StorageReg { addr: dma_ch(3, 0x18), name: "DMAC.CH3.CTL", reset: 0 },
+    StorageReg { addr: dma_ch(3, 0x1C), name: "DMAC.CH3.CTL_H", reset: 0 },
+    StorageReg { addr: dma_ch(3, 0x40), name: "DMAC.CH3.CFG", reset: 0 },
+    StorageReg { addr: dma_ch(3, 0x44), name: "DMAC.CH3.CFG_H", reset: 0 },
+    StorageReg { addr: DMAC_RAW_TFR, name: "DMAC.RawTfr", reset: 0 },
+    StorageReg { addr: DMAC_STATUS_TFR, name: "DMAC.StatusTfr", reset: 0 },
+    StorageReg { addr: DMAC_MASK_TFR, name: "DMAC.MaskTfr", reset: 0 },
+    StorageReg { addr: DMAC_CLEAR_TFR, name: "DMAC.ClearTfr", reset: 0 },
+    StorageReg { addr: DMAC_CFG, name: "DMAC.DmaCfgReg", reset: 0 },
+    StorageReg { addr: DMAC_CH_EN, name: "DMAC.ChEnReg", reset: 0 },
 ];
+
+pub fn dmac_channel_reg(ch: u32, reg: u32) -> Option<u32> {
+    (ch < 4).then_some(dma_ch(ch, reg))
+}
 
 pub fn storage_reg(addr: u32) -> Option<StorageReg> {
     let aligned = addr & !3;
@@ -86,5 +141,18 @@ mod tests {
         assert_eq!(storage_reg(PCRM_CLKHF_CTL0).unwrap().reset, 0);
         assert_eq!(storage_reg(PCRM_CLKHF_CTL1).unwrap().reset, 0);
         assert!(storage_reg(0x4000_F048).is_none());
+    }
+
+    #[test]
+    fn dmac_registers_match_public_sdk_layout() {
+        assert_eq!(DMAC_BASE, 0x4001_0000);
+        assert_eq!(DMAC_CH_STRIDE, 0x58);
+        assert_eq!(dmac_channel_reg(0, 0x18), Some(0x4001_0018));
+        assert_eq!(dmac_channel_reg(3, 0x44), Some(0x4001_014C));
+        assert_eq!(DMAC_RAW_TFR, 0x4001_02C0);
+        assert_eq!(DMAC_CLEAR_TFR, 0x4001_0338);
+        assert_eq!(DMAC_CH_EN, 0x4001_03A0);
+        assert!(storage_reg(DMAC_CH_EN).is_some());
+        assert!(storage_reg(DMAC_BASE + 0x04).is_none());
     }
 }
