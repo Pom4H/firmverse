@@ -10,6 +10,7 @@ mod emu;
 mod hci_extra;
 mod hci_rom;
 mod hex;
+mod ll_rom;
 mod mailbox;
 mod osal;
 mod osal_power;
