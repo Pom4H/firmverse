@@ -13,12 +13,12 @@ pub const MMIO_BASE: u32 = 0x4000_0000;
 pub const MMIO_END: u32 = 0x5001_0000;
 pub const ROM_END: u32 = 0x0002_0000;
 
-// Emulator-internal controls live at the unused top of host RAM, outside guest
-// silicon MMIO. ROM ABI shims use them to perform NOR operations without making
-// the memory-mapped XIP window writable to ordinary guest stores.
-pub const HOST_FLASH_ADDR: u32 = HOST_RAM_BASE + HOST_RAM_SIZE as u32 - 12;
-pub const HOST_FLASH_PROGRAM: u32 = HOST_RAM_BASE + HOST_RAM_SIZE as u32 - 8;
-pub const HOST_FLASH_ERASE: u32 = HOST_RAM_BASE + HOST_RAM_SIZE as u32 - 4;
+// zmu owns Cortex-M SRAM at 0x2000_0000 before consulting the external device
+// bus. Emulator-only NOR controls therefore live outside the architectural chip
+// address map so host ROM shims reach Phy6252Bus instead of zmu's SRAM shadow.
+pub const HOST_FLASH_ADDR: u32 = 0x6000_0000;
+pub const HOST_FLASH_PROGRAM: u32 = 0x6000_0004;
+pub const HOST_FLASH_ERASE: u32 = 0x6000_0008;
 const FLASH_SECTOR_SIZE: usize = 4096;
 
 pub const GPIO_BASE: u32 = 0x4000_8000;
@@ -99,12 +99,6 @@ impl Phy6252Bus {
             timer_count: Cell::new(0xFFFF_0000),
             flash_addr: Cell::new(0),
         }
-    }
-
-    pub fn vector_table(&self) -> [u8; 8] {
-        let mut out = [0u8; 8];
-        out.copy_from_slice(&self.sram[0..8]);
-        out
     }
 
     fn flash_offset(&self, addr: u32) -> Option<usize> {
@@ -335,7 +329,8 @@ impl Bus for Phy6252Bus {
     }
 
     fn in_range(&self, addr: u32) -> bool {
-        offset_in(&self.sram, SRAM_BASE, addr).is_some()
+        matches!(addr, HOST_FLASH_ADDR | HOST_FLASH_PROGRAM | HOST_FLASH_ERASE)
+            || offset_in(&self.sram, SRAM_BASE, addr).is_some()
             || offset_in(&self.host_ram.borrow(), HOST_RAM_BASE, addr).is_some()
             || offset_in(&self.xip, XIP_BASE, addr).is_some()
             || (addr >= MMIO_BASE && addr < MMIO_END)
@@ -393,6 +388,15 @@ mod tests {
         assert_eq!(bus.read32(UART0_BASE + 0x04).unwrap(), 0x81);
         assert_eq!(bus.read32(UART0_BASE + 0x14).unwrap(), 0x60);
         assert_eq!(bus.read32(UART0_BASE + 0x7C).unwrap(), 0x06);
+    }
+
+    #[test]
+    fn nor_controls_are_outside_zmu_cortex_m_sram_shadow() {
+        assert!(HOST_FLASH_ADDR >= 0x6000_0000);
+        let bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0xff; XIP_SIZE]);
+        assert!(bus.in_range(HOST_FLASH_ADDR));
+        assert!(bus.in_range(HOST_FLASH_PROGRAM));
+        assert!(bus.in_range(HOST_FLASH_ERASE));
     }
 
     #[test]
