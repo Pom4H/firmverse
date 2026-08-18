@@ -6,6 +6,7 @@ use zmu_cortex_m::Processor;
 
 // Fetch addresses are Thumb entrypoints from the pinned PHY6252 ROM map.
 const ROM_LL_CONN_ACTIVE: u32 = 0x0000_3010;
+const ROM_LL_PROCESS_EVENT: u32 = 0x0000_59F0;
 const ROM_LL_DEQUEUE_CTRL_PKT: u32 = 0x0000_B8EC;
 const ROM_LL_ENQUEUE_CTRL_PKT: u32 = 0x0000_B952;
 const ROM_LL_REPLACE_CTRL_PKT: u32 = 0x0000_D5F4;
@@ -27,6 +28,7 @@ thread_local! {
 pub fn handle(cpu: &mut Processor) -> bool {
     match cpu.get_pc() {
         ROM_LL_CONN_ACTIVE => conn_active(cpu),
+        ROM_LL_PROCESS_EVENT => process_event(cpu),
         ROM_LL_ENQUEUE_CTRL_PKT => enqueue_ctrl(cpu),
         ROM_LL_DEQUEUE_CTRL_PKT => dequeue_ctrl(cpu),
         ROM_LL_REPLACE_CTRL_PKT => replace_ctrl(cpu),
@@ -44,6 +46,21 @@ fn conn_active(cpu: &mut Processor) -> bool {
         LL_STATUS_ERROR_INACTIVE_CONNECTION
     };
     cpu.set_r(Reg::R0, status);
+    ret(cpu);
+    true
+}
+
+fn process_event(cpu: &mut Processor) -> bool {
+    let task = cpu.get_r(Reg::R0) as u8;
+    let events = cpu.get_r(Reg::R1) as u16;
+    // Radio scheduling, connection timing and RF IRQs live in BlueZ/the host
+    // controller. Any LL OSAL events reaching the guest ROM task therefore
+    // represent controller work already consumed at that boundary. Preserve
+    // the public LL_ProcessEvent ABI by returning no unprocessed event bits.
+    if events != 0 {
+        eprintln!("BLE LL ProcessEvent task={task} consumed={events:#06x} host-controller");
+    }
+    cpu.set_r(Reg::R0, 0);
     ret(cpu);
     true
 }
