@@ -1,4 +1,4 @@
-use crate::{arm_abi, bm_rom, cbtimer_rom, hci_caps, hci_extra, hci_rom, hci_security, hci_task, ll_crypto, ll_rom, osal_power, osal_queue};
+use crate::{arm_abi, bm_rom, cbtimer_rom, dma_engine, hci_caps, hci_extra, hci_rom, hci_security, hci_task, ll_crypto, ll_rom, osal_power, osal_queue};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
@@ -11,6 +11,9 @@ const LL_STATUS_SUCCESS: u32 = 0x00;
 const LL_STATUS_ERROR_BAD_PARAMETER: u32 = 0x12;
 
 pub fn handle(cpu: &mut Processor, rng: &mut u32) -> bool {
+    if !dma_engine::service(cpu) {
+        return true;
+    }
     if arm_abi::handle(cpu) || osal_power::handle(cpu) || osal_queue::handle(cpu) {
         return true;
     }
