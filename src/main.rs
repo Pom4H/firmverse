@@ -4,6 +4,7 @@ mod ble_host;
 mod ble_rom;
 mod bm_rom;
 mod bus;
+mod cbtimer_rom;
 mod cmd;
 mod discovery;
 mod emu;
