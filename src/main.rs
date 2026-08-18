@@ -10,6 +10,7 @@ mod discovery;
 mod emu;
 mod hci_extra;
 mod hci_rom;
+mod hci_security;
 mod hex;
 mod ll_crypto;
 mod ll_rom;
