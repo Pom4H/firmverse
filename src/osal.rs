@@ -1,5 +1,6 @@
 use crate::ble_rom;
 use crate::bus::{HOST_FLASH_ADDR, HOST_FLASH_ERASE, HOST_FLASH_PROGRAM, XIP_SIZE};
+use crate::flash_state;
 use std::collections::{HashMap, HashSet, VecDeque};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
@@ -92,6 +93,7 @@ impl HostOsal {
     pub fn new() -> Self { Self::default() }
 
     pub fn handle(&mut self, cpu: &mut Processor) -> bool {
+        if !flash_state::ensure_loaded(cpu) { return false; }
         let now = simulated_ms(cpu);
         self.expire(cpu, now);
         if ble_rom::handle(cpu, &mut self.rng) { return true; }
@@ -178,10 +180,10 @@ impl HostOsal {
     fn msg_dealloc(&mut self,cpu:&mut Processor)->bool{let payload=cpu.get_r(Reg::R0);let ok=payload>=MSG_HDR&&self.free_block(payload-MSG_HDR);self.once(ROM_MSG_DEALLOC,||eprintln!("OSAL host message deallocation"));cpu.set_r(Reg::R0,if ok{0}else{1});ret(cpu);true}
     fn msg_send(&mut self,cpu:&mut Processor)->bool{if !self.resolve(cpu){return false;}let task=cpu.get_r(Reg::R0)as u8;let payload=cpu.get_r(Reg::R1);if task>=self.count||payload<MSG_HDR{cpu.set_r(Reg::R0,1);ret(cpu);return true;}let hdr=payload-MSG_HDR;if !self.allocs.contains_key(&hdr)||cpu.write8(hdr+MSG_DEST_OFF,task).is_err()||cpu.write32(hdr,0).is_err(){cpu.set_r(Reg::R0,1);ret(cpu);return true;}self.messages.push_back(payload);if !self.post(cpu,task,SYS_EVENT_MSG){return false;}self.once(ROM_MSG_SEND,||eprintln!("OSAL host message queue send + SYS_EVENT_MSG"));cpu.set_r(Reg::R0,0);ret(cpu);true}
     fn msg_receive(&mut self,cpu:&mut Processor)->bool{let task=cpu.get_r(Reg::R0)as u8;let pos=self.messages.iter().position(|payload|cpu.read8(*payload-MSG_HDR+MSG_DEST_OFF).ok()==Some(task));let payload=pos.and_then(|i|self.messages.remove(i)).unwrap_or(0);if payload!=0{let _=cpu.write32(payload-MSG_HDR,0);}self.once(ROM_MSG_RECEIVE,||eprintln!("OSAL host message queue receive"));cpu.set_r(Reg::R0,payload);ret(cpu);true}
-    fn flash_write(&mut self,cpu:&mut Processor,dma:bool)->bool{let addr=cpu.get_r(Reg::R0);let src=cpu.get_r(Reg::R1);let len=cpu.get_r(Reg::R2);if(addr as usize).saturating_add(len as usize)>XIP_SIZE{cpu.set_r(Reg::R0,1);ret(cpu);return true;}if cpu.write32(HOST_FLASH_ADDR,addr).is_err(){return false;}for i in 0..len{let byte=match cpu.read8(src.wrapping_add(i)){Ok(v)=>v,Err(_)=>return false};if cpu.write32(HOST_FLASH_PROGRAM,u32::from(byte)).is_err(){return false;}}let entry=if dma{ROM_SPIF_WRITE_DMA}else{ROM_SPIF_WRITE};self.once(entry,||eprintln!("FLASH host {} program 1->0",if dma{"DMA"}else{"PIO"}));cpu.set_r(Reg::R0,0);ret(cpu);true}
+    fn flash_write(&mut self,cpu:&mut Processor,dma:bool)->bool{let addr=cpu.get_r(Reg::R0);let src=cpu.get_r(Reg::R1);let len=cpu.get_r(Reg::R2);if(addr as usize).saturating_add(len as usize)>XIP_SIZE{cpu.set_r(Reg::R0,1);ret(cpu);return true;}if cpu.write32(HOST_FLASH_ADDR,addr).is_err(){return false;}for i in 0..len{let byte=match cpu.read8(src.wrapping_add(i)){Ok(v)=>v,Err(_)=>return false};if cpu.write32(HOST_FLASH_PROGRAM,u32::from(byte)).is_err(){return false;}}if !flash_state::persist(cpu){return false;}let entry=if dma{ROM_SPIF_WRITE_DMA}else{ROM_SPIF_WRITE};self.once(entry,||eprintln!("FLASH host {} program 1->0",if dma{"DMA"}else{"PIO"}));cpu.set_r(Reg::R0,0);ret(cpu);true}
     fn erase_sector_at(cpu:&mut Processor,addr:u32)->bool{cpu.write32(HOST_FLASH_ADDR,addr).is_ok()&&cpu.write32(HOST_FLASH_ERASE,1).is_ok()}
-    fn flash_erase(&mut self,cpu:&mut Processor,bytes:u32)->bool{let addr=cpu.get_r(Reg::R0);if(addr as usize)>=XIP_SIZE{cpu.set_r(Reg::R0,1);ret(cpu);return true;}let align=if bytes==FLASH_BLOCK64{FLASH_BLOCK64}else{FLASH_SECTOR};let start=addr&!(align-1);let end=start.saturating_add(bytes).min(XIP_SIZE as u32);let mut at=start;while at<end{if !Self::erase_sector_at(cpu,at){return false;}at=at.saturating_add(FLASH_SECTOR);}let entry=if bytes==FLASH_SECTOR{ROM_SPIF_ERASE_SECTOR}else{ROM_SPIF_ERASE_BLOCK64};self.once(entry,||eprintln!("FLASH host erase bytes={bytes:#x}"));cpu.set_r(Reg::R0,0);ret(cpu);true}
-    fn flash_erase_all(&mut self,cpu:&mut Processor)->bool{let mut at=0u32;while(at as usize)<XIP_SIZE{if !Self::erase_sector_at(cpu,at){return false;}at+=FLASH_SECTOR;}self.once(ROM_SPIF_ERASE_ALL,||eprintln!("FLASH host chip erase"));cpu.set_r(Reg::R0,0);ret(cpu);true}
+    fn flash_erase(&mut self,cpu:&mut Processor,bytes:u32)->bool{let addr=cpu.get_r(Reg::R0);if(addr as usize)>=XIP_SIZE{cpu.set_r(Reg::R0,1);ret(cpu);return true;}let align=if bytes==FLASH_BLOCK64{FLASH_BLOCK64}else{FLASH_SECTOR};let start=addr&!(align-1);let end=start.saturating_add(bytes).min(XIP_SIZE as u32);let mut at=start;while at<end{if !Self::erase_sector_at(cpu,at){return false;}at=at.saturating_add(FLASH_SECTOR);}if !flash_state::persist(cpu){return false;}let entry=if bytes==FLASH_SECTOR{ROM_SPIF_ERASE_SECTOR}else{ROM_SPIF_ERASE_BLOCK64};self.once(entry,||eprintln!("FLASH host erase bytes={bytes:#x}"));cpu.set_r(Reg::R0,0);ret(cpu);true}
+    fn flash_erase_all(&mut self,cpu:&mut Processor)->bool{let mut at=0u32;while(at as usize)<XIP_SIZE{if !Self::erase_sector_at(cpu,at){return false;}at+=FLASH_SECTOR;}if !flash_state::persist(cpu){return false;}self.once(ROM_SPIF_ERASE_ALL,||eprintln!("FLASH host chip erase"));cpu.set_r(Reg::R0,0);ret(cpu);true}
 }
 
 fn ret(cpu:&mut Processor){cpu.set_pc(cpu.get_r(Reg::LR)&!1);}
