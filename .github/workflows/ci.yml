@@ -109,5 +109,6 @@ jobs:
               sha: context.sha,
               state: ok ? 'success' : 'failure',
               context: 'phy6252-emu/ci',
-              description: ok ? 'Rust tests + full capability stress passed' : 'One or more emulator CI jobs failed'
+              description: ok ? 'Rust tests + full capability stress passed' : 'One or more emulator CI jobs failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
