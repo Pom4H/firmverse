@@ -63,6 +63,7 @@ mod linux {
             .arg(opts.max_insns.to_string())
             .arg(&opts.hex)
             .env("PHY6252_GUEST_RX_UUID", &opts.rx_uuid)
+            .env("PHY6252_GUEST_TX_UUID", &opts.tx_uuid)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
