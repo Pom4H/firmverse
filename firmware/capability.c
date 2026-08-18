@@ -281,7 +281,10 @@ int main(void)
         int btn = (*gpio_ext & BIT(PIN_BTN)) != 0;
         int linked = (mb->status & STATUS_CONNECTED) != 0;
 
-        phase = (tick >> 5) % 6u;
+        phase = (tick >> 5) & 7u;
+        if (phase >= 6u) {
+            phase -= 6u;
+        }
         static const uint32_t walk[6] = {
             BIT(PIN_HDR_P14), BIT(PIN_HDR_P16), BIT(PIN_HDR_P17),
             BIT(PIN_HDR_P31), BIT(PIN_HDR_P32), BIT(PIN_HDR_P33),
