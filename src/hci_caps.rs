@@ -1,4 +1,4 @@
-use crate::mailbox;
+use crate::{ll_rom, mailbox};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
@@ -21,7 +21,6 @@ const ROM_HCI_LE_WRITE_SUGGESTED_DEFAULT_DATA_LENGTH: u32 = 0x0000_2338;
 
 const SHADOW: u32 = mailbox::BASE + 0x780;
 const HCI_SUCCESS: u8 = 0x00;
-const HCI_ERROR_UNKNOWN_CONN_HANDLE: u8 = 0x02;
 const HCI_ERROR_INVALID_PARAMS: u8 = 0x12;
 
 const OPCODE_LE_READ_LOCAL_SUPPORTED_FEATURES: u16 = 0x2003;
@@ -38,9 +37,6 @@ const OPCODE_LE_SET_RPA_TIMEOUT: u16 = 0x202E;
 const OPCODE_LE_READ_MAX_DATA_LENGTH: u16 = 0x202F;
 const OPCODE_LE_SET_EVENT_MASK: u16 = 0x2001;
 
-// Host-controller limits intentionally match the already exposed 251-byte ACL path.
-const MAX_DATA_OCTETS: u16 = 251;
-const MAX_DATA_TIME_US: u16 = 2120;
 const WHITE_LIST_SIZE: u8 = 8;
 const RESOLVING_LIST_SIZE: u8 = 8;
 
@@ -64,8 +60,6 @@ pub fn handle(cpu: &mut Processor) -> bool {
 }
 
 fn read_features(cpu: &mut Processor) -> bool {
-    // LE Encryption, conn-parameter request, extended reject, peripheral feature
-    // exchange, ping, data-length extension and LL privacy.
     let params = [HCI_SUCCESS, 0x7F, 0, 0, 0, 0, 0, 0, 0];
     eprintln!("BLE HCI LE_ReadLocalSupportedFeatures host-controller baseline");
     complete(cpu, OPCODE_LE_READ_LOCAL_SUPPORTED_FEATURES, &params)
@@ -74,25 +68,22 @@ fn read_features(cpu: &mut Processor) -> bool {
 fn read_max_data_length(cpu: &mut Processor) -> bool {
     let mut p = [0u8; 9];
     p[0] = HCI_SUCCESS;
-    put16(&mut p[1..3], MAX_DATA_OCTETS);
-    put16(&mut p[3..5], MAX_DATA_TIME_US);
-    put16(&mut p[5..7], MAX_DATA_OCTETS);
-    put16(&mut p[7..9], MAX_DATA_TIME_US);
+    put16(&mut p[1..3], ll_rom::MAX_DATA_OCTETS);
+    put16(&mut p[3..5], ll_rom::MAX_DATA_TIME_US);
+    put16(&mut p[5..7], ll_rom::MAX_DATA_OCTETS);
+    put16(&mut p[7..9], ll_rom::MAX_DATA_TIME_US);
     complete(cpu, OPCODE_LE_READ_MAX_DATA_LENGTH, &p)
 }
 
 fn read_suggested_data_length(cpu: &mut Processor) -> bool {
     let mut p = [0u8; 5];
     p[0] = HCI_SUCCESS;
-    put16(&mut p[1..3], MAX_DATA_OCTETS);
-    put16(&mut p[3..5], MAX_DATA_TIME_US);
+    put16(&mut p[1..3], ll_rom::MAX_DATA_OCTETS);
+    put16(&mut p[3..5], ll_rom::MAX_DATA_TIME_US);
     complete(cpu, OPCODE_LE_READ_SUGGESTED_DEFAULT_DATA_LENGTH, &p)
 }
 
 fn read_supported_states(cpu: &mut Processor) -> bool {
-    // Peripheral/advertising plus connection combinations used by the generic
-    // host bridge. Returning only supported states is safer than claiming the
-    // full vendor radio scheduler is emulated.
     let params = [HCI_SUCCESS, 0x1F, 0x00, 0x00, 0x00, 0, 0, 0, 0];
     complete(cpu, OPCODE_LE_READ_SUPPORTED_STATES, &params)
 }
@@ -124,7 +115,7 @@ fn set_rpa_timeout(cpu: &mut Processor) -> bool {
 fn write_suggested_data_length(cpu: &mut Processor) -> bool {
     let octets = cpu.get_r(Reg::R0) as u16;
     let time = cpu.get_r(Reg::R1) as u16;
-    let status = if valid_data_length(octets, time) { HCI_SUCCESS } else { HCI_ERROR_INVALID_PARAMS };
+    let status = if valid_default_data_length(octets, time) { HCI_SUCCESS } else { HCI_ERROR_INVALID_PARAMS };
     complete(cpu, OPCODE_LE_WRITE_SUGGESTED_DEFAULT_DATA_LENGTH, &[status])
 }
 
@@ -132,22 +123,14 @@ fn set_data_length(cpu: &mut Processor) -> bool {
     let handle = cpu.get_r(Reg::R0) as u16;
     let octets = cpu.get_r(Reg::R1) as u16;
     let time = cpu.get_r(Reg::R2) as u16;
-    let connected = mailbox::status(cpu)
-        .map(|s| s & mailbox::STATUS_CONNECTED != 0)
-        .unwrap_or(false);
-    let status = if handle != 0 || !connected {
-        HCI_ERROR_UNKNOWN_CONN_HANDLE
-    } else if !valid_data_length(octets, time) {
-        HCI_ERROR_INVALID_PARAMS
-    } else {
-        HCI_SUCCESS
-    };
+    let status = ll_rom::data_length_status(cpu, handle, octets, time) as u8;
     let params = [status, handle as u8, (handle >> 8) as u8];
     complete(cpu, OPCODE_LE_SET_DATA_LENGTH, &params)
 }
 
-fn valid_data_length(octets: u16, time: u16) -> bool {
-    (27..=MAX_DATA_OCTETS).contains(&octets) && (328..=MAX_DATA_TIME_US).contains(&time)
+fn valid_default_data_length(octets: u16, time: u16) -> bool {
+    (27..=ll_rom::MAX_DATA_OCTETS).contains(&octets)
+        && (328..=ll_rom::MAX_DATA_TIME_US).contains(&time)
 }
 
 fn complete(cpu: &mut Processor, opcode: u16, params: &[u8]) -> bool {
@@ -155,8 +138,6 @@ fn complete(cpu: &mut Processor, opcode: u16, params: &[u8]) -> bool {
     for (i, byte) in params.iter().copied().enumerate() {
         if cpu.write8(SHADOW + i as u32, byte).is_err() { return false; }
     }
-    // Reuse the already modeled ROM HCI_CommandCompleteEvent ABI. Its
-    // continuation will return directly to this command's original caller.
     cpu.set_r(Reg::R0, u32::from(opcode));
     cpu.set_r(Reg::R1, params.len() as u32);
     cpu.set_r(Reg::R2, SHADOW);
@@ -177,11 +158,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn controller_data_length_matches_acl_bridge() {
-        assert_eq!(MAX_DATA_OCTETS, 251);
-        assert!(valid_data_length(27, 328));
-        assert!(valid_data_length(251, 2120));
-        assert!(!valid_data_length(26, 328));
+    fn controller_data_length_matches_ll_model() {
+        assert_eq!(ll_rom::MAX_DATA_OCTETS, 251);
+        assert!(valid_default_data_length(27, 328));
+        assert!(valid_default_data_length(251, 2120));
+        assert!(!valid_default_data_length(26, 328));
     }
 
     #[test]
