@@ -1,56 +1,56 @@
 name: Firmverse firmware test
-description: Run embedded firmware in Firmverse directly from GitHub Actions
+description: "Run embedded firmware in Firmverse directly from GitHub Actions"
 branding:
   icon: cpu
   color: purple
 
 inputs:
   firmware:
-    description: Path to the firmware HEX file in the caller repository
+    description: "Path to the firmware HEX file in the caller repository"
     required: true
   board:
-    description: Firmverse board profile
+    description: "Firmverse board profile"
     required: false
     default: pb03f-kit
   mode:
-    description: Execution mode: single or mesh
+    description: "Execution mode: single or mesh"
     required: false
     default: single
   world:
-    description: World used by mesh mode
+    description: "World used by mesh mode"
     required: false
     default: mesh
   nodes:
-    description: Number of firmware nodes in mesh mode
+    description: "Number of firmware nodes in mesh mode"
     required: false
     default: '2'
   ticks:
-    description: Number of deterministic world ticks in mesh mode
+    description: "Number of deterministic world ticks in mesh mode"
     required: false
     default: '200'
   strict:
-    description: Fail on unmodeled SoC MMIO or vendor ROM behavior
+    description: "Fail on unmodeled SoC MMIO or vendor ROM behavior"
     required: false
     default: 'true'
   max-insns:
-    description: Optional instruction budget override
+    description: "Optional instruction budget override"
     required: false
     default: ''
   expect:
-    description: Optional newline-separated fixed strings that must appear in the log
+    description: "Optional newline-separated fixed strings that must appear in the log"
     required: false
     default: ''
   log:
-    description: Log file path, relative to the caller workspace unless absolute
+    description: "Log file path, relative to the caller workspace unless absolute"
     required: false
     default: firmverse.log
 
 outputs:
   log:
-    description: Absolute path to the Firmverse log
+    description: "Absolute path to the Firmverse log"
     value: ${{ steps.run.outputs.log }}
   binary:
-    description: Absolute path to the built Firmverse binary
+    description: "Absolute path to the built Firmverse binary"
     value: ${{ steps.build.outputs.binary }}
 
 runs:
