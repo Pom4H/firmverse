@@ -1,26 +1,12 @@
 //! Board profiles live above the emulated SoC.
 //!
 //! A board may name GPIO-backed indicators and inputs, but it must not own
-//! PHY6252 MMIO, ROM ABI, timers, flash, or CPU behavior. Those stay in the
-//! SoC layer. This separation also lets the project grow a CH592F SoC without
-//! pretending it is another PHY6252 board.
+//! SoC MMIO, ROM ABI, timers, flash, or CPU behavior. Those stay in the SoC
+//! layer. This separation lets Firmverse host very different chips without
+//! pretending one development board is a variant of another.
 
+use crate::soc::SocKind;
 use clap::ValueEnum;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SocKind {
-    Phy6252,
-    Ch592f,
-}
-
-impl SocKind {
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::Phy6252 => "phy6252",
-            Self::Ch592f => "ch592f",
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub enum BoardKind {
@@ -101,7 +87,7 @@ pub const WEACT_CH592F: BoardProfile = BoardProfile {
     id: "weact-ch592f",
     name: "WeAct Studio CH592F Core Board",
     soc: SocKind::Ch592f,
-    description: "future CH592F board profile; CH592F SoC emulation is not implemented yet",
+    description: "CH592F board profile reserved for the future RISC-V SoC backend",
     indicators: &[],
 };
 
@@ -115,15 +101,19 @@ pub const fn profile(kind: BoardKind) -> &'static BoardProfile {
     }
 }
 
+/// Guard the current execution path, which is still the PHY6252 implementation.
 pub fn require_phy6252(kind: BoardKind) -> Result<&'static BoardProfile, String> {
     let board = profile(kind);
     if board.soc != SocKind::Phy6252 {
+        let soc = crate::soc::profile(board.soc);
         return Err(format!(
-            "board {} requires SoC {}; this binary currently emulates PHY6252 only",
+            "board {} requires SoC {} ({}) but this runtime currently executes PHY6252 only",
             board.id,
-            board.soc.id()
+            soc.id,
+            soc.cpu.label()
         ));
     }
+    crate::soc::require_implemented(board.soc)?;
     Ok(board)
 }
 
@@ -177,5 +167,6 @@ mod tests {
     fn ch592_board_is_not_accepted_by_phy6252_runtime() {
         let err = require_phy6252(BoardKind::WeactCh592f).unwrap_err();
         assert!(err.contains("requires SoC ch592f"));
+        assert!(err.contains("qingke-v4c"));
     }
 }
