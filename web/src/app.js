@@ -23,6 +23,7 @@ const firmwareName = $('#firmware-name');
 const worldSelect = $('#world-select');
 const boardSelect = $('#board-select');
 const addNode = $('#add-node');
+const removeNode = $('#remove-node');
 const runButton = $('#run');
 const stepButton = $('#step');
 const resetButton = $('#reset');
@@ -171,6 +172,14 @@ addNode.addEventListener('click', () => {
     x,
     y,
   });
+});
+
+removeNode.addEventListener('click', () => {
+  const node = selectedNode();
+  if (!node) return;
+  state.adc.delete(node.id);
+  state.selected = null;
+  worker.postMessage({ type: 'removeNode', id: node.id });
 });
 
 runButton.addEventListener('click', () => worker.postMessage({ type: state.running ? 'stop' : 'run' }));
