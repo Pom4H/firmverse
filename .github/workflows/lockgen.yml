@@ -1,0 +1,24 @@
+name: lockgen
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+      - name: Upload generated Cargo.lock
+        uses: actions/upload-artifact@v7
+        with:
+          name: generated-cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
