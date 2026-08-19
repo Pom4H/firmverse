@@ -59,12 +59,31 @@ runs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Compute Firmverse cache identity
+      id: cache-identity
+      shell: bash
+      run: |
+        set -euo pipefail
+        rust_id="$(rustc --version --verbose | sed -n 's/^commit-hash: //p' | cut -c1-12)"
+        source_id="$({
+          cd "$GITHUB_ACTION_PATH"
+          sha256sum action.yml Cargo.toml Cargo.lock
+          find src -type f -print0 | sort -z | xargs -0 sha256sum
+        } | sha256sum | cut -c1-16)"
+        echo "rust=$rust_id" >> "$GITHUB_OUTPUT"
+        echo "source=$source_id" >> "$GITHUB_OUTPUT"
+
     - name: Restore Firmverse build cache
       uses: actions/cache@v5
       with:
-        path: ${{ github.action_path }}/target
-        key: firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ github.action_ref }}
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          ${{ github.action_path }}/target
+        key: firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-identity.outputs.rust }}-${{ steps.cache-identity.outputs.source }}
         restore-keys: |
+          firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-identity.outputs.rust }}-
           firmverse-action-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Prepare pinned zmu backend
