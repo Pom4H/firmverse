@@ -46,10 +46,11 @@ jobs:
   with:
     firmware: build/app.hex
     expect: |
-      READY
       UART application-ready
       UART selftest pass
 ```
+
+Single-node Action mode is deterministic `--once --raw`; assert firmware/application markers rather than the interactive raw-mode `READY` marker. Mesh mode does emit `READY` as part of its multi-node protocol.
 
 This keeps application behavior in the firmware repository while Firmverse owns emulation behavior.
 
@@ -67,6 +68,7 @@ The same firmware image can be instantiated several times inside one determinist
     ticks: '500'
     strict: 'true'
     expect: |
+      READY
       WORLD mesh
       NODE n0
       NODE n1
@@ -118,7 +120,7 @@ Example artifact upload:
 The caller does not need to prepare Firmverse dependencies. The Action:
 
 1. installs the Rust toolchain;
-2. restores a Firmverse build cache;
+2. restores Cargo sources and compiled Firmverse dependencies from a cache keyed by the Rust compiler and Firmverse source identity;
 3. ensures the pinned `jjkt/zmu` revision is present, even though GitHub does not download repository submodules for remote Actions;
 4. builds the locked `firmverse` release binary;
 5. runs either single-node or mesh mode;
