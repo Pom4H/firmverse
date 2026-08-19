@@ -265,8 +265,22 @@ impl Chip {
         }
         for _ in 0..burst {
             self.redirect();
+            let pc = self.processor.get_pc();
+            let lr = self.processor.get_r(Reg::LR);
+            let r0 = self.processor.get_r(Reg::R0);
+            let r1 = self.processor.get_r(Reg::R1);
+            let r2 = self.processor.get_r(Reg::R2);
+            let r3 = self.processor.get_r(Reg::R3);
             self.processor.step();
             self.insn += 1;
+            if let Some(trap) = self.processor.take_pending_fault_trap() {
+                eprintln!(
+                    "CPU fault pc={pc:#010x} lr={lr:#010x} r0={r0:#010x} r1={r1:#010x} r2={r2:#010x} r3={r3:#010x} trap={trap:?}"
+                );
+                self.stop = Some(format!("fault {trap:?} at pc={pc:#010x} lr={lr:#010x}"));
+                delta.gpio = Some(gpio_pair(&self.gpio));
+                break;
+            }
             if self.insn >= max_insns {
                 self.stop = Some("max instructions".into());
                 break;
