@@ -220,13 +220,6 @@ pub fn tui_opts(opts: &SimOpts) -> Result<TuiOpts, String> {
         return Err("TUI can watch one chip — drop extra --node flags".into());
     }
     let spec = &opts.nodes[0];
-    if spec.board != BoardKind::Pb03fKit {
-        return Err(format!(
-            "TUI pinout currently renders {}; board {} is available in raw mode",
-            board_profile(BoardKind::Pb03fKit).name,
-            board_profile(spec.board).id
-        ));
-    }
     let node = match (spec.x, spec.y) {
         (Some(x), Some(y)) => format!("{}@{x},{y}={}", spec.id, spec.hex.display()),
         _ => format!("{}={}", spec.id, spec.hex.display()),
@@ -248,6 +241,7 @@ pub fn tui_opts(opts: &SimOpts) -> Result<TuiOpts, String> {
     }
     Ok(TuiOpts {
         hex: spec.hex.clone(),
+        board: spec.board,
         strict: opts.strict,
         max_insns: opts.max_insns,
         argv: args,

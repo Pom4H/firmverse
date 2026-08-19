@@ -1,3 +1,5 @@
+use crate::board::{profile as board_profile, BoardKind, BoardProfile};
+use crate::soc::phy6252::pins::{self, Pin};
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -15,9 +17,10 @@ use std::time::{Duration, Instant};
 
 pub struct TuiOpts {
     pub hex: PathBuf,
+    pub board: BoardKind,
     pub strict: bool,
     pub max_insns: u64,
-    /// If set, spawn these args instead of `phy6252 --raw <hex>`.
+    /// If set, spawn these args instead of the single-node raw frontend.
     pub argv: Vec<String>,
 }
 
@@ -30,122 +33,10 @@ enum UiEvent {
     Line(Stream, String),
 }
 
-#[derive(Clone, Copy)]
-struct Pin {
-    label: &'static str,
-    bit: u32,
-    adc: Option<usize>,
-}
-
-const PINS: &[Pin] = &[
-    Pin {
-        label: "P0",
-        bit: 0,
-        adc: None,
-    },
-    Pin {
-        label: "P2",
-        bit: 2,
-        adc: None,
-    },
-    Pin {
-        label: "P3",
-        bit: 3,
-        adc: None,
-    },
-    Pin {
-        label: "P7",
-        bit: 4,
-        adc: None,
-    },
-    Pin {
-        label: "P11",
-        bit: 7,
-        adc: None,
-    },
-    Pin {
-        label: "P14",
-        bit: 8,
-        adc: None,
-    },
-    Pin {
-        label: "P15",
-        bit: 9,
-        adc: Some(1),
-    },
-    Pin {
-        label: "P16",
-        bit: 10,
-        adc: None,
-    },
-    Pin {
-        label: "P17",
-        bit: 11,
-        adc: None,
-    },
-    Pin {
-        label: "P18",
-        bit: 12,
-        adc: None,
-    },
-    Pin {
-        label: "P20",
-        bit: 13,
-        adc: Some(0),
-    },
-    Pin {
-        label: "P23",
-        bit: 14,
-        adc: Some(3),
-    },
-    Pin {
-        label: "P24",
-        bit: 15,
-        adc: Some(2),
-    },
-    Pin {
-        label: "P31",
-        bit: 19,
-        adc: None,
-    },
-    Pin {
-        label: "P32",
-        bit: 20,
-        adc: None,
-    },
-    Pin {
-        label: "P33",
-        bit: 21,
-        adc: None,
-    },
-    Pin {
-        label: "P34",
-        bit: 22,
-        adc: None,
-    },
-];
-
-const BOARD_ROWS: &[(&str, &str)] = &[
-    ("P13", "P24"),
-    ("P11", "P23"),
-    ("P31", "P20"),
-    ("P7", "P3"),
-    ("P32", "P2"),
-    ("P33", "3V3"),
-    ("P14", "GND"),
-    ("P16", "NC"),
-    ("P17", "P34"),
-    ("GND", "P0"),
-    ("3V3", "P18"),
-    ("NC", "RX0"),
-    ("NC", "TX0"),
-    ("GND", "GND"),
-    ("5V", "3V3"),
-];
-
 struct State {
     started: Instant,
     image: String,
+    board: BoardKind,
     strict: bool,
     status: String,
     adv: String,
@@ -171,6 +62,7 @@ impl State {
                 .file_name()
                 .map(|v| v.to_string_lossy().into_owned())
                 .unwrap_or_else(|| opts.hex.display().to_string()),
+            board: opts.board,
             strict: opts.strict,
             status: "STARTING".into(),
             adv: "-".into(),
@@ -274,7 +166,7 @@ impl State {
         }
         let mut p = s.split_whitespace();
         if let (Some(pin), Some(level)) = (p.next(), p.next()) {
-            if let Some(bit) = pin_bit(pin) {
+            if let Some(bit) = pins::gpio_bit(pin) {
                 let mask = 1u32 << bit;
                 if matches!(level, "on" | "1" | "high" | "true") {
                     self.ext_in |= mask;
@@ -287,11 +179,11 @@ impl State {
     }
 
     fn pin(&self, pin: Pin) -> (bool, bool) {
-        let output = (self.gpio_ddr >> pin.bit) & 1 != 0;
+        let output = (self.gpio_ddr >> pin.gpio_bit) & 1 != 0;
         let value = if output {
-            (self.gpio_dr >> pin.bit) & 1 != 0
+            (self.gpio_dr >> pin.gpio_bit) & 1 != 0
         } else {
-            (self.ext_in >> pin.bit) & 1 != 0
+            (self.ext_in >> pin.gpio_bit) & 1 != 0
         };
         (output, value)
     }
@@ -361,6 +253,8 @@ fn spawn_emulator(opts: &TuiOpts) -> Result<Child, String> {
     let mut c = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
     if opts.argv.is_empty() {
         c.arg("--raw")
+            .arg("--board")
+            .arg(board_profile(opts.board).id)
             .arg("--max-insns")
             .arg(opts.max_insns.to_string());
         if opts.strict {
@@ -453,9 +347,13 @@ fn draw(state: &State) -> Result<(), String> {
     let (w, h) = size().unwrap_or((100, 36));
     let w = usize::from(w).max(1);
     let h = usize::from(h).max(1);
+    let board = board_profile(state.board);
+    let soc = crate::soc::profile(board.soc);
     let mut lines = Vec::new();
     lines.push(format!(
-        "PHY6252  {}  {}  {}",
+        "{} / {}  {}  {}  {}",
+        soc.name,
+        board.name,
         state.status,
         if state.strict { "STRICT" } else { "NORMAL" },
         state.image
@@ -470,34 +368,27 @@ fn draw(state: &State) -> Result<(), String> {
         on_off(state.notify),
         state.adv
     ));
-    lines.push(format!(
-        "ADC P20={:.3}V P15/RST={:.3}V P24={:.3}V P23={:.3}V",
-        volts(state.adc[0]),
-        volts(state.adc[1]),
-        volts(state.adc[2]),
-        volts(state.adc[3])
-    ));
-    if w >= 68 && h >= 26 {
-        lines.push(String::new());
-        lines.push("PB-03F-Kit bottom view (DIP-30, pin 1 P13 top-left)".into());
-        for (left, right) in BOARD_ROWS {
-            lines.push(format!(
-                "{:<31} | {:>31}",
-                pin_text(state, left),
-                pin_text(state, right)
-            ));
+    lines.push(format!("ADC {}", adc_summary(state)));
+    if !board.connector_rows.is_empty() {
+        if w >= 68 && h >= 26 {
+            lines.push(String::new());
+            if let Some(title) = board.pinout_title {
+                lines.push(title.into());
+            }
+            for row in board.connector_rows {
+                lines.push(format!(
+                    "{:<31} | {:>31}",
+                    pin_text(state, row.left),
+                    pin_text(state, row.right)
+                ));
+            }
+        } else {
+            lines.push("Pinout hidden: enlarge terminal to at least 68x26".into());
         }
-    } else {
-        lines.push("Pinout hidden: enlarge terminal to at least 68x26".into());
     }
-    lines.push(format!(
-        "LED R/P7={} G/P11={} B/P18={} Y/P0={} W/P34={}",
-        bit(state.gpio_dr, 4),
-        bit(state.gpio_dr, 7),
-        bit(state.gpio_dr, 12),
-        bit(state.gpio_dr, 0),
-        bit(state.gpio_dr, 22)
-    ));
+    if !board.indicators.is_empty() {
+        lines.push(indicator_summary(state, board));
+    }
     lines.push(format!(
         "PWM {:04x} {:04x} {:04x} {:04x} {:04x} {:04x}",
         state.pwm[0], state.pwm[1], state.pwm[2], state.pwm[3], state.pwm[4], state.pwm[5]
@@ -525,39 +416,56 @@ fn draw(state: &State) -> Result<(), String> {
     out.flush().map_err(|e| e.to_string())
 }
 
+fn adc_summary(state: &State) -> String {
+    (0..state.adc.len())
+        .filter_map(|channel| {
+            pins::adc_pin(channel).map(|pin| {
+                format!("{}={:.3}V", pin.label, volts(state.adc[channel]))
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn indicator_summary(state: &State, board: &BoardProfile) -> String {
+    let values = board
+        .indicators
+        .iter()
+        .map(|signal| {
+            let level = bit(state.gpio_dr, signal.gpio_bit);
+            format!("{}/{}={level}", signal.name, signal.pin)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("LED {values}")
+}
+
 fn pin_text(state: &State, label: &str) -> String {
-    if let Some(p) = PINS.iter().copied().find(|p| p.label == label) {
-        let (out, value) = state.pin(p);
-        let mut s = format!(
+    let board = board_profile(state.board);
+    if let Some(pin) = pins::by_label(label) {
+        let (out, value) = state.pin(pin);
+        let mut text = format!(
             "{:>3} e{:02} {}={}",
-            p.label,
-            p.bit,
+            pin.label,
+            pin.gpio_bit,
             if out { "OUT" } else { "IN " },
             u8::from(value)
         );
-        if let Some(i) = p.adc {
-            s.push_str(&format!(" {:.3}V", volts(state.adc[i])));
+        if let Some(channel) = pin.adc_channel {
+            text.push_str(&format!(" {:.3}V", volts(state.adc[channel])));
         }
-        match p.label {
-            "P0" => s.push_str(" Y"),
-            "P7" => s.push_str(" R"),
-            "P11" => s.push_str(" G"),
-            "P15" => s.push_str(" RST"),
-            "P18" => s.push_str(" B"),
-            "P34" => s.push_str(" W"),
-            _ => {}
+        if let Some(signal) = board.indicator_for_pin(pin.label) {
+            text.push_str(&format!(" {}", signal.name));
         }
-        return s;
+        if let Some(note) = board.pin_note(pin.label) {
+            text.push_str(&format!(" {note}"));
+        }
+        return text;
     }
-    match label {
-        "P13" => "P13 silk (no gpio_pin_e)".into(),
-        "3V3" => "3V3 PWR".into(),
-        "5V" => "5V PWR".into(),
-        "GND" => "GND".into(),
-        "NC" => "NC".into(),
-        "TX0" => "TX0 UART0 TX".into(),
-        "RX0" => "RX0 UART0 RX".into(),
-        _ => label.into(),
+
+    match board.pin_note(label) {
+        Some(note) => format!("{label} {note}"),
+        None => label.into(),
     }
 }
 
@@ -591,35 +499,13 @@ fn on_off(v: bool) -> &'static str {
         "OFF"
     }
 }
-fn pin_bit(s: &str) -> Option<u32> {
-    match s.to_ascii_uppercase().as_str() {
-        "P0" => Some(0),
-        "P2" => Some(2),
-        "P3" => Some(3),
-        "P7" => Some(4),
-        "P11" => Some(7),
-        "P14" => Some(8),
-        "P15" => Some(9),
-        "P16" => Some(10),
-        "P17" => Some(11),
-        "P18" => Some(12),
-        "P20" => Some(13),
-        "P23" => Some(14),
-        "P24" => Some(15),
-        "P31" => Some(19),
-        "P32" => Some(20),
-        "P33" => Some(21),
-        "P34" => Some(22),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     fn opts() -> TuiOpts {
         TuiOpts {
             hex: PathBuf::from("demo.hex"),
+            board: BoardKind::Pb03fKit,
             strict: false,
             max_insns: 1,
             argv: Vec::new(),
@@ -628,7 +514,7 @@ mod tests {
     #[test]
     fn pin_state_tracks_direction_and_external_level() {
         let mut s = State::new(&opts());
-        let p = *PINS.iter().find(|p| p.label == "P34").unwrap();
+        let p = pins::by_label("P34").unwrap();
         s.ext_in = 1 << 22;
         assert_eq!(s.pin(p), (false, true));
         s.gpio_ddr = 1 << 22;
@@ -645,16 +531,15 @@ mod tests {
         assert_eq!(s.adc, [3300, 1650, 2500, 3300]);
     }
     #[test]
-    fn physical_board_rows_match_pb03f_bottom_view() {
-        assert_eq!(BOARD_ROWS.first(), Some(&("P13", "P24")));
-        assert_eq!(BOARD_ROWS[3], ("P7", "P3"));
-        assert_eq!(BOARD_ROWS[8], ("P17", "P34"));
-        assert_eq!(BOARD_ROWS.last(), Some(&("5V", "3V3")));
-        assert_eq!(BOARD_ROWS.len(), 15);
+    fn physical_board_rows_come_from_profile() {
+        let board = board_profile(BoardKind::Pb03fKit);
+        assert_eq!(board.connector_rows.first().map(|row| (row.left, row.right)), Some(("P13", "P24")));
+        assert_eq!((board.connector_rows[3].left, board.connector_rows[3].right), ("P7", "P3"));
+        assert_eq!(board.connector_rows.len(), 15);
         let s = State::new(&opts());
-        assert!(pin_text(&s, "P13").contains("P13"));
-        assert!(pin_text(&s, "P15").contains("RST"));
-        assert!(pin_text(&s, "P34").contains("W"));
+        assert!(pin_text(&s, "P13").contains("silk"));
+        assert!(pin_text(&s, "P15").contains("Restore"));
+        assert!(pin_text(&s, "P34").contains("white"));
     }
     #[test]
     fn clipping_respects_terminal_width() {
