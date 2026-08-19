@@ -133,31 +133,3 @@ jobs:
           name: firmverse-browser-lab
           path: web/dist
           if-no-files-found: error
-
-  browser-refactor-fix:
-    if: github.event_name == 'pull_request' && github.head_ref == 'feature/browser-lab'
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: feature/browser-lab
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Format and refresh lockfile
-        run: |
-          cargo fmt --all
-          cargo check || true
-      - name: Commit generated source and lockfile
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- Cargo.lock src; then
-            exit 0
-          fi
-          git add Cargo.lock src
-          git commit -m 'Format browser runtime and refresh Cargo lock'
-          git push origin HEAD:feature/browser-lab
