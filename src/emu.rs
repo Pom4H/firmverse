@@ -148,7 +148,7 @@ pub(crate) fn emit_delta(delta: &crate::chip::ChipDelta, raw: bool, live: bool, 
     emit_delta_for_board(delta, raw, live, tag, BoardKind::Pb03fKit);
 }
 
-fn emit_delta_for_board(
+pub(crate) fn emit_delta_for_board(
     delta: &crate::chip::ChipDelta,
     raw: bool,
     live: bool,
@@ -193,7 +193,12 @@ pub(crate) fn emit_gpio(gpio: &Rc<RefCell<GpioBank>>, raw: bool, tag: &str) {
     emit_gpio_for_board(gpio, raw, tag, BoardKind::Pb03fKit);
 }
 
-fn emit_gpio_for_board(gpio: &Rc<RefCell<GpioBank>>, raw: bool, tag: &str, board: BoardKind) {
+pub(crate) fn emit_gpio_for_board(
+    gpio: &Rc<RefCell<GpioBank>>,
+    raw: bool,
+    tag: &str,
+    board: BoardKind,
+) {
     let bank = gpio.borrow();
     emit_gpio_pair_for_board(bank.dr, bank.ddr, raw, tag, board);
 }

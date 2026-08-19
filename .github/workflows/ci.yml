@@ -41,7 +41,7 @@ jobs:
         run: |
           private_marker="dp""ls"
           if git grep -in "$private_marker"; then
-            echo 'private product marker leaked into the generic emulator'
+            echo 'private product marker leaked into Firmverse'
             exit 1
           fi
       - name: Python tool dependencies
@@ -62,13 +62,13 @@ jobs:
         env:
           RUSTFLAGS: -A unconditional-panic
         run: cargo test
-      - name: Emulator binary
+      - name: Firmverse binary
         run: cargo build --quiet
-      - name: Publish emulator binary
+      - name: Publish Firmverse binary
         uses: actions/upload-artifact@v7
         with:
-          name: phy6252-linux-x86_64
-          path: target/debug/phy6252
+          name: firmverse-linux-x86_64
+          path: target/debug/firmverse
           if-no-files-found: error
 
   demo-smoke:
@@ -81,13 +81,13 @@ jobs:
       SDK_ROOT: /home/runner/.cache/phy62xx-sdk-3.1.2
     steps:
       - uses: actions/checkout@v5
-      - name: Download tested emulator
+      - name: Download tested Firmverse binary
         uses: actions/download-artifact@v8
         with:
-          name: phy6252-linux-x86_64
+          name: firmverse-linux-x86_64
           path: target/debug
-      - name: Make emulator executable
-        run: chmod +x target/debug/phy6252
+      - name: Make Firmverse executable
+        run: chmod +x target/debug/firmverse
 
       - name: Restore ARM GNU Toolchain
         id: arm-toolchain-cache
@@ -150,7 +150,7 @@ jobs:
       - name: Simple board smoke
         run: |
           printf 'ADC 3300 1650 2500 3300\nIN 00000200\nCONNECT\nCCCD 1\nWRITE 4849\n' \
-            | timeout 3 ./target/debug/phy6252 --strict-mmio --raw firmware/build/kit-demo.hex \
+            | timeout 3 ./target/debug/firmverse --strict-mmio --raw firmware/build/kit-demo.hex \
             | tee /tmp/kit.log || true
           grep -q READY /tmp/kit.log
           grep -q 'UART kit-demo boot' /tmp/kit.log
@@ -166,7 +166,7 @@ jobs:
             echo 'scan 555555555555 -80'
             echo 'gone 111111111111'
             echo 'scan 666666666666 -30'
-          } | timeout 3 ./target/debug/phy6252 --strict-mmio --raw firmware/build/rssi-rank.hex \
+          } | timeout 3 ./target/debug/firmverse --strict-mmio --raw firmware/build/rssi-rank.hex \
             | tee /tmp/rank.log || true
           grep -q READY /tmp/rank.log
           grep -q 'UART rssi-rank boot' /tmp/rank.log
@@ -178,7 +178,7 @@ jobs:
           grep -Eq '^GPIO [0-9a-f]{8} 00401091$' /tmp/rank.log
       - name: Two-node mesh hears the neighbour
         run: |
-          ./target/debug/phy6252 sim --strict --once --ticks 200 --raw --world mesh \
+          ./target/debug/firmverse sim --strict --once --ticks 200 --raw --world mesh \
             --node a=firmware/build/rssi-rank.hex \
             --node b=firmware/build/rssi-rank.hex \
             | tee /tmp/mesh.log
@@ -193,7 +193,7 @@ jobs:
       - name: Full capability stress
         run: |
           printf 'ADC 3000 1750 2250 3100\nIN 00000200\nCONNECT\nCCCD 1\nWRITE 434150\nTICK 512\n' \
-            | timeout 4 ./target/debug/phy6252 --strict-mmio --raw firmware/build/capability-demo.hex \
+            | timeout 4 ./target/debug/firmverse --strict-mmio --raw firmware/build/capability-demo.hex \
             | tee /tmp/cap.log || true
           grep -q READY /tmp/cap.log
           grep -q 'UART capability-demo boot' /tmp/cap.log
@@ -208,13 +208,13 @@ jobs:
         run: |
           rm -f /tmp/phy6252-cap.flash /tmp/flash-first.log /tmp/flash-second.log
           PHY6252_FLASH_STATE=/tmp/phy6252-cap.flash \
-            ./target/debug/phy6252 --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
+            ./target/debug/firmverse --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
             > /tmp/flash-first.log 2>&1 || true
           test -s /tmp/phy6252-cap.flash
           grep -q 'dma-probe pass' /tmp/flash-first.log
           grep -q 'selftest osal=1 queue=1 flash=1 aes=1 ctrl=1' /tmp/flash-first.log
           PHY6252_FLASH_STATE=/tmp/phy6252-cap.flash \
-            ./target/debug/phy6252 --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
+            ./target/debug/firmverse --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
             > /tmp/flash-second.log 2>&1 || true
           grep -q 'FLASH state: restored 262144 bytes' /tmp/flash-second.log
           grep -q 'dma-probe pass' /tmp/flash-second.log
@@ -236,7 +236,7 @@ jobs:
               repo: context.repo.repo,
               sha: context.sha,
               state: ok ? 'success' : 'failure',
-              context: 'phy6252-emu/ci',
-              description: ok ? 'rust + flasher + SDK 3.1.2 BLE + stress passed' : 'One or more emulator CI jobs failed',
+              context: 'firmverse/ci',
+              description: ok ? 'rust + flasher + SDK 3.1.2 BLE + stress passed' : 'One or more Firmverse CI jobs failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });

@@ -1,8 +1,12 @@
 //! Shared 1 ms world clock for one or more chips with their own firmware.
+//!
+//! World owns the environment between nodes. Each node keeps its own board
+//! profile so presentation/wiring never leaks into the RF model.
 
+use crate::board::{profile as board_profile, require_phy6252, BoardKind};
 use crate::chip::{format_mac, mac_from_id, Apply, Chip};
 use crate::cmd::{parse_line, ChipCmd, HELP};
-use crate::emu::{self, emit_delta, emit_gpio, spawn_line_reader};
+use crate::emu::{self, emit_delta_for_board, emit_gpio_for_board, spawn_line_reader};
 use crate::tui::TuiOpts;
 use crate::world::World;
 use std::io::{self, Write};
@@ -48,17 +52,20 @@ pub struct SimOpts {
 pub struct NodeSpec {
     pub id: String,
     pub hex: PathBuf,
+    pub board: BoardKind,
     pub x: Option<f64>,
     pub y: Option<f64>,
 }
 
 pub fn run(opts: SimOpts) -> Result<ExitCode, String> {
     if opts.nodes.is_empty() {
-        return Err("sim needs at least one --node or a hex path".into());
+        return Err("sim needs at least one --node or a firmware path".into());
     }
     let mut world = World::open(&opts.world, opts.looping)?;
     let mut chips = Vec::with_capacity(opts.nodes.len());
+    let mut boards = Vec::with_capacity(opts.nodes.len());
     for spec in &opts.nodes {
+        require_phy6252(spec.board)?;
         let mac = mac_from_id(&spec.id);
         let x = spec.x.unwrap_or(0.0);
         let y = spec.y.unwrap_or(0.0);
@@ -70,6 +77,7 @@ pub fn run(opts: SimOpts) -> Result<ExitCode, String> {
             x,
             y,
         )?);
+        boards.push(spec.board);
     }
 
     let tagged = chips.len() > 1;
@@ -90,16 +98,17 @@ pub fn run(opts: SimOpts) -> Result<ExitCode, String> {
             u8::from(opts.looping),
             chips.len()
         );
-        for chip in &chips {
+        for (chip, board) in chips.iter().zip(boards.iter().copied()) {
             println!(
-                "NODE {} mac={} x={} y={} hex={}",
+                "NODE {} board={} mac={} x={} y={} hex={}",
                 chip.id,
+                board_profile(board).id,
                 format_mac(&chip.mac),
                 chip.x,
                 chip.y,
                 chip.hex_label
             );
-            emit_gpio(&chip.gpio_bank(), true, tag_of(&chip.id, tagged));
+            emit_gpio_for_board(&chip.gpio_bank(), true, tag_of(&chip.id, tagged), board);
         }
     } else if live {
         eprintln!("{}", HELP.trim_end());
@@ -108,11 +117,12 @@ pub fn run(opts: SimOpts) -> Result<ExitCode, String> {
             world.name(),
             opts.looping
         );
-        for chip in &chips {
+        for (chip, board) in chips.iter().zip(boards.iter().copied()) {
             eprintln!(
-                "node {}  {}  mac={}",
+                "node {}  {}  board={}  mac={}",
                 chip.id,
                 chip.hex_label,
+                board_profile(board).id,
                 format_mac(&chip.mac)
             );
         }
@@ -123,7 +133,7 @@ pub fn run(opts: SimOpts) -> Result<ExitCode, String> {
         if live {
             if let Some(rx) = cmd_rx.as_ref() {
                 if drain_lines(rx, &mut chips, raw, tagged)? {
-                    return report_stop(&mut chips, live, raw, tagged, "quit");
+                    return report_stop(&mut chips, &boards, live, raw, tagged, "quit");
                 }
             }
         }
@@ -137,9 +147,9 @@ pub fn run(opts: SimOpts) -> Result<ExitCode, String> {
             let _ = chips[event.listener].apply(event.cmd)?;
         }
 
-        for chip in &mut chips {
+        for (chip, board) in chips.iter_mut().zip(boards.iter().copied()) {
             let delta = chip.tick(BURST, max_insns, true);
-            emit_delta(&delta, raw, live, tag_of(&chip.id, tagged));
+            emit_delta_for_board(&delta, raw, live, tag_of(&chip.id, tagged), board);
         }
         if let Some((id, reason)) = chips.iter().find_map(|c| {
             c.stopped()
@@ -150,12 +160,12 @@ pub fn run(opts: SimOpts) -> Result<ExitCode, String> {
             } else {
                 reason
             };
-            return report_stop(&mut chips, live, raw, tagged, &why);
+            return report_stop(&mut chips, &boards, live, raw, tagged, &why);
         }
 
         now_ms = now_ms.wrapping_add(1);
         if !live && now_ms >= opts.ticks {
-            return report_stop(&mut chips, live, raw, tagged, "ticks");
+            return report_stop(&mut chips, &boards, live, raw, tagged, "ticks");
         }
         if live {
             let _ = io::stdout().flush();
@@ -187,6 +197,7 @@ pub fn collect_nodes(node_flags: &[String], hex: Option<PathBuf>) -> Result<Vec<
         specs.push(NodeSpec {
             id: String::new(),
             hex: path,
+            board: BoardKind::Pb03fKit,
             x: None,
             y: None,
         });
@@ -196,6 +207,7 @@ pub fn collect_nodes(node_flags: &[String], hex: Option<PathBuf>) -> Result<Vec<
         specs.push(NodeSpec {
             id: "n0".into(),
             hex,
+            board: BoardKind::Pb03fKit,
             x: Some(0.0),
             y: Some(0.0),
         });
@@ -208,6 +220,13 @@ pub fn tui_opts(opts: &SimOpts) -> Result<TuiOpts, String> {
         return Err("TUI can watch one chip — drop extra --node flags".into());
     }
     let spec = &opts.nodes[0];
+    if spec.board != BoardKind::Pb03fKit {
+        return Err(format!(
+            "TUI pinout currently renders {}; board {} is available in raw mode",
+            board_profile(BoardKind::Pb03fKit).name,
+            board_profile(spec.board).id
+        ));
+    }
     let node = match (spec.x, spec.y) {
         (Some(x), Some(y)) => format!("{}@{x},{y}={}", spec.id, spec.hex.display()),
         _ => format!("{}={}", spec.id, spec.hex.display()),
@@ -219,6 +238,8 @@ pub fn tui_opts(opts: &SimOpts) -> Result<TuiOpts, String> {
         opts.max_insns.to_string(),
         "--world".into(),
         opts.world.clone(),
+        "--board".into(),
+        board_profile(spec.board).id.into(),
         "--node".into(),
         node,
     ];
@@ -240,12 +261,13 @@ pub fn parse_node_spec(spec: &str) -> Result<NodeSpec, String> {
     }
     if let Some((left, path)) = spec.split_once('=') {
         if path.is_empty() {
-            return Err(format!("--node {spec:?} needs a hex path after ="));
+            return Err(format!("--node {spec:?} needs a firmware path after ="));
         }
         let (id, x, y) = parse_id_pose(left)?;
         Ok(NodeSpec {
             id,
             hex: PathBuf::from(path),
+            board: BoardKind::Pb03fKit,
             x,
             y,
         })
@@ -253,6 +275,7 @@ pub fn parse_node_spec(spec: &str) -> Result<NodeSpec, String> {
         Ok(NodeSpec {
             id: String::new(),
             hex: PathBuf::from(spec),
+            board: BoardKind::Pb03fKit,
             x: None,
             y: None,
         })
@@ -305,7 +328,7 @@ fn finalize_nodes(mut specs: Vec<NodeSpec>) -> Result<Vec<NodeSpec>, String> {
             spec.y = Some(0.0);
         }
         if !spec.hex.is_file() {
-            return Err(format!("hex not found: {}", spec.hex.display()));
+            return Err(format!("firmware not found: {}", spec.hex.display()));
         }
     }
     let mut seen = Vec::new();
@@ -387,17 +410,20 @@ fn apply_all(chips: &mut [Chip], cmd: ChipCmd, raw: bool, tagged: bool) -> Resul
 
 fn report_stop(
     chips: &mut [Chip],
+    boards: &[BoardKind],
     live: bool,
     raw: bool,
     tagged: bool,
     reason: &str,
 ) -> Result<ExitCode, String> {
-    for chip in chips {
-        emit_gpio(&chip.gpio_bank(), raw, tag_of(&chip.id, tagged));
+    for (chip, board) in chips.iter_mut().zip(boards.iter().copied()) {
+        emit_gpio_for_board(&chip.gpio_bank(), raw, tag_of(&chip.id, tagged), board);
         let (pc, lr, msp) = chip.pc_lr_msp();
         eprintln!(
-            "node {} insns={} pc={pc:#010x} lr={lr:#010x} msp={msp:#010x}",
-            chip.id, chip.insn
+            "node {} board={} insns={} pc={pc:#010x} lr={lr:#010x} msp={msp:#010x}",
+            chip.id,
+            board_profile(board).id,
+            chip.insn
         );
     }
     if live {
@@ -442,6 +468,7 @@ mod tests {
         assert_eq!(spec.x, Some(1.5));
         assert_eq!(spec.y, Some(-2.0));
         assert_eq!(spec.hex, PathBuf::from("/tmp/a.hex"));
+        assert_eq!(spec.board, BoardKind::Pb03fKit);
         let path_only = parse_node_spec("fw.hex").unwrap();
         assert!(path_only.id.is_empty());
         assert_eq!(path_only.hex, PathBuf::from("fw.hex"));
