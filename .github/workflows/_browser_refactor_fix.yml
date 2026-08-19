@@ -1,0 +1,36 @@
+name: browser-refactor-fix
+
+on:
+  push:
+    branches: [feature/browser-lab]
+    paths:
+      - .github/workflows/_browser_refactor_fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/browser-lab
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format and refresh Cargo lock
+        run: |
+          cargo fmt --all
+          cargo check
+      - name: Commit generated changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet -- Cargo.lock src; then
+            exit 0
+          fi
+          git add Cargo.lock src
+          git commit -m 'Format browser runtime and refresh Cargo lock'
+          git push origin HEAD:feature/browser-lab
