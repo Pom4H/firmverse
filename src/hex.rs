@@ -18,6 +18,14 @@ pub struct HexImage {
 impl HexImage {
     pub fn load(path: &Path) -> io::Result<Self> {
         let text = fs::read_to_string(path)?;
+        Self::parse(&text)
+    }
+
+    /// Parse an Intel HEX image already present in memory.
+    ///
+    /// Browser/WASM frontends use this path after a File/drag-and-drop read so
+    /// the emulation core never needs a virtual filesystem.
+    pub fn parse(text: &str) -> io::Result<Self> {
         let mut bytes = Vec::new();
         let mut ext = 0u32;
         for raw in text.lines() {
@@ -106,6 +114,12 @@ mod tests {
         let data = decode_line(":020000040000FA").expect("hex");
         assert_eq!(data[0], 2);
         assert_eq!(data[3], 4);
+    }
+
+    #[test]
+    fn parses_image_from_memory() {
+        let image = HexImage::parse(":020000040000FA\n:01001000AA45\n:00000001FF\n").expect("hex");
+        assert_eq!(image.bytes, vec![(0x10, 0xaa)]);
     }
 
     #[test]

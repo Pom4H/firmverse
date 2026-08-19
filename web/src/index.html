@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Firmverse Lab</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="lab-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">FIRMVERSE / BROWSER LAB</div>
+        <h1>Firmware runs here. Hardware is the scene.</h1>
+      </div>
+      <div class="runtime-pill" id="runtime-status">WASM loading…</div>
+    </header>
+
+    <section class="workspace">
+      <aside class="panel controls">
+        <h2>World</h2>
+        <label>
+          Environment
+          <select id="world-select"></select>
+        </label>
+
+        <label class="file-drop" id="firmware-drop">
+          <span>Firmware HEX</span>
+          <strong id="firmware-name">Drop or choose a file</strong>
+          <input id="firmware-input" type="file" accept=".hex,text/plain">
+        </label>
+
+        <div class="row">
+          <label class="grow">
+            Board
+            <select id="board-select"></select>
+          </label>
+          <button id="add-node" disabled>Add node</button>
+        </div>
+
+        <div class="transport">
+          <button id="run" class="primary" disabled>Run</button>
+          <button id="step" disabled>Step</button>
+          <button id="reset">Reset</button>
+        </div>
+
+        <div class="metric-grid">
+          <div><span>time</span><strong id="metric-time">0 ms</strong></div>
+          <div><span>nodes</span><strong id="metric-nodes">0</strong></div>
+        </div>
+
+        <p class="hint">Drag boards in the scene. Their real World coordinates change, so RF/RSSI is recalculated by the Rust model on the next tick.</p>
+      </aside>
+
+      <section class="stage-wrap">
+        <firmverse-world id="world"></firmverse-world>
+      </section>
+
+      <aside class="panel inspector">
+        <h2>Node</h2>
+        <div id="empty-inspector" class="empty">Select a board in the World.</div>
+        <div id="node-inspector" hidden>
+          <div class="node-title-row">
+            <div class="node-title">
+              <strong id="node-name"></strong>
+              <span id="node-mac"></span>
+            </div>
+            <button id="remove-node" class="danger" title="Remove node from World">Remove</button>
+          </div>
+          <firmverse-board id="board-preview" detail="full"></firmverse-board>
+
+          <h3>External GPIO</h3>
+          <div id="pin-controls" class="pin-controls"></div>
+
+          <h3>ADC, mV</h3>
+          <div id="adc-controls" class="adc-controls"></div>
+
+          <h3>UART</h3>
+          <pre id="uart-log" class="terminal"></pre>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
