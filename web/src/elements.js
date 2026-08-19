@@ -191,6 +191,7 @@ export class FirmverseWorld extends HTMLElement {
       card.style.left = `${point.x}px`;
       card.style.top = `${point.y}px`;
       card.innerHTML = `<div class="node-head"><strong>${esc(node.id)}</strong><span>${Number(node.x).toFixed(1)}, ${Number(node.y).toFixed(1)} m</span></div>`;
+      const coordinates = card.querySelector('.node-head span:last-child');
       const board = document.createElement('firmverse-board');
       board.setAttribute('detail', 'symbol');
       board.registry = this.#registry;
@@ -199,20 +200,32 @@ export class FirmverseWorld extends HTMLElement {
       card.addEventListener('pointerdown', (event) => {
         card.setPointerCapture(event.pointerId);
         this.#selected = node.id;
-        this.#drag = { id: node.id, pointerId: event.pointerId };
+        this.#drag = { id: node.id, pointerId: event.pointerId, x: node.x, y: node.y };
         this.dispatchEvent(new CustomEvent('select-node', { detail: { id: node.id }, bubbles: true }));
       });
       card.addEventListener('pointermove', (event) => {
         if (!this.#drag || this.#drag.pointerId !== event.pointerId) return;
-        const world = this.#world(event.clientX, event.clientY, canvas.getBoundingClientRect());
+        const canvasRect = canvas.getBoundingClientRect();
+        const world = this.#world(event.clientX, event.clientY, canvasRect);
         const snap = event.altKey ? 0 : 0.25;
         const x = snap ? Math.round(world.x / snap) * snap : world.x;
         const y = snap ? Math.round(world.y / snap) * snap : world.y;
-        card.style.left = `${event.clientX - canvas.getBoundingClientRect().left}px`;
-        card.style.top = `${event.clientY - canvas.getBoundingClientRect().top}px`;
-        this.dispatchEvent(new CustomEvent('move-node', { detail: { id: node.id, x, y }, bubbles: true }));
+        this.#drag.x = x;
+        this.#drag.y = y;
+        card.style.left = `${event.clientX - canvasRect.left}px`;
+        card.style.top = `${event.clientY - canvasRect.top}px`;
+        coordinates.textContent = `${x.toFixed(2)}, ${y.toFixed(2)} m`;
       });
-      card.addEventListener('pointerup', () => { this.#drag = null; });
+      card.addEventListener('pointerup', (event) => {
+        if (!this.#drag || this.#drag.pointerId !== event.pointerId) return;
+        const drag = this.#drag;
+        this.#drag = null;
+        card.releasePointerCapture(event.pointerId);
+        this.dispatchEvent(new CustomEvent('move-node', {
+          detail: { id: drag.id, x: drag.x, y: drag.y },
+          bubbles: true,
+        }));
+      });
       card.addEventListener('pointercancel', () => { this.#drag = null; });
       nodeLayer.append(card);
     }
