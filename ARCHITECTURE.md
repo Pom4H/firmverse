@@ -1,96 +1,201 @@
 # Firmverse architecture
 
-Firmverse is a virtual embedded systems lab. It combines firmware execution, board wiring, multi-node environments and hardware tooling without making any one chip or development board the root abstraction.
-
-## Layers
+Firmverse is composed around hardware ownership instead of around one development board.
 
 ```text
-Firmware
-  |
-  v
+Firmware image
+     │
+     ▼
 CPU backend
-  |
-  +-- jjkt/zmu for Cortex-M
-  +-- future RISC-V backend(s)
-  |
-  v
+     │
+     ▼
 SoC
-  +-- CPU integration
-  +-- memory map / MMIO
-  +-- ROM ABI
-  +-- GPIO / UART / ADC / timers / flash / radio controller
-  |
-  v
+     │
+     ▼
 Board
-  +-- connector/pin wiring
-  +-- LEDs, buttons and external devices
-  +-- board-specific defaults
-  |
-  v
+     │
+     ▼
 World
-  +-- positions and movement
-  +-- RF peers / RSSI
-  +-- scripted environment
-  +-- multi-node simulation
-  |
-  +-- host bridges (for example real BLE)
-  +-- test / CI frontends
-  +-- hardware flashing tools
 ```
 
-The ownership rule is strict:
+A frontend such as CLI/TUI, a host bridge, or CI observes and drives this stack. It does not get to redefine the stack.
 
-- **CPU backend** executes instructions.
-- **SoC** defines what the firmware-visible chip does.
-- **Board** defines how a concrete product/development board wires things around that SoC.
-- **World** defines the external reality shared by one or more nodes.
+## Ownership
 
-Firmware sees the SoC. A Board may connect to SoC pins/peripherals but must not redefine CPU/MMIO/ROM behavior. A World may influence nodes through radio, GPIO or environmental inputs but must not know PB-03F-specific wiring.
+### CPU backend
 
-## CPU backends
+Executes instructions and exposes the architectural CPU state required by the SoC integration.
 
-`firmverse socs` prints the SoC registry and selected CPU backend.
+Current backend family:
 
-PHY6252 currently executes through the vendored `jjkt/zmu` Cortex-M engine using its ARMv6-M profile. The registry also records the upstream zmu Cortex-M profiles used by the project architecture: M0/M0+, M3, M4/M4F and M7. A SoC selects the concrete profile it requires; supporting a Cortex-M4 SoC should not require a second CPU abstraction.
+- `jjkt/zmu` for Cortex-M;
+- PHY6252 selects `cortex-m0` / ARMv6-M;
+- the registry keeps M0+, M3, M4, M4F and M7 profiles visible for future SoCs.
 
-CH592F is deliberately different. The WeAct board uses a WCH CH592F RISC-V SoC, so the registry reserves a `riscv/qingke-v4c` backend and fails closed until that execution path exists. It is not modeled as a PHY6252 board variant.
+A CPU backend does **not** own GPIO, flash layout, BLE controller semantics, board LEDs, or RF distance.
 
-## Current SoCs
+### SoC
 
-- `phy6252` — implemented; `zmu/cortex-m0`.
-- `ch592f` — registered/planned; RISC-V QingKe V4C execution not implemented yet.
+Owns everything firmware can observe as part of the chip:
 
-## Current boards
+- memory map;
+- MMIO registers;
+- ROM/HLE ABI;
+- interrupt/peripheral behavior;
+- GPIO pad mapping;
+- ADC channels;
+- timers/PWM/UART/DMA;
+- flash semantics;
+- radio/controller boundary;
+- power state that belongs to the silicon.
 
-`firmverse boards` lists board profiles.
+For PHY6252 the package pad metadata now lives in `src/soc/phy6252/pins.rs`. `P15 -> AP_GPIO bit 9` is a SoC fact. `P15 -> Restore` is not.
 
-- `pb03f-kit` — AI-Thinker PB-03F-Kit on PHY6252. Default compatibility profile.
-- `headless` — bare PHY6252 with no PB-03F LED naming assumptions.
-- `weact-ch592f` — WeAct Studio CH592F Core Board, reserved until the CH592F SoC backend can execute firmware.
+### Board
 
-PHY6252 package-pad to AP_GPIO-bit mapping is a SoC/package fact. PB-03F meanings such as `red`, `white`, or `Restore` are board facts.
+Owns physical assembly around a SoC:
 
-## World
+- connector layout;
+- LED/button meaning;
+- pin aliases visible on the PCB;
+- external devices wired to SoC pins;
+- board-specific defaults.
 
-A World owns relationships between nodes and their environment. The current RF implementation keeps node positions, creates virtual advertisers, derives RSSI from distance and injects `scan`/`gone` observations into each node. Built-ins are:
+`BoardProfile` is data consumed by frontends. The PB-03F DIP-30 rows, LED colours and Restore meaning live there instead of inside the TUI.
 
-- `mesh` — firmware nodes only;
-- `still` — static virtual BLE beacons;
-- `crowd` — moving virtual BLE advertisers.
+A Board must not redefine CPU instructions, SoC MMIO or the SoC package pad map.
 
-The important boundary is that the World works with node identity, position and radio observations. It does not care whether a node is PB-03F-Kit or another board. This is the basis for future walls/attenuation, interference, sensors, power conditions and mixed-SoC simulations.
+### World
 
-## Multi-node runtime
+Owns the reality shared by nodes:
 
-Each simulation node now carries its own `BoardKind`, even though the CLI currently applies one `--board` value to all nodes in a run. Output formatting uses that node board while the World snapshot remains board-agnostic. The next parser extension can allow a board per `--node` without changing the runtime model.
+- position and movement;
+- RF visibility / RSSI;
+- virtual peers;
+- environment inputs;
+- eventually walls, attenuation, interference, temperature, power conditions, etc.
 
-## Migration plan
+A World sees node identity and externally observable interfaces. It must not contain checks like `if board == PB03F`.
 
-1. Move PHY6252-specific implementation modules under `soc/phy6252/` without behavior changes.
-2. Replace the large discovery/bus responsibilities with peripheral-oriented PHY6252 modules and explicit ROM/HLE dispatch.
-3. Move PB-03F TUI pinout/connector rows into board profile data.
-4. Add declarative World configuration (nodes, walls, RF loss, movement, environment inputs).
-5. Add the CH592F RISC-V execution/memory/MMIO skeleton and only then enable `weact-ch592f`.
-6. Add differential tests that compare emulator observations with real hardware traces.
+## Composition
 
-The first constraint of every refactor is preserving the existing strict PHY6252 firmware regressions and real SDK 3.1.2 build path.
+Single node:
+
+```text
+firmware.hex
+    │
+    ▼
+PHY6252 SoC ── zmu/cortex-m0
+    │
+    ▼
+PB-03F-Kit or headless board
+    │
+    ▼
+CLI / raw / TUI / host BLE
+```
+
+Multi-node:
+
+```text
+            ┌─ firmware A → SoC → Board ─┐
+World  ◄────┼─ firmware B → SoC → Board ─┼────► observations
+            └─ firmware C → SoC → Board ─┘
+```
+
+`sim::NodeSpec` carries its Board profile. `World` receives node identity/pose/radio state and therefore stays board-agnostic.
+
+## Source layout
+
+```text
+src/
+  main.rs                    composition root / CLI
+  soc.rs                     SoC + CPU-backend registry
+  soc/
+    phy6252/
+      mod.rs                 PHY6252 namespace boundary
+      pins.rs                package pad → GPIO/ADC metadata
+      chip.rs                CPU + SoC runtime integration
+      bus.rs                 current MMIO/bus surface
+      discovery.rs           current strict discovery/ROM bridge
+      *_rom.rs               vendor ROM/HLE groups
+      hci_*.rs / ll_*.rs     controller/Link Layer model
+      osal*.rs               vendor runtime model
+      ...                    remaining PHY6252 implementation
+  board.rs                   board profiles / connector wiring
+  world.rs                   environment model
+  sim.rs                     multi-node scheduler
+  emu.rs                     single-node frontend runtime
+  tui.rs                     presentation consuming Board + SoC metadata
+  ble_host.rs                host BLE bridge
+```
+
+### Transitional namespace shim
+
+The PHY6252 files have been moved physically under `src/soc/phy6252/`. Existing code still imports many of them as `crate::chip`, `crate::bus`, etc. `main.rs` temporarily mounts those files with `#[path = "soc/phy6252/..."]`.
+
+This is deliberate. It separates two risky operations:
+
+1. **physical ownership** — completed by moving the implementation under the SoC directory without changing the blobs;
+2. **Rust namespace migration** — can now happen incrementally, module by module, with small reviewable diffs.
+
+New PHY6252 contracts should be added under `crate::soc::phy6252::*`; `pins` already follows that rule. The compatibility shim should shrink rather than gain new modules.
+
+## Registered hardware
+
+| ID | CPU backend | SoC state | Board state |
+|---|---|---|---|
+| `phy6252` | `zmu/cortex-m0` | executable | PB-03F + headless executable |
+| `ch592f` | `riscv/qingke-v4c` | planned | WeAct profile registered, execution blocked |
+
+CH592F is a sibling SoC. It must never enter the codebase as PHY6252 MMIO plus a different Board profile.
+
+The intended direction is:
+
+```text
+soc/
+  phy6252/
+  ch592f/
+board profiles
+world runtime
+```
+
+The CH592F board becomes executable only after a CH592F CPU/memory/MMIO backend can execute a minimal real image.
+
+## Strictness is an architectural feature
+
+`--strict` means an unmodeled firmware-visible PHY6252 behavior is an error instead of an implicit successful no-op. This keeps the emulator useful as an executable specification: missing behavior becomes an observable requirement.
+
+Refactors must keep the strict regression path green, including:
+
+- Rust unit tests / Clippy / rustfmt;
+- PHY6252 flasher tests;
+- demo firmware;
+- pinned PHY62XX SDK 3.1.2 vendor BLE image build;
+- board smoke;
+- RSSI ranking;
+- multi-node mesh;
+- capability stress;
+- persistent NOR restart.
+
+## Frontend rule
+
+A frontend may render data differently, but hardware knowledge must come from the owning layer.
+
+Examples:
+
+- TUI asks `BoardProfile` for connector rows and indicator meanings;
+- TUI asks `soc::phy6252::pins` for GPIO/ADC mapping;
+- raw output asks the selected Board profile how to name active indicators;
+- World never asks either of those questions.
+
+This is the test for future UI work: if deleting the PB-03F board profile would require editing TUI rendering code, board knowledge has leaked again.
+
+## Next steps
+
+1. Shrink the `#[path]` compatibility shim by moving PHY6252 modules into the real Rust namespace in small groups.
+2. Split the current bus/discovery responsibilities into peripheral modules plus explicit ROM/HLE dispatch.
+3. Add declarative World configuration for walls/RF loss/movement/environment inputs.
+4. Add differential traces against real PHY6252 hardware.
+5. Introduce `soc/ch592f/` with loader, memory map and QingKe/RISC-V execution before enabling the WeAct board.
+
+The invariant is more important than the directory names: **CPU executes, SoC behaves, Board wires, World surrounds.**

@@ -1,0 +1,79 @@
+name: mesh-regression
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # Replace with the firmware image produced by your repository.
+  FIRMWARE_HEX: firmware/build/app.hex
+
+jobs:
+  mesh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout firmware repository
+        uses: actions/checkout@v6
+
+      - name: Checkout Firmverse
+        uses: actions/checkout@v6
+        with:
+          repository: Pom4H/firmverse
+          # Pin a reviewed tag/commit for production CI.
+          ref: main
+          path: .firmverse
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Firmverse build
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            .firmverse/target
+          key: firmverse-${{ runner.os }}-${{ hashFiles('.firmverse/Cargo.lock') }}
+          restore-keys: |
+            firmverse-${{ runner.os }}-
+
+      - name: Build Firmverse
+        run: cargo build --release --locked --manifest-path .firmverse/Cargo.toml
+
+      - name: Check firmware image
+        run: test -f "$FIRMWARE_HEX"
+
+      - name: Run deterministic two-node mesh
+        run: |
+          .firmverse/target/release/firmverse sim \
+            --board pb03f-kit \
+            --world mesh \
+            --strict \
+            --once \
+            --ticks 200 \
+            --raw \
+            --node a="$FIRMWARE_HEX" \
+            --node b@3,0="$FIRMWARE_HEX" \
+            | tee mesh.log
+
+      - name: Assert Firmverse topology
+        run: |
+          grep -q '^READY$' mesh.log
+          grep -q '^WORLD mesh ' mesh.log
+          grep -q '^NODE a ' mesh.log
+          grep -q '^NODE b ' mesh.log
+
+      # Add firmware-specific assertions here, for example discovery/packet/UART markers.
+
+      - name: Upload mesh log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmverse-mesh-log
+          path: mesh.log
+          if-no-files-found: warn

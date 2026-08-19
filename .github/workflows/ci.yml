@@ -13,14 +13,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - name: Restore Cargo cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
@@ -57,13 +57,19 @@ jobs:
       - name: Rustfmt
         run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Cargo test
         env:
           RUSTFLAGS: -A unconditional-panic
-        run: cargo test
+        run: cargo test --locked
       - name: Firmverse binary
-        run: cargo build --quiet
+        run: cargo build --quiet --locked
+      - name: Firmverse registry smoke
+        run: |
+          ./target/debug/firmverse socs | grep -q '^phy6252'
+          ./target/debug/firmverse socs | grep -q '^ch592f'
+          ./target/debug/firmverse boards | grep -q '^pb03f-kit'
+          ./target/debug/firmverse worlds | grep -q '^mesh'
       - name: Publish Firmverse binary
         uses: actions/upload-artifact@v7
         with:
@@ -80,7 +86,7 @@ jobs:
       SDK_COMMIT: b7202ee56e8d316ea3451dd61266f609e6a676e8
       SDK_ROOT: /home/runner/.cache/phy62xx-sdk-3.1.2
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Download tested Firmverse binary
         uses: actions/download-artifact@v8
         with:
@@ -91,7 +97,7 @@ jobs:
 
       - name: Restore ARM GNU Toolchain
         id: arm-toolchain-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.ARM_TOOLCHAIN_DIR }}
           key: arm-gnu-toolchain-${{ env.ARM_TOOLCHAIN_VERSION }}-x86_64-${{ runner.os }}
@@ -123,7 +129,7 @@ jobs:
 
       - name: Restore pinned PHY62XX SDK 3.1.2
         id: sdk-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.SDK_ROOT }}
           key: phy62xx-sdk-3.1.2-${{ env.SDK_COMMIT }}

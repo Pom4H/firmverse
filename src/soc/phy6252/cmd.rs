@@ -247,26 +247,7 @@ fn hex_digit(c: u8) -> Option<u8> {
 /// PHY6252 package pad to AP_GPIO bit mapping.
 /// This belongs to the SoC/package contract, not to a particular development board.
 fn silk_bit(label: &str) -> Option<u32> {
-    match label.to_ascii_uppercase().as_str() {
-        "P0" => Some(0),
-        "P2" => Some(2),
-        "P3" => Some(3),
-        "P7" => Some(4),
-        "P11" => Some(7),
-        "P14" => Some(8),
-        "P15" => Some(9),
-        "P16" => Some(10),
-        "P17" => Some(11),
-        "P18" => Some(12),
-        "P20" => Some(13),
-        "P23" => Some(14),
-        "P24" => Some(15),
-        "P31" => Some(19),
-        "P32" => Some(20),
-        "P33" => Some(21),
-        "P34" => Some(22),
-        _ => None,
-    }
+    crate::soc::phy6252::pins::gpio_bit(label)
 }
 
 pub fn gpio_silk(dr: u32, ddr: u32) -> String {
