@@ -8,10 +8,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # Replace with the firmware image produced by your repository.
-  FIRMWARE_HEX: firmware/build/app.hex
-
 jobs:
   firmverse:
     runs-on: ubuntu-latest
@@ -19,52 +15,21 @@ jobs:
       - name: Checkout firmware repository
         uses: actions/checkout@v6
 
-      - name: Checkout Firmverse
-        uses: actions/checkout@v6
+      # Build your firmware before this step and produce build/app.hex.
+      - name: Run strict firmware smoke in Firmverse
+        id: firmverse
+        uses: Pom4H/firmverse@v1
         with:
-          repository: Pom4H/firmverse
-          # Pin a reviewed tag/commit for production CI.
-          ref: main
-          path: .firmverse
-          submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Firmverse build
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            .firmverse/target
-          key: firmverse-${{ runner.os }}-${{ hashFiles('.firmverse/Cargo.lock') }}
-          restore-keys: |
-            firmverse-${{ runner.os }}-
-
-      - name: Build Firmverse
-        run: cargo build --release --locked --manifest-path .firmverse/Cargo.toml
-
-      - name: Check firmware image
-        run: test -f "$FIRMWARE_HEX"
-
-      - name: Run strict PHY6252 smoke
-        run: |
-          .firmverse/target/release/firmverse \
-            --board pb03f-kit \
-            --strict \
-            --once \
-            --raw \
-            "$FIRMWARE_HEX" \
-            | tee firmverse.log
-
-      # Add application-specific assertions here, for example:
-      # - run: grep -q 'UART application-ready' firmverse.log
+          firmware: build/app.hex
+          board: pb03f-kit
+          strict: 'true'
+          expect: |
+            UART application-ready
 
       - name: Upload Firmverse log
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: firmverse-smoke-log
-          path: firmverse.log
+          path: ${{ steps.firmverse.outputs.log }}
           if-no-files-found: warn
