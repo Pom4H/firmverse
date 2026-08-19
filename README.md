@@ -2,7 +2,7 @@
 
 **Virtual embedded systems lab for real firmware.**
 
-Firmverse runs firmware against explicit CPU, SoC and board models, then places one or more virtual devices into a shared World. The same repository also contains host bridges, regression firmware and SoC-specific hardware tooling.
+Firmverse runs firmware against explicit CPU, SoC and board models, then places one or more virtual devices into a shared World. It can be used as a CLI locally or as a reusable GitHub Action from a firmware repository.
 
 ```text
 Firmware
@@ -18,6 +18,63 @@ World
 
 The important rule is ownership: the CPU executes instructions, the SoC owns firmware-visible hardware, the Board owns physical wiring, and the World owns the environment between devices.
 
+## GitHub Action
+
+The shortest useful integration is one step after your firmware build:
+
+```yaml
+- uses: actions/checkout@v6
+
+# Build your firmware here and produce build/app.hex.
+
+- name: Test firmware in Firmverse
+  uses: Pom4H/firmverse@v1
+  with:
+    firmware: build/app.hex
+    board: pb03f-kit
+    strict: 'true'
+    expect: |
+      UART application-ready
+```
+
+The Action takes care of the Firmverse Rust toolchain, build cache and the pinned `jjkt/zmu` backend. The caller only supplies the firmware image and its behavioral contract.
+
+For a deterministic two-node mesh regression:
+
+```yaml
+- name: Test two devices in one virtual world
+  uses: Pom4H/firmverse@v1
+  with:
+    firmware: build/app.hex
+    board: pb03f-kit
+    mode: mesh
+    world: mesh
+    nodes: '2'
+    ticks: '200'
+    strict: 'true'
+    expect: |
+      WORLD mesh
+      NODE n0
+      NODE n1
+```
+
+Supported Action inputs:
+
+| Input | Default | Meaning |
+|---|---|---|
+| `firmware` | required | Intel HEX path in the caller workspace |
+| `board` | `pb03f-kit` | Firmverse board profile |
+| `mode` | `single` | `single` or `mesh` |
+| `world` | `mesh` | World used by mesh mode |
+| `nodes` | `2` | Number of identical firmware nodes in mesh mode |
+| `ticks` | `200` | Deterministic mesh duration |
+| `strict` | `true` | Fail on unknown SoC MMIO / vendor ROM behavior |
+| `max-insns` | empty | Optional instruction budget override |
+| `expect` | empty | Newline-separated fixed strings that must occur in output |
+| `log` | `firmverse.log` | Output log path |
+
+Outputs are `log` and `binary`. See [`docs/GITHUB_ACTION.md`](docs/GITHUB_ACTION.md) for the complete contract.
+
 ## Status
 
 | Layer | Model | Status |
@@ -32,7 +89,7 @@ The important rule is ownership: the CPU executes instructions, the SoC owns fir
 
 `firmverse` fails closed for a registered board whose SoC backend does not exist. CH592F is intentionally **not** treated as another PHY6252 board.
 
-## Build
+## Local build
 
 ```sh
 git clone --recurse-submodules https://github.com/Pom4H/firmverse.git
@@ -79,7 +136,7 @@ The `headless` profile uses the same PHY6252 SoC without PB-03F connector/LED se
   --node b@3,0=firmware/build/rssi-rank.hex
 ```
 
-Deterministic CI form:
+Deterministic CLI form:
 
 ```sh
 ./target/release/firmverse sim \
@@ -97,6 +154,8 @@ A World works with node identity, position, radio observations and environment i
 ## Repository layout
 
 ```text
+action.yml             public GitHub Action contract
+action/run.sh          Action runtime wrapper
 src/
   main.rs              CLI / composition root
   soc.rs               SoC + CPU backend registry
@@ -109,7 +168,7 @@ src/
   ble_host.rs          host BLE bridge
 firmware/               regression/demo firmware
 host/                   host-side helpers
-examples/github-actions/ copyable CI workflows
+examples/github-actions/ full workflow examples
 docs/                   focused documentation
 ```
 
@@ -117,20 +176,12 @@ PHY6252 implementation files are being namespaced incrementally. They already li
 
 ## Documentation
 
+- [`docs/GITHUB_ACTION.md`](docs/GITHUB_ACTION.md) — public Action inputs, outputs and examples.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — ownership boundaries, runtime composition and migration rules.
 - [`docs/PHY6252.md`](docs/PHY6252.md) — implemented PHY6252 surface, package pins and regression strategy.
-- [`docs/CI.md`](docs/CI.md) — GitHub Actions integration and copyable examples.
+- [`docs/CI.md`](docs/CI.md) — deeper CI strategy and direct CLI integration.
 - [`HARDWARE_FLASH.md`](HARDWARE_FLASH.md) — flashing real PHY6252 hardware and SDK 3.1.2 flow.
 - [`PROTOCOL.md`](PROTOCOL.md) — raw line protocol used by frontends and tests.
-
-## GitHub Actions
-
-Copy an example from [`examples/github-actions/`](examples/github-actions/) into your firmware repository:
-
-- `firmware-smoke.yml` — build Firmverse and execute one PHY6252 image in strict mode;
-- `mesh-regression.yml` — run two firmware nodes in a deterministic shared mesh World.
-
-The repository CI uses the same public binary surface as users: `firmverse`, `firmverse sim`, `socs`, `boards`, and `worlds`.
 
 ## Design principle
 
