@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use firmverse::ble_host::{self, BleHostOpts};
 use firmverse::board::{require_phy6252, BoardKind, PROFILES};
-use firmverse::emu::{self, default_hex, run, RunOpts};
+use firmverse::emu::{default_hex, run, RunOpts};
 use firmverse::{sim, soc, tui};
 use std::path::PathBuf;
 use std::process::ExitCode;
