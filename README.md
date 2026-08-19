@@ -4,6 +4,10 @@
 
 Firmverse runs firmware against explicit CPU, SoC and board models, then places one or more virtual devices into a shared World. It can be used as a CLI locally, as a reusable GitHub Action, or as a WebAssembly Browser Lab.
 
+**[Open the live Browser Lab →](https://pom4h.github.io/firmverse/)**
+
+The Browser Lab runs the same Rust/`jjkt/zmu` core locally in WebAssembly. Firmware stays in your browser; add multiple boards, move them through a shared World, inspect GPIO/ADC/UART state and observe RF/RSSI links produced by the Rust model.
+
 ```text
 Firmware
    ↓
