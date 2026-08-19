@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn phy6252_uses_zmu_cortex_m0() {
         assert_eq!(PHY6252.cpu, CpuBackend::Zmu(CortexMProfile::M0));
-        assert!(PHY6252.implemented);
+        assert!(require_implemented(SocKind::Phy6252).is_ok());
     }
 
     #[test]
