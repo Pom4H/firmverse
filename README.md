@@ -1,44 +1,122 @@
-# PHY6252 emulator
+# Firmverse
 
-Cortex-M0 emulator for **PHY6252** and the AI-Thinker **PB-03F-Kit**. The project is intentionally small: a Rust emulator, a UART flasher, one raw line protocol, an optional terminal UI, and an optional Linux BlueZ bridge.
+**A virtual embedded systems lab for real firmware, SoCs, boards and multi-node worlds.**
 
-```sh
-git clone --recurse-submodules https://github.com/Pom4H/phy6252-emu.git
-cd phy6252-emu
-cargo run --release
+Firmverse executes firmware, models chip/board behavior, runs several devices in a shared environment, bridges selected peripherals to the host, and keeps hardware flashing tools beside the virtual model.
+
+The project started with PHY6252 / AI-Thinker PB-03F-Kit and is being generalized without throwing away the strict firmware regressions that made that model useful.
+
+```text
+Firmware
+   ↓
+CPU backend
+   ↓
+SoC
+   ↓
+Board
+   ↓
+World
 ```
 
-## Run
+Today PHY6252 executes on the vendored [jjkt/zmu](https://github.com/jjkt/zmu) Cortex-M engine (`armv6m` / Cortex-M0). The SoC registry keeps the same zmu backend available for future Cortex-M0+/M3/M4/M4F/M7 SoCs. CH592F / WeAct is registered separately as a future RISC-V QingKe V4C backend; Firmverse deliberately refuses to pretend it is another PHY6252 board.
+
+## Build
 
 ```sh
-phy6252 firmware/kit-demo.hex
-phy6252 --tui firmware/kit-demo.hex
-phy6252 --raw firmware/kit-demo.hex
-phy6252 --strict --once firmware/kit-demo.hex
-phy6252 --ble firmware/kit-demo.hex
-phy6252 firmware/build/rssi-rank.hex
-phy6252 sim --node a=firmware/build/rssi-rank.hex --node b=firmware/build/rssi-rank.hex
-phy6252 sim --world crowd firmware/build/rssi-rank.hex
-phy6252 worlds
+git clone --recurse-submodules https://github.com/Pom4H/firmverse.git
+cd firmverse
+cargo build --release
 ```
 
-`--strict-mmio` is kept as an alias for `--strict`.
+The main binary is `firmverse`.
 
-### RSSI rank demo
+```sh
+firmverse socs
+firmverse boards
+firmverse worlds
+```
 
-`firmware/build/rssi-rank.hex` keeps the five strongest advertisers and gives each a sticky LED colour. Unused kit LEDs stay off. Closer devices blink faster (same curve as the silicon image: −35 dBm ≈ 12 Hz, −90 dBm ≈ 0.6 Hz). If a device drops out of the top 5 or disappears, that colour is freed for the next newcomer.
+## Run firmware
 
-| UART | LED |
-|---|---|
-| R | P7 red |
-| G | P11 green |
-| B | P18 blue |
-| Y | P0 yellow (warm) |
-| W | P34 white (cool) |
+The current executable SoC is PHY6252 and accepts Intel HEX images.
 
-Restore is P15. The emulator mailbox supplies `scan`/`gone`; the silicon HEX scans the air. GPIO, LEDs, Restore and the DIP-30 pinout are the same board.
+```sh
+firmverse firmware/kit-demo.hex
+firmverse --raw firmware/kit-demo.hex
+firmverse --strict --once firmware/kit-demo.hex
+firmverse --tui firmware/kit-demo.hex
+```
 
-Inject advertisers from the REPL / `--raw` / TUI:
+`--strict-mmio` remains an alias for `--strict`.
+
+Select a board profile independently of the SoC implementation:
+
+```sh
+firmverse --board pb03f-kit firmware/kit-demo.hex
+firmverse --board headless firmware/kit-demo.hex
+```
+
+`headless` removes PB-03F-specific LED naming while keeping the same PHY6252 SoC execution path.
+
+## Multi-node simulation
+
+`firmverse sim` runs one or more firmware nodes on one 1 ms virtual clock. Each node has its own firmware instance, MAC address, position and board profile. `World` owns what happens between the nodes.
+
+```sh
+firmverse sim \
+  --world mesh \
+  --node a=firmware/build/rssi-rank.hex \
+  --node b@3,0=firmware/build/rssi-rank.hex
+```
+
+For deterministic CI runs:
+
+```sh
+firmverse sim \
+  --strict \
+  --once \
+  --ticks 2000 \
+  --raw \
+  --world mesh \
+  --node a=firmware/build/rssi-rank.hex \
+  --node b=firmware/build/rssi-rank.hex
+```
+
+Current built-in Worlds:
+
+- `mesh` — firmware nodes only; every node can hear the others when RF distance allows it;
+- `still` — five static virtual BLE advertisers;
+- `crowd` — six moving virtual advertisers.
+
+The current RF model is intentionally lightweight: distance becomes RSSI, advertisers become `scan`/`gone` observations, and the firmware reacts through the same mailbox/controller boundary as the single-node emulator. It is not a cycle-accurate 2.4 GHz PHY.
+
+The runtime already stores a board per node. The CLI currently applies one `sim --board` profile to every node; per-node board syntax can be added without changing the World model.
+
+## PHY6252 model
+
+The PHY6252 implementation executes real Cortex-M0 HEX images and models the surfaces exercised by the strict capability regression:
+
+- relocated Cortex-M0 vectors, SRAM and 256 KiB XIP flash;
+- GPIO, UART0/UART1, ADC, six PWM channels and timers;
+- PCR, AON, cache, clock, SPI-flash and DMAC register behavior used by firmware;
+- NOR erase/program semantics and optional persistent flash state;
+- eFuse/AES bootstrap behavior and ARM EABI helpers;
+- OSAL heap, memory, linked message queues, events, timers and cooperative task dispatch;
+- exercised PHY6252 HCI/LL/GAP/GATT/security ROM ABI at a host-controller boundary;
+- generic ATT RX/TX mailbox transport;
+- strict discovery for unknown MMIO or vendor-ROM behavior.
+
+Unknown behavior does not silently become success in strict mode. The firmware stops at the missing MMIO/ROM surface so the model can be extended from an observable requirement instead of adding blanket no-op stubs.
+
+```sh
+firmverse --strict --once firmware.hex
+```
+
+That fail-closed workflow is one of the main design rules of Firmverse.
+
+## RSSI / BLE demo
+
+`firmware/build/rssi-rank.hex` keeps the five strongest advertisers and assigns sticky PB-03F LEDs.
 
 ```text
 scan aa:bb:cc:dd:ee:01 -40
@@ -46,121 +124,28 @@ scan aa:bb:cc:dd:ee:02 -55
 gone aa:bb:cc:dd:ee:01
 ```
 
-A device that is not refreshed for 4 s is treated as gone.
+PB-03F mappings used by the board profile:
 
-### Mesh / multi-chip simulation
+| Function | Pin |
+|---|---|
+| red | P7 |
+| green | P11 |
+| blue | P18 |
+| yellow | P0 |
+| white | P34 |
+| Restore | P15 |
 
-`phy6252 sim` runs several guests on one 1 ms clock in a shared RF world. Each `--node` loads its own HEX and gets a local MAC from the node id. Chips advertise to each other (and to optional virtual walkers) as `scan` / `gone` mailbox reports, with RSSI from distance.
-
-```sh
-phy6252 sim --node a=firmware/build/rssi-rank.hex --node b@3,0=firmware/build/rssi-rank.hex
-phy6252 sim --world crowd firmware/build/rssi-rank.hex
-phy6252 sim --once --ticks 2000 --raw --world mesh \
-  --node a=firmware/build/rssi-rank.hex \
-  --node b=firmware/build/rssi-rank.hex
-```
-
-`--node` is `id[@x,y]=path`. Default spacing is 3 m on X, which is inside radio range. Two or more nodes default to world `mesh` (chips only); a single node defaults to `crowd` (six looping walkers). `phy6252 worlds` lists them.
-
-The world timeline wraps while the sim is live. `--once --ticks N` is the scripted run: no sleep, optional `--loop` to wrap the walkers anyway. With several chips, `--raw` prefixes lines as `[id] GPIO` / `[id] UART`. Unprefixed stdin commands go to every chip; `a scan …` or `[b] gone …` target one node. The TUI can attach to a one-chip sim (`phy6252 sim --tui --world crowd firmware.hex`).
-
-This is a host-side coupling of the scan mailbox, not a cycle-accurate BLE radio. Firmware that blindly echoes RX into TX will not be auto-relayed as a mesh flood.
-
-### Flash a PB-03F-Kit
-
-The emulator image `rssi-rank.hex` ranks mailbox `scan` reports. For a kit that scans the air, build the SDK silicon image (needs PHY62XX SDK 3.1.2) and flash that:
-
-```sh
-make -C firmware/silicon
-cargo run --release --bin phy6252-flash -- firmware/build/rssi-rank-ble.hex
-```
-
-`PHY62XX_SDK` overrides the SDK path. The silicon image advertises as `rssi-rank` (non-connectable) and maps the five strongest advertisers onto the same LEDs as the emulator demo. UART0 is P9/P10 at 115200.
-
-Hold **KEY1** (RST/PROG), start the tool, release the button when it prints `bootloader`. `--port` and `PHY6252_PORT` override auto-detect of the CH340 USB-UART. `--erase` wipes the whole chip, including NVRAM.
-
-The Python ROM flasher (`tools/phy6252_flash.py`) programs NOR with an SDK layout and can build/check the vendor `simpleBlePeripheral` example. See `HARDWARE_FLASH.md`. It is a different path from `phy6252-flash` (CH340 + KEY1, used for `rssi-rank-ble.hex`).
-
-Install locally with:
-
-```sh
-cargo install --path .
-```
-
-The default REPL accepts the same commands as the raw/TUI frontends:
-
-```text
-connect
-cccd 1
-write 01020304
-adc 3.3 1.65 2.5 3.3
-p34 on
-help
-```
-
-## What is modeled
-
-The emulator currently executes real Cortex-M0 HEX images and models the PHY6252 surfaces needed by the bundled strict capability regression:
-
-- relocated Cortex-M0 vectors, SRAM and 256 KiB XIP flash;
-- GPIO, UART0/UART1, ADC, six PWM channels and timers;
-- exact/narrow PCR, AON, cache, clock, SPI-flash and DMAC register behavior used by firmware;
-- NOR erase/program semantics and optional persistent flash state;
-- eFuse/AES bootstrap behavior and ARM EABI helpers;
-- OSAL heap, memory, linked message queues, events, timers and cooperative task dispatch;
-- the exercised PHY6252 HCI/LL/GAP/GATT/security ROM ABI at a host-controller boundary;
-- generic ATT RX/TX mailbox transport;
-- Linux BlueZ advertising/GATT bridge;
-- strict discovery: unknown MMIO or vendor-ROM behavior stops instead of silently succeeding.
-
-The project is **not a cycle-accurate RF simulator**. `phy6252 sim` approximates advertising as distance-based scan reports between chips and virtual walkers. Over-the-air scheduling and the physical BLE radio are delegated to the host Bluetooth controller when `--ble` is used (BlueZ on Linux, the system adapter on macOS). Unknown vendor behavior remains a strict fault until it is modeled explicitly.
-
-## Persistent NOR
-
-Set `PHY6252_FLASH_STATE` to preserve the complete 256 KiB NOR image across emulator restarts:
-
-```sh
-PHY6252_FLASH_STATE=.state/device.flash \
-  phy6252 --strict firmware.hex
-```
-
-The state file is tied to the baseline firmware image. An incompatible snapshot is ignored instead of silently replacing a different firmware image. This sits below any guest filesystem/SNV format, so firmware persistence uses the same flash path as ordinary code.
-
-## Terminal UI
-
-```sh
-phy6252 --tui firmware.hex
-```
-
-The TUI is only a frontend over `--raw`; it does not create a second emulator path. It shows:
-
-- run/strict state and image name;
-- BLE link/notify state;
-- live ADC voltages;
-- the PB-03F-Kit bottom-view pinout with GPIO direction/level;
-- RGB / yellow (P0) / white (P34) LED state, Restore on P15, and all six PWM channels;
-- a rolling UART/ATT/ROM/MMIO diagnostic log;
-- one command line with Up/Down history.
-
-For the full physical pinout use a terminal of at least `68x26`. Smaller terminals automatically switch to the compact status/log view.
-
-Keys: `Enter` sends, `Up/Down` browse history, `Esc` or `Ctrl-C` exits.
+Package-pad → AP_GPIO mapping remains a PHY6252 SoC fact; LED/Restore meanings are board facts.
 
 ## Host Bluetooth LE
 
-`--ble` exposes the generic ATT mailbox through the host Bluetooth adapter. The firmware remains the source of application RX/TX data; the host supplies the real radio, advertising and GATT transport. `--tui` cannot be combined with `--ble`.
+`--ble` exposes the generic ATT mailbox through the host Bluetooth adapter. Firmware remains the source of application RX/TX data; the host provides the real BLE transport.
 
-Linux:
+```sh
+firmverse --ble firmware/kit-demo.hex
+```
 
-- BlueZ / `bluetoothd`;
-- `python3-dbus` and `python3-gi`;
-- an adapter exposing `GattManager1` and `LEAdvertisingManager1`.
-
-macOS:
-
-- Xcode Command Line Tools (`xcrun swiftc`); Bluetooth permission for `phy6252-ble`.
-- First `--ble` compiles `host/ble/darwin.swift` into `$TMPDIR/phy6252-ble-<version>/Phy6252Ble.app`.
-- If advertising never starts: System Settings → Privacy & Security → Bluetooth, allow `phy6252-ble`.
+Linux uses BlueZ. macOS uses the system Bluetooth stack through the Swift helper under `host/ble/`.
 
 Default public test profile:
 
@@ -171,36 +156,31 @@ Default public test profile:
 | RX write | `6B1D0002-7C8E-4A91-9F2B-E3A14C5B0001` |
 | TX notify | `6B1D0003-7C8E-4A91-9F2B-E3A14C5B0001` |
 
-All values are runtime-configurable:
+Values are runtime-configurable with `--ble-name`, `--ble-service`, `--ble-rx`, and `--ble-tx`.
+
+## Persistent NOR
+
+Set `PHY6252_FLASH_STATE` to preserve the complete 256 KiB PHY6252 NOR image between runs:
 
 ```sh
-phy6252 --ble \
-  --ble-name DEVICE \
-  --ble-service 12345678-1234-5678-1234-56789abcdef0 \
-  --ble-rx      12345678-1234-5678-1234-56789abcdef1 \
-  --ble-tx      12345678-1234-5678-1234-56789abcdef2 \
-  firmware.hex
+PHY6252_FLASH_STATE=.state/device.flash \
+  firmverse --strict firmware.hex
 ```
 
-## Strict discovery
+The state file is tied to the baseline firmware image so an incompatible snapshot is not silently restored over another image.
 
-Use a firmware image as the executable specification for the next missing chip behavior:
+## Flash real PHY6252 hardware
+
+Firmware execution and real-hardware tooling live in the same repository, but the flasher remains SoC-specific:
 
 ```sh
-phy6252 --strict --once firmware.hex
+make -C firmware/silicon
+cargo run --release --bin phy6252-flash -- firmware/build/rssi-rank-ble.hex
 ```
 
-Unknown MMIO stops with a `DAccViol`; unknown vendor-ROM entrypoints stop as unmodeled ROM ABI. Confirmed functions are then implemented narrowly from the public chip/SDK contract. Blanket `BX LR` stubs are intentionally avoided.
+The SDK-backed silicon image requires PHY62XX SDK 3.1.2. `PHY62XX_SDK` overrides the SDK path. See `HARDWARE_FLASH.md` for the CH340 / ROM bootloader path and the Python tooling.
 
-This keeps one source of truth:
-
-```text
-firmware
-  -> Cortex-M0 / OSAL / vendor ABI
-  -> generic host-controller boundary
-  -> Linux BlueZ (optional)
-  -> real Bluetooth adapter
-```
+This distinction is intentional: **Firmverse is the lab; `phy6252-flash` is one hardware adapter inside it.** Future SoCs can add their own flashing transport without polluting the CPU or World layers.
 
 ## Demo and regression firmware
 
@@ -208,16 +188,20 @@ firmware
 make -C firmware clean all
 ```
 
-Requires `arm-none-eabi-gcc`.
+Freestanding images include:
 
-Freestanding images (`make -C firmware`):
+- `kit-demo.hex` — interactive PB-03F board demo;
+- `rssi-rank.hex` — strongest BLE advertisers mapped to board LEDs;
+- `capability-demo.hex` — strict regression covering OSAL, NOR, AES, controller ABI, GPIO/ADC/PWM/UART and DMAC paths.
 
-- `kit-demo.hex` - small interactive board demo;
-- `rssi-rank.hex` - top-5 BLE advertisers mapped onto the five kit LEDs (emulator mailbox);
-- `capability-demo.hex` - strict regression covering OSAL memory/queues, NOR, AES, controller ABI, GPIO/ADC/PWM/UART and DMAC paths.
+CI additionally builds and validates a real vendor PHY62XX SDK 3.1.2 BLE image.
 
-`make -C firmware/silicon` additionally builds `rssi-rank-ble.hex` when PHY62XX SDK 3.1.2 is present. That image talks to the real 2.4 GHz radio.
+## Architecture
 
-The CI runs Rust tests, both strict firmware smokes, and a two-run persistent-NOR restore check. CI installs Node via `actions/setup-node` with `lts/*`; GitHub JavaScript actions used by the workflow target the current Node 24 action runtime.
+See `ARCHITECTURE.md` for the ownership rules and migration plan.
 
-Machine protocol: [PROTOCOL.md](PROTOCOL.md).
+The short version:
+
+> **SoC defines how the device works. Board defines how it is physically assembled. World defines the reality around it.**
+
+This lets the same Firmverse runtime grow from one PHY6252 board into mixed SoC/board simulations without turning the environment, UI or CI into chip-specific code.
