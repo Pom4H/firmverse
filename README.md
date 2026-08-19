@@ -2,7 +2,7 @@
 
 **Virtual embedded systems lab for real firmware.**
 
-Firmverse runs firmware against explicit CPU, SoC and board models, then places one or more virtual devices into a shared World. It can be used as a CLI locally or as a reusable GitHub Action from a firmware repository.
+Firmverse runs firmware against explicit CPU, SoC and board models, then places one or more virtual devices into a shared World. It can be used as a CLI locally, as a reusable GitHub Action, or as a WebAssembly Browser Lab.
 
 ```text
 Firmware
@@ -79,15 +79,50 @@ Outputs are `log` and `binary`. See [`docs/GITHUB_ACTION.md`](docs/GITHUB_ACTION
 
 | Layer | Model | Status |
 |---|---|---|
-| CPU | Cortex-M0 via `jjkt/zmu` | working |
+| CPU | Cortex-M0 via `jjkt/zmu` | working native + WebAssembly |
 | SoC | PHY6252 | working, strict regression coverage |
 | Board | AI-Thinker PB-03F-Kit | working |
 | Board | headless PHY6252 | working |
 | SoC | WCH CH592F / QingKe V4C | registered, execution backend not implemented yet |
 | Board | WeAct CH592F Core Board | registered, waits for CH592F SoC |
-| World | mesh / still / crowd | working |
+| World | mesh / still / crowd | working native + Browser Lab |
+| Browser | WASM Worker + Board/World custom elements | working |
 
 `firmverse` fails closed for a registered board whose SoC backend does not exist. CH592F is intentionally **not** treated as another PHY6252 board.
+
+## Browser Lab
+
+The browser runs the **same Rust PHY6252/zmu core**, compiled to `wasm32-unknown-unknown`. CPU execution stays inside a Web Worker; the main thread only visualizes and edits the model.
+
+```text
+Rust core → firmverse.wasm → Web Worker → Board + World custom elements
+```
+
+Build the static lab:
+
+```sh
+bash tools/build_web.sh
+python3 -m http.server 8080 -d web/dist
+```
+
+Then open `http://localhost:8080` and drop an Intel HEX file into the page.
+
+The first Browser Lab slice supports:
+
+- loading real PHY6252 Intel HEX without uploading it to a server;
+- several firmware nodes in one World;
+- draggable board positions backed by real World `x/y` coordinates;
+- live RF/RSSI links produced by the Rust World model;
+- PB-03F visualization generated from `BoardProfile` metadata;
+- live indicator state;
+- external GPIO switches and ADC sliders generated from SoC pin metadata;
+- UART inspection;
+- `mesh`, `still` and `crowd` Worlds;
+- Run / Stop / Step execution in a Worker.
+
+The important detail is that the browser does not keep its own PB-03F pinout or RF formula. Registry metadata comes from Rust and dragging a node changes the coordinates used by `World::radio()`.
+
+See [`docs/WEB.md`](docs/WEB.md) for the browser ABI, metadata model and editor architecture.
 
 ## Local build
 
@@ -157,26 +192,32 @@ A World works with node identity, position, radio observations and environment i
 action.yml             public GitHub Action contract
 action/run.sh          Action runtime wrapper
 src/
-  main.rs              CLI / composition root
+  lib.rs               shared native/WASM composition root
+  main.rs              native CLI composition
+  web_runtime.rs       Browser Lab runtime + raw WASM ABI
   soc.rs               SoC + CPU backend registry
   soc/phy6252/         PHY6252 implementation and package metadata
   board.rs             board profiles and physical wiring metadata
   world.rs             environment / RF model
-  sim.rs               multi-node runtime
+  sim.rs               native multi-node runtime
   tui.rs               terminal frontend consuming board + SoC metadata
-  emu.rs               single-node runtime frontend
+  emu.rs               native single-node runtime frontend
   ble_host.rs          host BLE bridge
+web/
+  src/                 static Browser Lab + custom elements + Worker
+  smoke.mjs            executable WASM regression
 firmware/               regression/demo firmware
 host/                   host-side helpers
 examples/github-actions/ full workflow examples
 docs/                   focused documentation
 ```
 
-PHY6252 implementation files are being namespaced incrementally. They already live physically under `src/soc/phy6252/`; a small `#[path]` compatibility shim keeps the existing internal module names stable while imports are migrated without a giant mechanical diff.
+PHY6252 implementation files are being namespaced incrementally. They already live physically under `src/soc/phy6252/`; a small `#[path]` compatibility shim in `src/lib.rs` keeps existing internal module names stable while imports are migrated without a giant mechanical diff.
 
 ## Documentation
 
 - [`docs/GITHUB_ACTION.md`](docs/GITHUB_ACTION.md) — public Action inputs, outputs and examples.
+- [`docs/WEB.md`](docs/WEB.md) — WebAssembly runtime, Worker ABI, Board elements and World editor.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — ownership boundaries, runtime composition and migration rules.
 - [`docs/PHY6252.md`](docs/PHY6252.md) — implemented PHY6252 surface, package pins and regression strategy.
 - [`docs/CI.md`](docs/CI.md) — deeper CI strategy and direct CLI integration.
@@ -187,4 +228,4 @@ PHY6252 implementation files are being namespaced incrementally. They already li
 
 > **SoC defines how the chip works. Board defines how it is physically assembled. World defines the reality around it.**
 
-That boundary is what allows Firmverse to grow from PHY6252 into mixed Cortex-M and RISC-V systems without turning every frontend into a collection of chip-specific special cases.
+That boundary is what allows Firmverse to grow from PHY6252 into mixed Cortex-M and RISC-V systems while native, CI and browser frontends continue to execute and visualize the same model.
