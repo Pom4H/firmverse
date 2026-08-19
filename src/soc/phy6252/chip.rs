@@ -79,6 +79,38 @@ impl Chip {
         y: f64,
     ) -> Result<Self, String> {
         let image = HexImage::load(hex).map_err(|e| format!("{}: {e}", hex.display()))?;
+        let label = hex
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| hex.display().to_string());
+        Self::from_image(id, label, image, strict, mac, x, y)
+    }
+
+    /// Build the exact same PHY6252 runtime from Intel HEX text already in
+    /// memory. Browser/WASM callers use this instead of inventing a virtual
+    /// filesystem around `load`.
+    pub fn load_text(
+        id: String,
+        label: String,
+        text: &str,
+        strict: bool,
+        mac: [u8; 6],
+        x: f64,
+        y: f64,
+    ) -> Result<Self, String> {
+        let image = HexImage::parse(text).map_err(|e| format!("{label}: {e}"))?;
+        Self::from_image(id, label, image, strict, mac, x, y)
+    }
+
+    fn from_image(
+        id: String,
+        hex_label: String,
+        image: HexImage,
+        strict: bool,
+        mac: [u8; 6],
+        x: f64,
+        y: f64,
+    ) -> Result<Self, String> {
         let mut sram = vec![0u8; SRAM_SIZE];
         let mut xip = vec![0u8; XIP_SIZE];
         image.fill(SRAM_BASE, &mut sram);
@@ -96,7 +128,7 @@ impl Chip {
         let device = DiscoveryBus::new(device, strict);
         let sp = u32::from_le_bytes(vectors[0..4].try_into().unwrap());
         let reset = u32::from_le_bytes(vectors[4..8].try_into().unwrap());
-        eprintln!("hex {}", hex.display());
+        eprintln!("hex {hex_label}");
         eprintln!(
             "node {id} mac={mac} Vectors={vector_base:#010x} bytes={:#x} SP={sp:#010x} Reset={reset:#010x}",
             vectors.len(),
@@ -116,10 +148,7 @@ impl Chip {
         mailbox::plant_magic(&mut processor).map_err(|fault| format!("mailbox plant {fault}"))?;
 
         Ok(Self {
-            hex_label: hex
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| hex.display().to_string()),
+            hex_label,
             id,
             mac,
             x,
