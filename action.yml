@@ -1,0 +1,116 @@
+name: Firmverse firmware test
+description: Run embedded firmware in Firmverse directly from GitHub Actions
+branding:
+  icon: cpu
+  color: purple
+
+inputs:
+  firmware:
+    description: Path to the firmware HEX file in the caller repository
+    required: true
+  board:
+    description: Firmverse board profile
+    required: false
+    default: pb03f-kit
+  mode:
+    description: Execution mode: single or mesh
+    required: false
+    default: single
+  world:
+    description: World used by mesh mode
+    required: false
+    default: mesh
+  nodes:
+    description: Number of firmware nodes in mesh mode
+    required: false
+    default: '2'
+  ticks:
+    description: Number of deterministic world ticks in mesh mode
+    required: false
+    default: '200'
+  strict:
+    description: Fail on unmodeled SoC MMIO or vendor ROM behavior
+    required: false
+    default: 'true'
+  max-insns:
+    description: Optional instruction budget override
+    required: false
+    default: ''
+  expect:
+    description: Optional newline-separated fixed strings that must appear in the log
+    required: false
+    default: ''
+  log:
+    description: Log file path, relative to the caller workspace unless absolute
+    required: false
+    default: firmverse.log
+
+outputs:
+  log:
+    description: Absolute path to the Firmverse log
+    value: ${{ steps.run.outputs.log }}
+  binary:
+    description: Absolute path to the built Firmverse binary
+    value: ${{ steps.build.outputs.binary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Restore Firmverse build cache
+      uses: actions/cache@v5
+      with:
+        path: ${{ github.action_path }}/target
+        key: firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ github.action_ref }}
+        restore-keys: |
+          firmverse-action-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Prepare pinned zmu backend
+      shell: bash
+      env:
+        ZMU_REV: 72feb753fea97babc00cc88f2c75e814efc1bfd2
+      run: |
+        set -euo pipefail
+        zmu_dir="${GITHUB_ACTION_PATH}/third_party/zmu"
+        if [[ -f "$zmu_dir/zmu_cortex_m/Cargo.toml" ]]; then
+          exit 0
+        fi
+        rm -rf "$zmu_dir"
+        mkdir -p "$zmu_dir"
+        git -C "$zmu_dir" init -q
+        git -C "$zmu_dir" remote add origin https://github.com/jjkt/zmu.git
+        git -C "$zmu_dir" fetch -q --depth 1 origin "$ZMU_REV"
+        git -C "$zmu_dir" checkout -q --detach FETCH_HEAD
+
+    - name: Build Firmverse
+      id: build
+      shell: bash
+      run: |
+        set -euo pipefail
+        cargo build \
+          --release \
+          --locked \
+          --bin firmverse \
+          --manifest-path "${GITHUB_ACTION_PATH}/Cargo.toml"
+        binary="${GITHUB_ACTION_PATH}/target/release/firmverse"
+        test -x "$binary"
+        echo "binary=$binary" >> "$GITHUB_OUTPUT"
+
+    - name: Run firmware in Firmverse
+      id: run
+      shell: bash
+      env:
+        FIRMVERSE_BIN: ${{ steps.build.outputs.binary }}
+        FIRMVERSE_FIRMWARE: ${{ inputs.firmware }}
+        FIRMVERSE_BOARD: ${{ inputs.board }}
+        FIRMVERSE_MODE: ${{ inputs.mode }}
+        FIRMVERSE_WORLD: ${{ inputs.world }}
+        FIRMVERSE_NODES: ${{ inputs.nodes }}
+        FIRMVERSE_TICKS: ${{ inputs.ticks }}
+        FIRMVERSE_STRICT: ${{ inputs.strict }}
+        FIRMVERSE_MAX_INSNS: ${{ inputs.max-insns }}
+        FIRMVERSE_EXPECT: ${{ inputs.expect }}
+        FIRMVERSE_LOG: ${{ inputs.log }}
+      run: bash "${GITHUB_ACTION_PATH}/action/run.sh"
