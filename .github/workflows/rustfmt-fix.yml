@@ -1,0 +1,33 @@
+name: rustfmt-fix
+
+on:
+  push:
+    branches: [refactor/phy6252-layout-docs-actions]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refactor/phy6252-layout-docs-actions
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all
+      - name: Commit formatting
+        run: |
+          git add src
+          if git diff --cached --quiet; then
+            echo 'Already formatted'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Apply rustfmt after hardware ownership refactor'
+          git push origin HEAD:refactor/phy6252-layout-docs-actions
