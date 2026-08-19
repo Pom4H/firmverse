@@ -1,10 +1,8 @@
 # Firmverse
 
-**A virtual embedded systems lab for real firmware, SoCs, boards and multi-node worlds.**
+**Virtual embedded systems lab for real firmware.**
 
-Firmverse executes firmware, models chip/board behavior, runs several devices in a shared environment, bridges selected peripherals to the host, and keeps hardware flashing tools beside the virtual model.
-
-The project started with PHY6252 / AI-Thinker PB-03F-Kit and is being generalized without throwing away the strict firmware regressions that made that model useful.
+Firmverse runs firmware against explicit CPU, SoC and board models, then places one or more virtual devices into a shared World. The same repository also contains host bridges, regression firmware and SoC-specific hardware tooling.
 
 ```text
 Firmware
@@ -18,190 +16,124 @@ Board
 World
 ```
 
-Today PHY6252 executes on the vendored [jjkt/zmu](https://github.com/jjkt/zmu) Cortex-M engine (`armv6m` / Cortex-M0). The SoC registry keeps the same zmu backend available for future Cortex-M0+/M3/M4/M4F/M7 SoCs. CH592F / WeAct is registered separately as a future RISC-V QingKe V4C backend; Firmverse deliberately refuses to pretend it is another PHY6252 board.
+The important rule is ownership: the CPU executes instructions, the SoC owns firmware-visible hardware, the Board owns physical wiring, and the World owns the environment between devices.
+
+## Status
+
+| Layer | Model | Status |
+|---|---|---|
+| CPU | Cortex-M0 via `jjkt/zmu` | working |
+| SoC | PHY6252 | working, strict regression coverage |
+| Board | AI-Thinker PB-03F-Kit | working |
+| Board | headless PHY6252 | working |
+| SoC | WCH CH592F / QingKe V4C | registered, execution backend not implemented yet |
+| Board | WeAct CH592F Core Board | registered, waits for CH592F SoC |
+| World | mesh / still / crowd | working |
+
+`firmverse` fails closed for a registered board whose SoC backend does not exist. CH592F is intentionally **not** treated as another PHY6252 board.
 
 ## Build
 
 ```sh
 git clone --recurse-submodules https://github.com/Pom4H/firmverse.git
 cd firmverse
-cargo build --release
+cargo build --release --locked
 ```
 
-The main binary is `firmverse`.
+Inspect the registered layers:
 
 ```sh
-firmverse socs
-firmverse boards
-firmverse worlds
+./target/release/firmverse socs
+./target/release/firmverse boards
+./target/release/firmverse worlds
 ```
 
-## Run firmware
+## Run one firmware image
 
-The current executable SoC is PHY6252 and accepts Intel HEX images.
+PHY6252 currently accepts Intel HEX images.
 
 ```sh
-firmverse firmware/kit-demo.hex
-firmverse --raw firmware/kit-demo.hex
-firmverse --strict --once firmware/kit-demo.hex
-firmverse --tui firmware/kit-demo.hex
+./target/release/firmverse firmware/build/kit-demo.hex
+./target/release/firmverse --raw firmware/build/kit-demo.hex
+./target/release/firmverse --strict --once firmware/build/kit-demo.hex
+./target/release/firmverse --board pb03f-kit --tui firmware/build/kit-demo.hex
 ```
 
 `--strict-mmio` remains an alias for `--strict`.
 
-Select a board profile independently of the SoC implementation:
+Board selection is independent from the SoC implementation:
 
 ```sh
-firmverse --board pb03f-kit firmware/kit-demo.hex
-firmverse --board headless firmware/kit-demo.hex
+./target/release/firmverse --board pb03f-kit firmware/build/kit-demo.hex
+./target/release/firmverse --board headless firmware/build/kit-demo.hex
 ```
 
-`headless` removes PB-03F-specific LED naming while keeping the same PHY6252 SoC execution path.
+The `headless` profile uses the same PHY6252 SoC without PB-03F connector/LED semantics.
 
-## Multi-node simulation
-
-`firmverse sim` runs one or more firmware nodes on one 1 ms virtual clock. Each node has its own firmware instance, MAC address, position and board profile. `World` owns what happens between the nodes.
+## Run several devices in one World
 
 ```sh
-firmverse sim \
+./target/release/firmverse sim \
   --world mesh \
   --node a=firmware/build/rssi-rank.hex \
   --node b@3,0=firmware/build/rssi-rank.hex
 ```
 
-For deterministic CI runs:
+Deterministic CI form:
 
 ```sh
-firmverse sim \
+./target/release/firmverse sim \
   --strict \
   --once \
-  --ticks 2000 \
+  --ticks 200 \
   --raw \
   --world mesh \
   --node a=firmware/build/rssi-rank.hex \
   --node b=firmware/build/rssi-rank.hex
 ```
 
-Current built-in Worlds:
+A World works with node identity, position, radio observations and environment inputs. It does not know that a node happens to be a PB-03F-Kit.
 
-- `mesh` — firmware nodes only; every node can hear the others when RF distance allows it;
-- `still` — five static virtual BLE advertisers;
-- `crowd` — six moving virtual advertisers.
-
-The current RF model is intentionally lightweight: distance becomes RSSI, advertisers become `scan`/`gone` observations, and the firmware reacts through the same mailbox/controller boundary as the single-node emulator. It is not a cycle-accurate 2.4 GHz PHY.
-
-The runtime already stores a board per node. The CLI currently applies one `sim --board` profile to every node; per-node board syntax can be added without changing the World model.
-
-## PHY6252 model
-
-The PHY6252 implementation executes real Cortex-M0 HEX images and models the surfaces exercised by the strict capability regression:
-
-- relocated Cortex-M0 vectors, SRAM and 256 KiB XIP flash;
-- GPIO, UART0/UART1, ADC, six PWM channels and timers;
-- PCR, AON, cache, clock, SPI-flash and DMAC register behavior used by firmware;
-- NOR erase/program semantics and optional persistent flash state;
-- eFuse/AES bootstrap behavior and ARM EABI helpers;
-- OSAL heap, memory, linked message queues, events, timers and cooperative task dispatch;
-- exercised PHY6252 HCI/LL/GAP/GATT/security ROM ABI at a host-controller boundary;
-- generic ATT RX/TX mailbox transport;
-- strict discovery for unknown MMIO or vendor-ROM behavior.
-
-Unknown behavior does not silently become success in strict mode. The firmware stops at the missing MMIO/ROM surface so the model can be extended from an observable requirement instead of adding blanket no-op stubs.
-
-```sh
-firmverse --strict --once firmware.hex
-```
-
-That fail-closed workflow is one of the main design rules of Firmverse.
-
-## RSSI / BLE demo
-
-`firmware/build/rssi-rank.hex` keeps the five strongest advertisers and assigns sticky PB-03F LEDs.
+## Repository layout
 
 ```text
-scan aa:bb:cc:dd:ee:01 -40
-scan aa:bb:cc:dd:ee:02 -55
-gone aa:bb:cc:dd:ee:01
+src/
+  main.rs              CLI / composition root
+  soc.rs               SoC + CPU backend registry
+  soc/phy6252/         PHY6252 implementation and package metadata
+  board.rs             board profiles and physical wiring metadata
+  world.rs             environment / RF model
+  sim.rs               multi-node runtime
+  tui.rs               terminal frontend consuming board + SoC metadata
+  emu.rs               single-node runtime frontend
+  ble_host.rs          host BLE bridge
+firmware/               regression/demo firmware
+host/                   host-side helpers
+examples/github-actions/ copyable CI workflows
+docs/                   focused documentation
 ```
 
-PB-03F mappings used by the board profile:
+PHY6252 implementation files are being namespaced incrementally. They already live physically under `src/soc/phy6252/`; a small `#[path]` compatibility shim keeps the existing internal module names stable while imports are migrated without a giant mechanical diff.
 
-| Function | Pin |
-|---|---|
-| red | P7 |
-| green | P11 |
-| blue | P18 |
-| yellow | P0 |
-| white | P34 |
-| Restore | P15 |
+## Documentation
 
-Package-pad → AP_GPIO mapping remains a PHY6252 SoC fact; LED/Restore meanings are board facts.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — ownership boundaries, runtime composition and migration rules.
+- [`docs/PHY6252.md`](docs/PHY6252.md) — implemented PHY6252 surface, package pins and regression strategy.
+- [`docs/CI.md`](docs/CI.md) — GitHub Actions integration and copyable examples.
+- [`HARDWARE_FLASH.md`](HARDWARE_FLASH.md) — flashing real PHY6252 hardware and SDK 3.1.2 flow.
+- [`PROTOCOL.md`](PROTOCOL.md) — raw line protocol used by frontends and tests.
 
-## Host Bluetooth LE
+## GitHub Actions
 
-`--ble` exposes the generic ATT mailbox through the host Bluetooth adapter. Firmware remains the source of application RX/TX data; the host provides the real BLE transport.
+Copy an example from [`examples/github-actions/`](examples/github-actions/) into your firmware repository:
 
-```sh
-firmverse --ble firmware/kit-demo.hex
-```
+- `firmware-smoke.yml` — build Firmverse and execute one PHY6252 image in strict mode;
+- `mesh-regression.yml` — run two firmware nodes in a deterministic shared mesh World.
 
-Linux uses BlueZ. macOS uses the system Bluetooth stack through the Swift helper under `host/ble/`.
+The repository CI uses the same public binary surface as users: `firmverse`, `firmverse sim`, `socs`, `boards`, and `worlds`.
 
-Default public test profile:
+## Design principle
 
-| Setting | Value |
-|---|---|
-| Local name | `PB03FKIT` |
-| Service | `6B1D0001-7C8E-4A91-9F2B-E3A14C5B0001` |
-| RX write | `6B1D0002-7C8E-4A91-9F2B-E3A14C5B0001` |
-| TX notify | `6B1D0003-7C8E-4A91-9F2B-E3A14C5B0001` |
+> **SoC defines how the chip works. Board defines how it is physically assembled. World defines the reality around it.**
 
-Values are runtime-configurable with `--ble-name`, `--ble-service`, `--ble-rx`, and `--ble-tx`.
-
-## Persistent NOR
-
-Set `PHY6252_FLASH_STATE` to preserve the complete 256 KiB PHY6252 NOR image between runs:
-
-```sh
-PHY6252_FLASH_STATE=.state/device.flash \
-  firmverse --strict firmware.hex
-```
-
-The state file is tied to the baseline firmware image so an incompatible snapshot is not silently restored over another image.
-
-## Flash real PHY6252 hardware
-
-Firmware execution and real-hardware tooling live in the same repository, but the flasher remains SoC-specific:
-
-```sh
-make -C firmware/silicon
-cargo run --release --bin phy6252-flash -- firmware/build/rssi-rank-ble.hex
-```
-
-The SDK-backed silicon image requires PHY62XX SDK 3.1.2. `PHY62XX_SDK` overrides the SDK path. See `HARDWARE_FLASH.md` for the CH340 / ROM bootloader path and the Python tooling.
-
-This distinction is intentional: **Firmverse is the lab; `phy6252-flash` is one hardware adapter inside it.** Future SoCs can add their own flashing transport without polluting the CPU or World layers.
-
-## Demo and regression firmware
-
-```sh
-make -C firmware clean all
-```
-
-Freestanding images include:
-
-- `kit-demo.hex` — interactive PB-03F board demo;
-- `rssi-rank.hex` — strongest BLE advertisers mapped to board LEDs;
-- `capability-demo.hex` — strict regression covering OSAL, NOR, AES, controller ABI, GPIO/ADC/PWM/UART and DMAC paths.
-
-CI additionally builds and validates a real vendor PHY62XX SDK 3.1.2 BLE image.
-
-## Architecture
-
-See `ARCHITECTURE.md` for the ownership rules and migration plan.
-
-The short version:
-
-> **SoC defines how the device works. Board defines how it is physically assembled. World defines the reality around it.**
-
-This lets the same Firmverse runtime grow from one PHY6252 board into mixed SoC/board simulations without turning the environment, UI or CI into chip-specific code.
+That boundary is what allows Firmverse to grow from PHY6252 into mixed Cortex-M and RISC-V systems without turning every frontend into a collection of chip-specific special cases.
