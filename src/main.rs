@@ -1,68 +1,8 @@
-#![allow(dead_code)]
-
-// Migration shim: the PHY6252 implementation is physically grouped under
-// src/soc/phy6252 while legacy crate:: module names remain stable. New SoC
-// contracts should be added through crate::soc::*; the shim can disappear as
-// the implementation is namespaced incrementally.
-#[path = "soc/phy6252/aes.rs"]
-mod aes;
-#[path = "soc/phy6252/arm_abi.rs"]
-mod arm_abi;
-mod ble_host;
-#[path = "soc/phy6252/ble_rom.rs"]
-mod ble_rom;
-#[path = "soc/phy6252/bm_rom.rs"]
-mod bm_rom;
-mod board;
-#[path = "soc/phy6252/bus.rs"]
-mod bus;
-#[path = "soc/phy6252/cbtimer_rom.rs"]
-mod cbtimer_rom;
-#[path = "soc/phy6252/chip.rs"]
-mod chip;
-#[path = "soc/phy6252/cmd.rs"]
-mod cmd;
-#[path = "soc/phy6252/discovery.rs"]
-mod discovery;
-#[path = "soc/phy6252/dma_engine.rs"]
-mod dma_engine;
-mod emu;
-#[path = "soc/phy6252/flash_state.rs"]
-mod flash_state;
-#[path = "soc/phy6252/hci_caps.rs"]
-mod hci_caps;
-#[path = "soc/phy6252/hci_extra.rs"]
-mod hci_extra;
-#[path = "soc/phy6252/hci_rom.rs"]
-mod hci_rom;
-#[path = "soc/phy6252/hci_security.rs"]
-mod hci_security;
-#[path = "soc/phy6252/hci_task.rs"]
-mod hci_task;
-mod hex;
-#[path = "soc/phy6252/ll_crypto.rs"]
-mod ll_crypto;
-#[path = "soc/phy6252/ll_rom.rs"]
-mod ll_rom;
-#[path = "soc/phy6252/mailbox.rs"]
-mod mailbox;
-#[path = "soc/phy6252/osal.rs"]
-mod osal;
-#[path = "soc/phy6252/osal_power.rs"]
-mod osal_power;
-#[path = "soc/phy6252/osal_queue.rs"]
-mod osal_queue;
-#[path = "soc/phy6252/silicon_regs.rs"]
-mod silicon_regs;
-mod sim;
-mod soc;
-mod tui;
-mod world;
-
-use ble_host::BleHostOpts;
-use board::{require_phy6252, BoardKind, PROFILES};
 use clap::{Parser, Subcommand};
-use emu::{default_hex, run, RunOpts};
+use firmverse::ble_host::{self, BleHostOpts};
+use firmverse::board::{require_phy6252, BoardKind, PROFILES};
+use firmverse::emu::{self, default_hex, run, RunOpts};
+use firmverse::{sim, soc, tui};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tui::TuiOpts;
