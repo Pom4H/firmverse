@@ -108,12 +108,7 @@ pub fn run(opts: SimOpts) -> Result<ExitCode, String> {
                 chip.y,
                 chip.hex_label
             );
-            emit_gpio_for_board(
-                &chip.gpio_bank(),
-                true,
-                tag_of(&chip.id, tagged),
-                board,
-            );
+            emit_gpio_for_board(&chip.gpio_bank(), true, tag_of(&chip.id, tagged), board);
         }
     } else if live {
         eprintln!("{}", HELP.trim_end());
@@ -422,12 +417,7 @@ fn report_stop(
     reason: &str,
 ) -> Result<ExitCode, String> {
     for (chip, board) in chips.iter_mut().zip(boards.iter().copied()) {
-        emit_gpio_for_board(
-            &chip.gpio_bank(),
-            raw,
-            tag_of(&chip.id, tagged),
-            board,
-        );
+        emit_gpio_for_board(&chip.gpio_bank(), raw, tag_of(&chip.id, tagged), board);
         let (pc, lr, msp) = chip.pc_lr_msp();
         eprintln!(
             "node {} board={} insns={} pc={pc:#010x} lr={lr:#010x} msp={msp:#010x}",
