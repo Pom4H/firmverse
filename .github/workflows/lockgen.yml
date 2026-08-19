@@ -1,24 +1,32 @@
 name: lockgen
 
 on:
-  pull_request:
+  push:
+    branches: [chore/sync-firmverse-lock]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  generate:
+  sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - name: Generate Cargo.lock
-        run: cargo generate-lockfile
-      - name: Upload generated Cargo.lock
-        uses: actions/upload-artifact@v7
-        with:
-          name: generated-cargo-lock
-          path: Cargo.lock
-          if-no-files-found: error
+      - name: Let Cargo minimally reconcile the existing lockfile
+        run: cargo check --quiet
+      - name: Show lockfile diff
+        run: git diff -- Cargo.lock
+      - name: Commit generated lockfile if changed
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo 'Cargo.lock already synchronized'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.lock
+          git commit -m 'Sync Cargo.lock with Firmverse package name'
+          git push origin HEAD:chore/sync-firmverse-lock
