@@ -1,4 +1,4 @@
-name: public-action-smoke
+name: integration-smoke
 
 on:
   push:
@@ -91,3 +91,73 @@ jobs:
           name: firmverse-public-action-smoke
           path: firmverse-action-logs/*.log
           if-no-files-found: warn
+
+  browser-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: firmverse-web-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'src/**/*.rs') }}
+          restore-keys: |
+            firmverse-web-${{ runner.os }}-
+
+      - name: Build browser lab
+        run: bash tools/build_web.sh
+
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check web/dist/engine-worker.js
+          node --check web/dist/elements.js
+          node --check web/dist/app.js
+
+      - name: Execute Firmverse WASM smoke
+        run: node web/smoke.mjs web/dist/firmverse.wasm
+
+      - name: Publish browser lab artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmverse-browser-lab
+          path: web/dist
+          if-no-files-found: error
+
+  browser-refactor-fix:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/browser-lab'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/browser-lab
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format and refresh lockfile
+        run: |
+          cargo fmt --all
+          cargo check || true
+      - name: Commit generated source and lockfile
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet -- Cargo.lock src; then
+            exit 0
+          fi
+          git add Cargo.lock src
+          git commit -m 'Format browser runtime and refresh Cargo lock'
+          git push origin HEAD:feature/browser-lab
