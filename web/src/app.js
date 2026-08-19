@@ -185,20 +185,12 @@ worldSelect.addEventListener('change', () => {
   worker.postMessage({ type: 'setWorld', world: worldSelect.value, looping: true });
 });
 
-let moveTimer = null;
-let pendingMove = null;
 worldElement.addEventListener('select-node', (event) => {
   state.selected = event.detail.id;
   refresh();
 });
 worldElement.addEventListener('move-node', (event) => {
-  pendingMove = event.detail;
-  if (moveTimer !== null) return;
-  moveTimer = setTimeout(() => {
-    worker.postMessage({ type: 'moveNode', ...pendingMove });
-    pendingMove = null;
-    moveTimer = null;
-  }, 32);
+  worker.postMessage({ type: 'moveNode', ...event.detail });
 });
 
 worker.onmessage = (event) => {
