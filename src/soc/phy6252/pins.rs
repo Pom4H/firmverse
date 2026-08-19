@@ -12,23 +12,91 @@ pub struct Pin {
 }
 
 pub const PINS: &[Pin] = &[
-    Pin { label: "P0", gpio_bit: 0, adc_channel: None },
-    Pin { label: "P2", gpio_bit: 2, adc_channel: None },
-    Pin { label: "P3", gpio_bit: 3, adc_channel: None },
-    Pin { label: "P7", gpio_bit: 4, adc_channel: None },
-    Pin { label: "P11", gpio_bit: 7, adc_channel: None },
-    Pin { label: "P14", gpio_bit: 8, adc_channel: None },
-    Pin { label: "P15", gpio_bit: 9, adc_channel: Some(1) },
-    Pin { label: "P16", gpio_bit: 10, adc_channel: None },
-    Pin { label: "P17", gpio_bit: 11, adc_channel: None },
-    Pin { label: "P18", gpio_bit: 12, adc_channel: None },
-    Pin { label: "P20", gpio_bit: 13, adc_channel: Some(0) },
-    Pin { label: "P23", gpio_bit: 14, adc_channel: Some(3) },
-    Pin { label: "P24", gpio_bit: 15, adc_channel: Some(2) },
-    Pin { label: "P31", gpio_bit: 19, adc_channel: None },
-    Pin { label: "P32", gpio_bit: 20, adc_channel: None },
-    Pin { label: "P33", gpio_bit: 21, adc_channel: None },
-    Pin { label: "P34", gpio_bit: 22, adc_channel: None },
+    Pin {
+        label: "P0",
+        gpio_bit: 0,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P2",
+        gpio_bit: 2,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P3",
+        gpio_bit: 3,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P7",
+        gpio_bit: 4,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P11",
+        gpio_bit: 7,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P14",
+        gpio_bit: 8,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P15",
+        gpio_bit: 9,
+        adc_channel: Some(1),
+    },
+    Pin {
+        label: "P16",
+        gpio_bit: 10,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P17",
+        gpio_bit: 11,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P18",
+        gpio_bit: 12,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P20",
+        gpio_bit: 13,
+        adc_channel: Some(0),
+    },
+    Pin {
+        label: "P23",
+        gpio_bit: 14,
+        adc_channel: Some(3),
+    },
+    Pin {
+        label: "P24",
+        gpio_bit: 15,
+        adc_channel: Some(2),
+    },
+    Pin {
+        label: "P31",
+        gpio_bit: 19,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P32",
+        gpio_bit: 20,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P33",
+        gpio_bit: 21,
+        adc_channel: None,
+    },
+    Pin {
+        label: "P34",
+        gpio_bit: 22,
+        adc_channel: None,
+    },
 ];
 
 pub fn by_label(label: &str) -> Option<Pin> {

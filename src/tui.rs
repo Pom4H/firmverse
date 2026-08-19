@@ -419,9 +419,8 @@ fn draw(state: &State) -> Result<(), String> {
 fn adc_summary(state: &State) -> String {
     (0..state.adc.len())
         .filter_map(|channel| {
-            pins::adc_pin(channel).map(|pin| {
-                format!("{}={:.3}V", pin.label, volts(state.adc[channel]))
-            })
+            pins::adc_pin(channel)
+                .map(|pin| format!("{}={:.3}V", pin.label, volts(state.adc[channel])))
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -533,8 +532,17 @@ mod tests {
     #[test]
     fn physical_board_rows_come_from_profile() {
         let board = board_profile(BoardKind::Pb03fKit);
-        assert_eq!(board.connector_rows.first().map(|row| (row.left, row.right)), Some(("P13", "P24")));
-        assert_eq!((board.connector_rows[3].left, board.connector_rows[3].right), ("P7", "P3"));
+        assert_eq!(
+            board
+                .connector_rows
+                .first()
+                .map(|row| (row.left, row.right)),
+            Some(("P13", "P24"))
+        );
+        assert_eq!(
+            (board.connector_rows[3].left, board.connector_rows[3].right),
+            ("P7", "P3")
+        );
         assert_eq!(board.connector_rows.len(), 15);
         let s = State::new(&opts());
         assert!(pin_text(&s, "P13").contains("silk"));
