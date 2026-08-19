@@ -20,17 +20,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Format and refresh Cargo lock
+      - name: Format, refresh Cargo lock and probe native compile
+        id: probe
+        shell: bash
         run: |
+          set -uo pipefail
           cargo fmt --all
           cargo check
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
       - name: Commit generated changes
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if git diff --quiet -- Cargo.lock src; then
-            exit 0
+          if ! git diff --quiet -- Cargo.lock src; then
+            git add Cargo.lock src
+            git commit -m 'Format browser runtime and refresh Cargo lock'
+            git push origin HEAD:feature/browser-lab
           fi
-          git add Cargo.lock src
-          git commit -m 'Format browser runtime and refresh Cargo lock'
-          git push origin HEAD:feature/browser-lab
+      - name: Report compile result
+        if: steps.probe.outputs.status != '0'
+        run: exit '${{ steps.probe.outputs.status }}'
