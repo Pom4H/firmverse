@@ -1,15 +1,15 @@
 [package]
-name = "phy6252-emu"
+name = "firmverse"
 version = "0.1.0"
 edition = "2021"
 publish = false
 license = "MIT"
-description = "PHY6252 Cortex-M0 chip emulator (AI-Thinker PB-03F-Kit)"
-repository = "https://github.com/Pom4H/phy6252-emu"
-default-run = "phy6252"
+description = "Virtual embedded systems lab for firmware emulation, multi-node simulation and hardware tooling"
+repository = "https://github.com/Pom4H/firmverse"
+default-run = "firmverse"
 
 [[bin]]
-name = "phy6252"
+name = "firmverse"
 path = "src/main.rs"
 
 [[bin]]
@@ -26,4 +26,6 @@ all = { level = "deny", priority = -1 }
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 serialport = { version = "4.7", default-features = false }
+# PHY6252 currently enables zmu's ARMv6-M engine. The SoC registry keeps the
+# backend boundary explicit so future Cortex-M SoCs can select other zmu profiles.
 zmu_cortex_m = { path = "third_party/zmu/zmu_cortex_m", default-features = false, features = ["armv6m"] }
