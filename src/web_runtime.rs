@@ -109,9 +109,7 @@ impl BrowserLab {
     pub fn pin(&mut self, id: &str, pin: &str, high: bool) -> Result<(), String> {
         let bit = pins::gpio_bit(pin).ok_or_else(|| format!("unknown PHY6252 pin {pin:?}"))?;
         let index = self.node_index(id)?;
-        self.nodes[index]
-            .chip
-            .apply(ChipCmd::Pin { bit, high })?;
+        self.nodes[index].chip.apply(ChipCmd::Pin { bit, high })?;
         Ok(())
     }
 
@@ -189,12 +187,7 @@ impl BrowserLab {
             .map(|signal| {
                 let output = ((bank.ddr >> signal.gpio_bit) & 1) != 0;
                 let level = ((bank.dr >> signal.gpio_bit) & 1) != 0;
-                let active = output
-                    && if signal.active_high {
-                        level
-                    } else {
-                        !level
-                    };
+                let active = output && if signal.active_high { level } else { !level };
                 json!({
                     "name": signal.name,
                     "pin": signal.pin,
@@ -358,12 +351,16 @@ thread_local! {
 }
 
 fn dispatch(raw: &str) -> Result<Value, String> {
-    let request: Value = serde_json::from_str(raw).map_err(|error| format!("bad request JSON: {error}"))?;
+    let request: Value =
+        serde_json::from_str(raw).map_err(|error| format!("bad request JSON: {error}"))?;
     let op = string(&request, "op")?;
     match op {
         "registry" => Ok(json!({ "ok": true, "registry": registry() })),
         "new" => {
-            let world = request.get("world").and_then(Value::as_str).unwrap_or("mesh");
+            let world = request
+                .get("world")
+                .and_then(Value::as_str)
+                .unwrap_or("mesh");
             let looping = request
                 .get("looping")
                 .and_then(Value::as_bool)
@@ -440,10 +437,13 @@ fn dispatch(raw: &str) -> Result<Value, String> {
                     Ok(json!({ "ok": true, "snapshot": lab.snapshot() }))
                 }
                 "adc" => {
-                    let values = request
-                        .get("values")
-                        .and_then(Value::as_array)
-                        .ok_or_else(|| "field values must be an array of four millivolt values".to_string())?;
+                    let values =
+                        request
+                            .get("values")
+                            .and_then(Value::as_array)
+                            .ok_or_else(|| {
+                                "field values must be an array of four millivolt values".to_string()
+                            })?;
                     if values.len() != 4 {
                         return Err("field values must contain exactly four entries".into());
                     }
@@ -503,7 +503,8 @@ fn set_result(value: Value) -> i32 {
         }
         Err(error) => {
             RESULT.with(|result| {
-                *result.borrow_mut() = format!("{{\"ok\":false,\"error\":{:?}}}", error.to_string()).into_bytes();
+                *result.borrow_mut() =
+                    format!("{{\"ok\":false,\"error\":{:?}}}", error.to_string()).into_bytes();
             });
             1
         }
@@ -526,7 +527,10 @@ pub extern "C" fn firmverse_call(len: usize) -> i32 {
     let raw = INPUT.with(|input| {
         let input = input.borrow();
         if len > input.len() {
-            return Err(format!("request length {len} exceeds reserved input {}", input.len()));
+            return Err(format!(
+                "request length {len} exceeds reserved input {}",
+                input.len()
+            ));
         }
         std::str::from_utf8(&input[..len])
             .map(str::to_owned)
