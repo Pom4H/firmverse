@@ -28,6 +28,7 @@ mod osal_power;
 mod osal_queue;
 mod silicon_regs;
 mod sim;
+mod soc;
 mod tui;
 mod world;
 
@@ -45,17 +46,17 @@ const DEFAULT_BLE_TX: &str = "6B1D0003-7C8E-4A91-9F2B-E3A14C5B0001";
 
 #[derive(Parser)]
 #[command(
-    name = "phy6252",
+    name = "firmverse",
     version,
-    about = "PHY6252 emulator with pluggable board profiles",
-    after_help = "Live REPL is the default. `phy6252 sim` runs a shared RF world with one or more chips (mesh). Use --board headless to remove PB-03F-Kit wiring assumptions. `phy6252 boards` lists known board profiles.",
+    about = "Virtual embedded systems lab for real firmware, SoCs, boards and multi-node worlds",
+    after_help = "Live REPL is the default. `firmverse sim` runs one or more firmware nodes in a shared World. `firmverse socs`, `firmverse boards`, and `firmverse worlds` show the registered layers.",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
 )]
 struct Cli {
-    /// Intel HEX image
+    /// Firmware image (PHY6252 currently accepts Intel HEX)
     hex: Option<PathBuf>,
-    /// Board wiring/profile layered above the PHY6252 SoC
+    /// Physical board profile layered above the selected SoC
     #[arg(long, value_enum, default_value_t = BoardKind::Pb03fKit)]
     board: BoardKind,
     /// Run until halt or --max-insns, no REPL
@@ -82,7 +83,7 @@ struct Cli {
     /// Generic GATT notify characteristic UUID used by --ble
     #[arg(long, default_value = DEFAULT_BLE_TX, requires = "ble")]
     ble_tx: String,
-    /// Fault on unmodeled PHY6252 MMIO or vendor ROM accesses
+    /// Fault on unmodeled SoC MMIO or vendor ROM accesses
     #[arg(long = "strict", visible_alias = "strict-mmio")]
     strict_mmio: bool,
     #[arg(long)]
@@ -93,12 +94,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Shared RF world with one or more chips (each with its own firmware)
+    /// Shared World with one or more firmware nodes
     Sim(SimCli),
-    /// List built-in RF worlds
+    /// List built-in Worlds
     Worlds,
     /// List board profiles and the SoC each one requires
     Boards,
+    /// List SoC models and CPU backends
+    Socs,
 }
 
 #[derive(Parser)]
@@ -106,13 +109,16 @@ struct SimCli {
     /// Node: id[@x,y]=firmware.hex (repeat). Default pose is 3 m apart on X.
     #[arg(long = "node", value_name = "SPEC")]
     nodes: Vec<String>,
-    /// Built-in world: crowd, still, mesh
+    /// Board profile used by every node in this run
+    #[arg(long, value_enum, default_value_t = BoardKind::Pb03fKit)]
+    board: BoardKind,
+    /// Built-in World: crowd, still, mesh
     #[arg(long)]
     world: Option<String>,
-    /// Wrap the world timeline (implied unless --once)
+    /// Wrap the World timeline (implied unless --once)
     #[arg(long = "loop")]
     looping: bool,
-    /// Finite world ticks, no sleep (for scripts / CI)
+    /// Finite World ticks, no sleep (for scripts / CI)
     #[arg(long)]
     once: bool,
     /// Tick count used with --once
@@ -124,12 +130,12 @@ struct SimCli {
     /// Realtime dashboard (one chip only)
     #[arg(long, conflicts_with_all = ["once", "raw"])]
     tui: bool,
-    /// Fault on unmodeled PHY6252 MMIO or vendor ROM accesses
+    /// Fault on unmodeled SoC MMIO or vendor ROM accesses
     #[arg(long = "strict", visible_alias = "strict-mmio")]
     strict: bool,
     #[arg(long)]
     max_insns: Option<u64>,
-    /// HEX used as a node when --node is omitted
+    /// Firmware used as a node when --node is omitted
     hex: Option<PathBuf>,
 }
 
@@ -152,6 +158,10 @@ fn run_cli() -> Result<ExitCode, String> {
         }
         Some(Command::Boards) => {
             print_boards();
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(Command::Socs) => {
+            print_socs();
             return Ok(ExitCode::SUCCESS);
         }
         Some(Command::Sim(sim_cli)) => return run_sim(sim_cli),
@@ -208,12 +218,13 @@ fn run_cli() -> Result<ExitCode, String> {
 
 fn print_boards() {
     for board in PROFILES {
+        let soc = soc::profile(board.soc);
         println!(
             "{:<14} soc={:<8} {}{}",
             board.id,
-            board.soc.id(),
+            soc.id,
             board.name,
-            if board.soc == board::SocKind::Phy6252 {
+            if soc.implemented {
                 ""
             } else {
                 " [SoC not implemented]"
@@ -223,8 +234,31 @@ fn print_boards() {
     }
 }
 
+fn print_socs() {
+    for soc in soc::PROFILES {
+        println!(
+            "{:<10} cpu={:<24} {}{}",
+            soc.id,
+            soc.cpu.label(),
+            soc.name,
+            if soc.implemented { "" } else { " [planned]" }
+        );
+        println!("  {}", soc.description);
+    }
+    let zmu = soc::ZMU_CORTEX_M_PROFILES
+        .iter()
+        .map(|profile| profile.id())
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("zmu Cortex-M profiles: {zmu}");
+}
+
 fn run_sim(cli: SimCli) -> Result<ExitCode, String> {
-    let nodes = sim::collect_nodes(&cli.nodes, cli.hex)?;
+    require_phy6252(cli.board)?;
+    let mut nodes = sim::collect_nodes(&cli.nodes, cli.hex)?;
+    for node in &mut nodes {
+        node.board = cli.board;
+    }
     let world = cli
         .world
         .unwrap_or_else(|| sim::default_world(nodes.len()).to_string());
