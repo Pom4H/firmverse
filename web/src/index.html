@@ -61,9 +61,12 @@
         <h2>Node</h2>
         <div id="empty-inspector" class="empty">Select a board in the World.</div>
         <div id="node-inspector" hidden>
-          <div class="node-title">
-            <strong id="node-name"></strong>
-            <span id="node-mac"></span>
+          <div class="node-title-row">
+            <div class="node-title">
+              <strong id="node-name"></strong>
+              <span id="node-mac"></span>
+            </div>
+            <button id="remove-node" class="danger" title="Remove node from World">Remove</button>
           </div>
           <firmverse-board id="board-preview" detail="full"></firmverse-board>
 
