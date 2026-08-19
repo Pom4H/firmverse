@@ -125,6 +125,8 @@ button:hover:not(:disabled) { border-color: #557078; background: #19282c; }
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: .38; cursor: default; }
 button.primary { color: #07110e; border-color: #8ce4c9; background: var(--accent); font-weight: 750; }
+button.danger { color: #e59b9f; border-color: #563238; background: #211517; font-size: 10px; padding: 7px 9px; }
+button.danger:hover:not(:disabled) { color: #ffd5d7; border-color: #7a444b; background: #2b181b; }
 
 .transport { display: grid; grid-template-columns: 1.25fr 1fr 1fr; gap: 7px; margin: 16px 0; }
 .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
@@ -134,9 +136,10 @@ button.primary { color: #07110e; border-color: #8ce4c9; background: var(--accent
 .hint { margin: 16px 0 0; color: #60777c; font-size: 11px; line-height: 1.5; }
 
 .empty { color: #667c81; font-size: 12px; line-height: 1.5; }
-.node-title { display: grid; gap: 3px; margin-bottom: 10px; }
+.node-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.node-title { display: grid; gap: 3px; min-width: 0; }
 .node-title strong { font-size: 13px; }
-.node-title span { color: #6f858a; font: 10px ui-monospace, monospace; }
+.node-title span { color: #6f858a; font: 10px ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
 #board-preview { padding: 8px; border: 1px solid #22363a; border-radius: 12px; background: #0b1315; }
 
 .pin-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
@@ -166,7 +169,7 @@ button.primary { color: #07110e; border-color: #8ce4c9; background: var(--accent
   .inspector { grid-column: 1 / -1; }
   #node-inspector { display: grid; grid-template-columns: 300px 1fr; column-gap: 20px; }
   #node-inspector[hidden] { display: none; }
-  #node-inspector .node-title, #node-inspector #board-preview { grid-column: 1; }
+  #node-inspector .node-title-row, #node-inspector #board-preview { grid-column: 1; }
   #node-inspector h3, #node-inspector .pin-controls, #node-inspector .adc-controls, #node-inspector .terminal { grid-column: 2; }
 }
 
