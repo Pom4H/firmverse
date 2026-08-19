@@ -4,6 +4,8 @@
 //! SoCs use jjkt/zmu; non-Cortex-M chips can plug in a different backend
 //! without changing Board or World.
 
+pub mod phy6252;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SocKind {
     Phy6252,
