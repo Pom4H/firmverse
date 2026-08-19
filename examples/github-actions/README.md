@@ -1,15 +1,24 @@
 # GitHub Actions examples
 
-These workflows are intended to be copied into a firmware repository under `.github/workflows/` and adapted to the application's firmware path and expected behavior.
+These workflows are intended to be copied into a firmware repository under `.github/workflows/` and adapted to the application's build command, firmware path and expected behavior.
 
-- [`firmware-smoke.yml`](firmware-smoke.yml) — build a pinned Firmverse checkout and execute one PHY6252 image in strict mode.
-- [`mesh-regression.yml`](mesh-regression.yml) — execute two copies of a firmware image in a deterministic mesh World and preserve the raw log.
+Both examples use the public reusable Action:
 
-Before using them in production CI:
+```yaml
+uses: Pom4H/firmverse@v1
+```
 
-1. replace the example firmware path;
-2. pin `Pom4H/firmverse` to a reviewed tag or commit;
-3. add assertions for your firmware's UART/GPIO/protocol behavior;
-4. keep `--strict` unless the test is intentionally exploring incomplete hardware modeling.
+- [`firmware-smoke.yml`](firmware-smoke.yml) — execute one PHY6252 image in strict mode and assert application output.
+- [`mesh-regression.yml`](mesh-regression.yml) — execute multiple copies of one firmware image in a deterministic mesh World and preserve the raw log.
 
-See [`../../docs/CI.md`](../../docs/CI.md) for the reasoning behind the workflow structure.
+A firmware repository does **not** need to clone Firmverse, initialize `jjkt/zmu`, install Firmverse dependencies or run Cargo itself. The Action owns those details.
+
+Before using the examples in production CI:
+
+1. add your firmware build step;
+2. replace `build/app.hex` with the produced HEX path;
+3. add `expect` lines that represent your firmware contract;
+4. keep strict mode enabled unless the test intentionally explores incomplete hardware modeling;
+5. use an exact Firmverse commit SHA instead of `v1` when your supply-chain policy requires immutable pins.
+
+See [`../../docs/GITHUB_ACTION.md`](../../docs/GITHUB_ACTION.md) for the Action contract and [`../../docs/CI.md`](../../docs/CI.md) for deeper CI guidance.
