@@ -3,6 +3,7 @@ name: refactor-board-tui
 on:
   push:
     branches: [refactor/phy6252-layout-docs-actions]
+  pull_request:
 
 permissions:
   contents: write
@@ -12,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: refactor/phy6252-layout-docs-actions
       - name: Apply structural refactor
         run: python3 tools/refactor_board_tui.py
       - name: Commit generated refactor
