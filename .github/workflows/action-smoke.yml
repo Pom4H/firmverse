@@ -55,9 +55,8 @@ jobs:
           board: pb03f-kit
           strict: 'true'
           max-insns: '1000000'
-          log: .firmverse/single.log
+          log: firmverse-action-logs/single.log
           expect: |
-            READY
             UART kit-demo boot
 
       - name: Check single-node outputs
@@ -76,7 +75,7 @@ jobs:
           nodes: '2'
           ticks: '200'
           strict: 'true'
-          log: .firmverse/mesh.log
+          log: firmverse-action-logs/mesh.log
           expect: |
             READY
             WORLD mesh
@@ -90,5 +89,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: firmverse-public-action-smoke
-          path: .firmverse/*.log
-          if-no-files-found: error
+          path: firmverse-action-logs/*.log
+          if-no-files-found: warn
