@@ -10,6 +10,7 @@ world="${FIRMVERSE_WORLD:-mesh}"
 nodes="${FIRMVERSE_NODES:-2}"
 ticks="${FIRMVERSE_TICKS:-200}"
 strict="${FIRMVERSE_STRICT:-true}"
+require_advertising="${FIRMVERSE_REQUIRE_ADVERTISING:-false}"
 max_insns="${FIRMVERSE_MAX_INSNS:-}"
 expect="${FIRMVERSE_EXPECT:-}"
 log="${FIRMVERSE_LOG:-firmverse.log}"
@@ -30,16 +31,24 @@ if [[ ! -x "$binary" ]]; then
   exit 2
 fi
 
-case "$strict" in
-  true|false) ;;
-  *)
-    echo "::error::strict must be true or false, got: $strict" >&2
-    exit 2
-    ;;
-esac
+for pair in "strict:$strict" "require-advertising:$require_advertising"; do
+  name="${pair%%:*}"
+  value="${pair#*:}"
+  case "$value" in
+    true|false) ;;
+    *)
+      echo "::error::$name must be true or false, got: $value" >&2
+      exit 2
+      ;;
+  esac
+done
 
 if [[ -n "$max_insns" && ! "$max_insns" =~ ^[0-9]+$ ]]; then
   echo "::error::max-insns must be an integer, got: $max_insns" >&2
+  exit 2
+fi
+if [[ "$require_advertising" == true && "$mode" != single ]]; then
+  echo "::error::require-advertising currently requires mode=single" >&2
   exit 2
 fi
 
@@ -98,6 +107,14 @@ printf ' %q' "${cmd[@]}"
 printf '\n'
 
 "${cmd[@]}" 2>&1 | tee "$log"
+
+if [[ "$require_advertising" == true ]]; then
+  if ! grep -Fq -- 'BLE HCI LE_SetAdvEnable enabled=1' "$log"; then
+    echo "::error::PHY6252 firmware did not enable BLE advertising before the execution budget ended" >&2
+    exit 3
+  fi
+  echo '✓ BLE advertising enabled'
+fi
 
 if [[ -n "$expect" ]]; then
   while IFS= read -r needle || [[ -n "$needle" ]]; do
