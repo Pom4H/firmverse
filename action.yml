@@ -32,6 +32,10 @@ inputs:
     description: "Fail on unmodeled SoC MMIO or vendor ROM behavior"
     required: false
     default: 'true'
+  require-advertising:
+    description: "Fail unless PHY6252 firmware reaches HCI LE advertising enable"
+    required: false
+    default: 'false'
   max-insns:
     description: "Optional instruction budget override"
     required: false
@@ -129,6 +133,7 @@ runs:
         FIRMVERSE_NODES: ${{ inputs.nodes }}
         FIRMVERSE_TICKS: ${{ inputs.ticks }}
         FIRMVERSE_STRICT: ${{ inputs.strict }}
+        FIRMVERSE_REQUIRE_ADVERTISING: ${{ inputs.require-advertising }}
         FIRMVERSE_MAX_INSNS: ${{ inputs.max-insns }}
         FIRMVERSE_EXPECT: ${{ inputs.expect }}
         FIRMVERSE_LOG: ${{ inputs.log }}
