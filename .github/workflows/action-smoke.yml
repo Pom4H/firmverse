@@ -14,6 +14,8 @@ jobs:
     env:
       ARM_TOOLCHAIN_VERSION: 13.2.rel1
       ARM_TOOLCHAIN_DIR: /home/runner/.cache/arm-gnu-toolchain-13.2.rel1
+      SDK_COMMIT: b7202ee56e8d316ea3451dd61266f609e6a676e8
+      SDK_ROOT: /home/runner/.cache/phy62xx-sdk-3.1.2
     steps:
       - uses: actions/checkout@v6
 
@@ -63,6 +65,37 @@ jobs:
         run: |
           test -s '${{ steps.single.outputs.log }}'
           test -x '${{ steps.single.outputs.binary }}'
+
+      - name: Restore pinned PHY62XX SDK 3.1.2
+        id: sdk-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.SDK_ROOT }}
+          key: phy62xx-sdk-3.1.2-${{ env.SDK_COMMIT }}
+
+      - name: Fetch pinned PHY62XX SDK 3.1.2
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          rm -rf "$SDK_ROOT"
+          git clone --filter=blob:none https://github.com/xuhongv/PHY6252_6222_SDK.git "$SDK_ROOT"
+          git -C "$SDK_ROOT" checkout "$SDK_COMMIT"
+
+      - name: Reset cached SDK
+        run: |
+          git -C "$SDK_ROOT" reset --hard "$SDK_COMMIT"
+          git -C "$SDK_ROOT" clean -fdx
+
+      - name: Build real PHY6252 BLE image
+        run: make -C firmware/silicon clean all PHY62XX_SDK="$SDK_ROOT"
+
+      - name: BLE boot regression contract
+        uses: ./
+        with:
+          firmware: firmware/build/rssi-rank-ble.hex
+          board: pb03f-kit
+          strict: 'true'
+          require-advertising: 'true'
+          log: firmverse-action-logs/ble-boot.log
 
       - name: Mesh action contract
         id: mesh
