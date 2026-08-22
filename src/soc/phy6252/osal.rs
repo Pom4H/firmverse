@@ -2,6 +2,7 @@ use crate::ble_rom;
 use crate::bus::{HOST_FLASH_ADDR, HOST_FLASH_ERASE, HOST_FLASH_PROGRAM, XIP_SIZE};
 use crate::flash_state;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::register::{BaseReg, Reg};
 use zmu_cortex_m::Processor;
@@ -74,6 +75,9 @@ const FCMD_VSRWREN: u8 = 0x50;
 const FCMD_WRST: u8 = 0x01;
 const FCMD_RDST: u8 = 0x05;
 const FCMD_RDST_H: u8 = 0x35;
+const FCMD_RDUID: u8 = 0x4B;
+const FLASH_UID_PREFIX: u64 = 0x4656_6252_0000_0000;
+static NEXT_FLASH_UID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Timer {
@@ -110,11 +114,15 @@ pub struct HostOsal {
     spif_read_len: u8,
     spif_write: [u8; 8],
     spif_write_len: u8,
+    flash_uid: [u8; 8],
 }
 
 impl HostOsal {
     pub fn new() -> Self {
-        Self::default()
+        let sequence = NEXT_FLASH_UID.fetch_add(1, Ordering::Relaxed);
+        let mut host = Self::default();
+        host.flash_uid = (FLASH_UID_PREFIX | sequence).to_le_bytes();
+        host
     }
 
     pub fn handle(&mut self, cpu: &mut Processor) -> bool {
@@ -386,6 +394,11 @@ impl HostOsal {
             FCMD_RDST | FCMD_RDST_H => {
                 self.spif_read_len = rdlen.min(8);
             }
+            FCMD_RDUID => {
+                let len = rdlen.min(8);
+                self.spif_read[..len as usize].copy_from_slice(&self.flash_uid[..len as usize]);
+                self.spif_read_len = len;
+            }
             FCMD_WREN | FCMD_WRDIS | FCMD_VSRWREN | FCMD_WRST => {}
             _ if rdlen == 0 => {}
             _ => {
@@ -394,7 +407,7 @@ impl HostOsal {
             }
         }
         self.once(ROM_SPIF_CMD, || {
-            eprintln!("FLASH host raw spif_cmd status/control; synchronous idle")
+            eprintln!("FLASH host raw spif_cmd status/control/unique-id; synchronous idle")
         });
         ret(cpu);
         true
@@ -1130,5 +1143,13 @@ mod tests {
         h.allocs.insert(0x1000, 16);
         h.free_block(0x1000);
         assert_eq!(h.free, vec![(0x1000, 16)]);
+    }
+    #[test]
+    fn flash_unique_ids_are_nonzero_and_distinct_per_instance() {
+        let a = HostOsal::new();
+        let b = HostOsal::new();
+        assert_ne!(a.flash_uid, [0; 8]);
+        assert_ne!(a.flash_uid, [0xff; 8]);
+        assert_ne!(a.flash_uid, b.flash_uid);
     }
 }
