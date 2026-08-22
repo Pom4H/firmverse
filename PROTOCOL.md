@@ -1,6 +1,6 @@
 # Line protocol
 
-`phy6252 --raw` speaks UTF-8 lines. The REPL (`phy6252` with no flags) accepts the same words plus `connect`, `write hi`, `p34 on`, `adc 3.3 …`.
+`phy6252 --raw` speaks UTF-8 lines. The REPL (`phy6252` with no flags) accepts the same words plus `connect`, `write hi`, `uart 0 9600 UXTDWU`, `p34 on`, `adc 3.3 …`.
 
 ```text
 phy6252 [--raw] [--once] [--strict] [--max-insns N] [firmware.hex]
@@ -20,6 +20,7 @@ Default image: `firmware/kit-demo.hex`, or `PHY6252_HEX`. Default is live. `--on
 |---|---|
 | `IN <hex32>` | `AP_GPIO` external bits (`gpio_pin_e`, not silk numbers). |
 | `WRITE <hex\|text>` | ATT payload into the mailbox RX buffer. |
+| `UART <port> <baud> <hex\|text>` | Host bytes into a modeled UART receive path. Currently UART0 is accepted while the PHY6252 ROM programmer is active. |
 | `SCAN <mac> <rssi>` | BLE advertiser seen (mailbox scan report). MAC is `aa:bb:cc:dd:ee:ff` or 12 hex digits; RSSI is signed decimal. |
 | `GONE <mac>` | Advertiser left range / disconnected. |
 | `CONNECT` / `DISCONNECT` | Link flag. |
@@ -48,12 +49,34 @@ P13 is on the DIP header but has no `gpio_pin_e` bit. P14 is a header pin, not a
 | `ADV name=… service=…` | Demo GAP name / service UUID (ATT is the mailbox). |
 | `GPIO <dr> <ddr>` | `swporta_dr` / `ddr`. |
 | `PWM <c0> … <c5>` | PWM duty. |
-| `UART <text>` | UART0/1 line. |
+| `UART <text>` | UART0/1 line. ROM programmer state/replies are emitted as `UART ROM0@<baud> …`. |
 | `FRAME <HEXBYTES>` | Mailbox TX. |
 | `STOP <reason>` | Exit. |
 | `WORLD <name> loop=<0|1> nodes=<n>` | Sim start (`phy6252 sim --raw`). |
 | `NODE <id> mac=… x=… y=… hex=…` | One sim chip. |
 | `[id] GPIO …` / `[id] UART …` | Same as GPIO/UART, tagged when several chips run. |
+
+### PHY6252 ROM UART sequence
+
+When guest firmware performs a CMSIS `NVIC_SystemReset()` (`SCB.AIRCR.SYSRESETREQ` with `VECTKEY`), the PHY6252 model enters the ROM programmer window instead of immediately executing the application reset vector:
+
+```text
+UART ROM0@9600 await UXTDWU
+```
+
+The host can then drive the real entry handshake through the line protocol:
+
+```text
+UART 0 9600 UXTDWU
+```
+
+and receives:
+
+```text
+UART ROM0@9600 cmd>>:
+```
+
+The modeled command monitor then expects 115200 baud. `UART 0 115200 reset` exits the ROM monitor and restarts the application. Other ROM programmer commands are deliberately not synthesized yet.
 
 Strict discovery diagnostics are written to stderr, for example:
 
