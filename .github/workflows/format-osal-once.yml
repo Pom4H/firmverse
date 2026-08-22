@@ -1,5 +1,6 @@
 name: Format PHY6252 OSAL once
 
+# One-shot formatter; remove after the verified formatting commit.
 on:
   push:
     paths:
