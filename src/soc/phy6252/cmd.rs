@@ -5,6 +5,7 @@ pub enum ChipCmd {
     In(u32),
     Pin { bit: u32, high: bool },
     Write(Vec<u8>),
+    Uart { port: u8, baud: u32, bytes: Vec<u8> },
     Scan { addr: [u8; 6], rssi: i8 },
     Gone { addr: [u8; 6] },
     Connect,
@@ -25,6 +26,7 @@ phy6252  —  type a command, then enter
   disconnect         BLE link down
   notify on|off      CCCD / indications
   write Hello        GATT write (text or hex)
+  uart 0 9600 UXTDWU UART host bytes (text or hex)
   adc 3.3 1.65 2.5 3.3   P20 P15 P24 P23 (V or mV)
   p15 on             PHY6252 pad P15 (PB-03F Restore)
   p34 on             PHY6252 pad P34 (PB-03F white LED)
@@ -73,6 +75,9 @@ fn parse_protocol(line: &str) -> Option<ChipCmd> {
     if let Some(rest) = line.strip_prefix("WRITE ") {
         return Some(ChipCmd::Write(parse_write_payload(rest.trim())?));
     }
+    if let Some(rest) = line.strip_prefix("UART ") {
+        return parse_uart(rest);
+    }
     if line == "CONNECT" {
         return Some(ChipCmd::Connect);
     }
@@ -113,6 +118,8 @@ fn parse_friendly(line: &str) -> Result<ChipCmd, String> {
                 .map(ChipCmd::Write)
                 .ok_or_else(|| "write needs text or even-length hex".into())
         }
+        "uart" => parse_uart(&line[verb.len()..])
+            .ok_or_else(|| "uart <0|1> <baud> <text|hex>".into()),
         "adc" => parse_adc(line[verb.len()..].trim())
             .ok_or_else(|| "adc P20 P15 P24 P23 — volts (3.3) or millivolts (3300)".into()),
         "tick" => {
@@ -140,6 +147,18 @@ fn parse_friendly(line: &str) -> Result<ChipCmd, String> {
         }
         other => Err(format!("unknown command {other:?} — help")),
     }
+}
+
+fn parse_uart(rest: &str) -> Option<ChipCmd> {
+    let mut parts = rest.split_whitespace();
+    let port = parts.next()?.parse::<u8>().ok()?;
+    let baud = parts.next()?.parse::<u32>().ok()?;
+    if port > 1 || baud == 0 {
+        return None;
+    }
+    let payload = parts.collect::<Vec<_>>().join(" ");
+    let bytes = parse_write_payload(&payload)?;
+    Some(ChipCmd::Uart { port, baud, bytes })
 }
 
 fn parse_scan_args(rest: &str, gone: bool) -> Option<ChipCmd> {
@@ -267,6 +286,26 @@ mod tests {
         match parse_line("WRITE 48656c6c6f").unwrap() {
             Some(ChipCmd::Write(b)) => assert_eq!(b, b"Hello"),
             _ => panic!("write"),
+        }
+    }
+
+    #[test]
+    fn protocol_uart_preserves_baud_and_payload() {
+        match parse_line("UART 0 9600 UXTDWU").unwrap() {
+            Some(ChipCmd::Uart { port, baud, bytes }) => {
+                assert_eq!(port, 0);
+                assert_eq!(baud, 9_600);
+                assert_eq!(bytes, b"UXTDWU");
+            }
+            _ => panic!("uart"),
+        }
+        match parse_line("uart 0 115200 7265736574").unwrap() {
+            Some(ChipCmd::Uart { port, baud, bytes }) => {
+                assert_eq!(port, 0);
+                assert_eq!(baud, 115_200);
+                assert_eq!(bytes, b"reset");
+            }
+            _ => panic!("uart hex"),
         }
     }
 
