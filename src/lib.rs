@@ -54,6 +54,8 @@ mod osal;
 mod osal_power;
 #[path = "soc/phy6252/osal_queue.rs"]
 mod osal_queue;
+#[path = "soc/phy6252/reset_bus.rs"]
+mod reset_bus;
 #[path = "soc/phy6252/silicon_regs.rs"]
 mod silicon_regs;
 
