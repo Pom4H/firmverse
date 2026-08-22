@@ -61,10 +61,13 @@ mod silicon_regs;
 
 pub mod board;
 pub mod hex;
+pub mod programmer;
 pub mod soc;
 pub mod web_runtime;
 pub mod world;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod flash;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ble_host;
 #[cfg(not(target_arch = "wasm32"))]
