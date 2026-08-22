@@ -4,7 +4,10 @@ use clap::Parser;
 use firmverse::flash::{
     FlashOptions, Flasher, HarnessTarget, Pb03fBoot, Pb03fKit, SerialTransport,
 };
-use firmverse::programmer::{build_flash_image, parse_intel_hex, FlashImage};
+use firmverse::programmer::{
+    build_flash_image, encode_intel_hex, parse_intel_hex, programmed_flash_to_hex, FlashImage,
+    HexFile, Segment,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -26,6 +29,10 @@ struct Cli {
     /// Virtual NOR size used by --harness. PHY6252/PB-03F uses 256 KiB.
     #[arg(long, default_value_t = 256 * 1024, requires = "harness")]
     harness_flash_size: usize,
+    /// After --harness flashing, reconstruct a bootable Intel HEX using only
+    /// the bytes stored in virtual NOR and write it to this path.
+    #[arg(long, value_name = "PATH", requires = "harness")]
+    harness_boot_hex: Option<PathBuf>,
     /// Chip-erase before write (also wipes NVRAM / bonds)
     #[arg(long)]
     erase: bool,
@@ -80,7 +87,12 @@ fn run() -> Result<(), String> {
 
     if cli.harness {
         print_plan("firmverse-harness", &hex_path, &image);
-        return flash_harness(&image, cli.harness_flash_size, options);
+        return flash_harness(
+            &image,
+            cli.harness_flash_size,
+            options,
+            cli.harness_boot_hex.as_deref(),
+        );
     }
 
     let port_name = cli.port.unwrap_or(auto_port()?);
@@ -115,6 +127,7 @@ fn flash_harness(
     image: &FlashImage,
     flash_size: usize,
     options: FlashOptions,
+    boot_hex: Option<&Path>,
 ) -> Result<(), String> {
     let mut target = HarnessTarget::new(flash_size)?;
     let report = Flasher::new(options).flash(&mut target, image)?;
@@ -145,6 +158,27 @@ fn flash_harness(
         ));
     }
 
+    if let Some(path) = boot_hex {
+        let reconstructed = programmed_flash_to_hex(target.flash())?;
+        let expected = expected_boot_image(image);
+        if reconstructed != expected {
+            return Err("boot image reconstructed from virtual NOR differs from flash plan".into());
+        }
+        let encoded = encode_intel_hex(&reconstructed)?;
+        fs::write(path, &encoded).map_err(|error| format!("{}: {error}", path.display()))?;
+        let reparsed = parse_intel_hex(&encoded)?;
+        if reparsed != reconstructed {
+            return Err(
+                "reconstructed boot HEX does not round-trip through Intel HEX parser".into(),
+            );
+        }
+        println!(
+            "boot image reconstructed from virtual NOR: {} segment(s) -> {}",
+            reconstructed.segments.len(),
+            path.display()
+        );
+    }
+
     print_report(
         &report.revision,
         report.flash_size,
@@ -160,6 +194,21 @@ fn flash_harness(
     }
     println!("harness flash ok");
     Ok(())
+}
+
+fn expected_boot_image(image: &FlashImage) -> HexFile {
+    HexFile {
+        segments: image
+            .parts
+            .iter()
+            .filter(|part| part.load_addr != 0)
+            .map(|part| Segment {
+                load_addr: part.load_addr,
+                data: part.data.clone(),
+            })
+            .collect(),
+        entry: Some(image.start),
+    }
 }
 
 fn print_report(revision: &str, flash_size: u32, flash_id: u32, bytes_written: usize) {
@@ -243,7 +292,8 @@ fn pick_port(names: &[String]) -> Option<String> {
 mod tests {
     use super::{flash_harness, pick_port};
     use firmverse::flash::FlashOptions;
-    use firmverse::programmer::{build_flash_image, Segment};
+    use firmverse::programmer::{build_flash_image, parse_intel_hex, Segment};
+    use std::fs;
 
     #[test]
     fn prefers_wchusbserial() {
@@ -267,6 +317,31 @@ mod tests {
             Some(0x1FFF_0101),
         )
         .unwrap();
-        flash_harness(&image, 256 * 1024, FlashOptions::default()).unwrap();
+        flash_harness(&image, 256 * 1024, FlashOptions::default(), None).unwrap();
+    }
+
+    #[test]
+    fn cli_harness_emits_boot_hex_from_programmed_nor() {
+        let image = build_flash_image(
+            &[Segment {
+                load_addr: 0x1FFF_0000,
+                data: vec![0x00, 0x80, 0xFF, 0x1F, 0x01, 0x01, 0xFF, 0x1F],
+            }],
+            Some(0x1FFF_0101),
+        )
+        .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "firmverse-phy6252-harness-boot-{}.hex",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        flash_harness(&image, 256 * 1024, FlashOptions::default(), Some(&path)).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let parsed = parse_intel_hex(&text).unwrap();
+        assert_eq!(parsed.entry, Some(0x1FFF_0101));
+        assert_eq!(parsed.segments.len(), 1);
+        assert_eq!(parsed.segments[0].load_addr, 0x1FFF_0000);
+        assert_eq!(parsed.segments[0].data.len(), 8);
+        let _ = fs::remove_file(path);
     }
 }

@@ -7,6 +7,8 @@ const MAX_FLASH: u32 = 0x20_0000;
 const HEADER_FLASH_OFF: u32 = 0x2000;
 const SRAM_STORE_OFF: u32 = 0x5000;
 const HEADER_PREFIX: usize = 0x100;
+const HEADER_DESCRIPTOR_BYTES: usize = 16;
+const HEX_RECORD_BYTES: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
@@ -204,6 +206,154 @@ pub fn build_flash_image(segments: &[Segment], start: Option<u32>) -> Result<Fla
     Ok(FlashImage { start, parts: out })
 }
 
+/// Reconstruct the image that the PHY62xx boot path would load using only the
+/// bytes currently stored in external NOR. This deliberately does not accept a
+/// `FlashImage`: callers can prove that erase/program/checksum/reset produced a
+/// self-contained bootable image rather than accidentally reusing the source
+/// Intel HEX.
+pub fn programmed_flash_to_hex(flash: &[u8]) -> Result<HexFile, String> {
+    let header_off = HEADER_FLASH_OFF as usize;
+    let prefix_end = header_off
+        .checked_add(HEADER_PREFIX)
+        .ok_or("boot header range overflow")?;
+    if prefix_end > flash.len() {
+        return Err("NOR is too small to contain PHY62xx boot header".into());
+    }
+
+    let header = &flash[header_off..];
+    let count = read_u32_le(header, 0)? as usize;
+    if count == 0 {
+        return Err("PHY62xx boot header contains zero segments".into());
+    }
+    if count > 128 {
+        return Err(format!("unreasonable PHY62xx boot segment count: {count}"));
+    }
+    let start = read_u32_le(header, 8)?;
+    let descriptor_end = HEADER_PREFIX
+        .checked_add(
+            count
+                .checked_mul(HEADER_DESCRIPTOR_BYTES)
+                .ok_or("boot descriptor count overflow")?,
+        )
+        .ok_or("boot descriptor range overflow")?;
+    if descriptor_end > header.len() {
+        return Err("truncated PHY62xx boot descriptors".into());
+    }
+
+    let mut segments = Vec::with_capacity(count);
+    for index in 0..count {
+        let base = HEADER_PREFIX + index * HEADER_DESCRIPTOR_BYTES;
+        let flash_off = read_u32_le(header, base)?;
+        let len = read_u32_le(header, base + 4)? as usize;
+        let load_addr = read_u32_le(header, base + 8)?;
+        if len == 0 {
+            return Err(format!("PHY62xx boot segment {index} has zero length"));
+        }
+        if !is_sram(load_addr) && flash_offset(load_addr).is_none() {
+            return Err(format!(
+                "PHY62xx boot segment {index} has unsupported load address {load_addr:#010x}"
+            ));
+        }
+        let data_start = flash_off as usize;
+        let data_end = data_start
+            .checked_add(len)
+            .ok_or_else(|| format!("PHY62xx boot segment {index} range overflow"))?;
+        if data_end > flash.len() {
+            return Err(format!(
+                "PHY62xx boot segment {index} points outside NOR: {data_start:#x}..{data_end:#x}"
+            ));
+        }
+        segments.push(Segment {
+            load_addr,
+            data: flash[data_start..data_end].to_vec(),
+        });
+    }
+
+    Ok(HexFile {
+        segments,
+        entry: Some(start),
+    })
+}
+
+/// Encode a logical firmware image as canonical Intel HEX. This is primarily
+/// used to hand the image reconstructed from programmed NOR to the normal
+/// Firmverse execution path, preserving one emulator loader instead of adding a
+/// second test-only boot mechanism.
+pub fn encode_intel_hex(image: &HexFile) -> Result<String, String> {
+    if image.segments.is_empty() {
+        return Err("cannot encode empty Intel HEX image".into());
+    }
+    let mut out = String::new();
+    let mut current_upper = None;
+
+    for segment in &image.segments {
+        if segment.data.is_empty() {
+            continue;
+        }
+        let mut offset = 0usize;
+        while offset < segment.data.len() {
+            let addr = segment
+                .load_addr
+                .checked_add(offset as u32)
+                .ok_or("Intel HEX address overflow")?;
+            let upper = (addr >> 16) as u16;
+            if current_upper != Some(upper) {
+                push_hex_record(&mut out, 0, 4, &upper.to_be_bytes())?;
+                current_upper = Some(upper);
+            }
+
+            let low = (addr & 0xFFFF) as u16;
+            let until_boundary = 0x1_0000usize - low as usize;
+            let len = HEX_RECORD_BYTES
+                .min(segment.data.len() - offset)
+                .min(until_boundary);
+            push_hex_record(&mut out, low, 0, &segment.data[offset..offset + len])?;
+            offset += len;
+        }
+    }
+
+    if let Some(entry) = image.entry {
+        push_hex_record(&mut out, 0, 5, &entry.to_be_bytes())?;
+    }
+    push_hex_record(&mut out, 0, 1, &[])?;
+    Ok(out)
+}
+
+fn read_u32_le(bytes: &[u8], off: usize) -> Result<u32, String> {
+    let end = off.checked_add(4).ok_or("u32 range overflow")?;
+    let value = bytes
+        .get(off..end)
+        .ok_or("truncated PHY62xx boot header field")?;
+    Ok(u32::from_le_bytes(value.try_into().unwrap()))
+}
+
+fn push_hex_record(out: &mut String, addr: u16, kind: u8, data: &[u8]) -> Result<(), String> {
+    let len = u8::try_from(data.len()).map_err(|_| "Intel HEX record too large")?;
+    let [addr_hi, addr_lo] = addr.to_be_bytes();
+    let mut sum = len
+        .wrapping_add(addr_hi)
+        .wrapping_add(addr_lo)
+        .wrapping_add(kind);
+    out.push(':');
+    push_hex_byte(out, len);
+    push_hex_byte(out, addr_hi);
+    push_hex_byte(out, addr_lo);
+    push_hex_byte(out, kind);
+    for byte in data {
+        sum = sum.wrapping_add(*byte);
+        push_hex_byte(out, *byte);
+    }
+    push_hex_byte(out, 0u8.wrapping_sub(sum));
+    out.push('\n');
+    Ok(())
+}
+
+fn push_hex_byte(out: &mut String, value: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    out.push(HEX[(value >> 4) as usize] as char);
+    out.push(HEX[(value & 0x0F) as usize] as char);
+}
+
 fn infer_start(segments: &[&Segment]) -> u32 {
     segments
         .iter()
@@ -276,5 +426,57 @@ mod tests {
         let image = build_flash_image(&parsed.segments, parsed.entry).unwrap();
         assert_eq!(image.start, 0x1102_0009);
         assert_eq!(image.parts[1].flash_off, 0x0002_0000);
+    }
+
+    #[test]
+    fn programmed_nor_reconstructs_boot_image_without_source_hex() {
+        let source = HexFile {
+            segments: vec![
+                Segment {
+                    load_addr: 0x1102_0000,
+                    data: (0u8..64).collect(),
+                },
+                Segment {
+                    load_addr: 0x1FFF_0000,
+                    data: vec![0x10, 0x00, 0xFF, 0x1F, 0xE1, 0x19, 0xFF, 0x1F],
+                },
+            ],
+            entry: Some(0x1FFF_19E1),
+        };
+        let plan = build_flash_image(&source.segments, source.entry).unwrap();
+        let mut nor = vec![0xFF; 256 * 1024];
+        for part in &plan.parts {
+            let start = part.flash_off as usize;
+            let end = start + part.data.len();
+            nor[start..end].copy_from_slice(&part.data);
+        }
+
+        let reconstructed = programmed_flash_to_hex(&nor).unwrap();
+        assert_eq!(reconstructed, source);
+
+        let encoded = encode_intel_hex(&reconstructed).unwrap();
+        assert_eq!(parse_intel_hex(&encoded).unwrap(), source);
+    }
+
+    #[test]
+    fn programmed_nor_rejects_descriptor_outside_flash() {
+        let source = HexFile {
+            segments: vec![Segment {
+                load_addr: 0x1FFF_0000,
+                data: vec![1, 2, 3, 4],
+            }],
+            entry: Some(0x1FFF_0001),
+        };
+        let plan = build_flash_image(&source.segments, source.entry).unwrap();
+        let mut nor = vec![0xFF; 0x8000];
+        for part in &plan.parts {
+            let start = part.flash_off as usize;
+            let end = start + part.data.len();
+            nor[start..end].copy_from_slice(&part.data);
+        }
+        let descriptor = HEADER_FLASH_OFF as usize + HEADER_PREFIX;
+        nor[descriptor..descriptor + 4].copy_from_slice(&0xFFFF_F000u32.to_le_bytes());
+        let error = programmed_flash_to_hex(&nor).unwrap_err();
+        assert!(error.contains("outside NOR"));
     }
 }
