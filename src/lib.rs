@@ -2,6 +2,7 @@
 // Rust 1.98 started preferring `as_chunks` for constant-size slices. Keep the
 // portable iterator form here instead of raising Firmverse's Rust API floor
 // just to satisfy a toolchain-style lint.
+#![allow(unknown_lints)]
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 // PHY6252 is physically grouped below src/soc/phy6252 while its internal
