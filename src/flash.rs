@@ -169,8 +169,7 @@ impl<'a, T: Transport> Phy62xxRom<'a, T> {
     }
 
     pub fn read_reg(&mut self, addr: u32) -> Result<u32, String> {
-        self.io
-            .write_all(format!("rdreg{addr:08x} ").as_bytes())?;
+        self.io.write_all(format!("rdreg{addr:08x} ").as_bytes())?;
         let read = self.io.read(17)?;
         if read.len() != 17 || !read.starts_with(b"=0x") || &read[11..] != OK {
             return Err(format!(
@@ -426,7 +425,9 @@ impl Transport for SerialTransport {
 
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), String> {
         use std::io::Write;
-        self.port.write_all(bytes).map_err(|error| error.to_string())?;
+        self.port
+            .write_all(bytes)
+            .map_err(|error| error.to_string())?;
         self.port.flush().map_err(|error| error.to_string())
     }
 
@@ -501,7 +502,9 @@ impl TargetAdapter for Pb03fKit {
 #[derive(Debug)]
 enum HarnessState {
     Application,
-    AwaitSync { matched: usize },
+    AwaitSync {
+        matched: usize,
+    },
     Command,
     CpbinData {
         offset: usize,
@@ -530,7 +533,9 @@ pub struct HarnessTransport {
 impl HarnessTransport {
     pub fn new(flash_size: usize) -> Result<Self, String> {
         if !flash_size.is_power_of_two() || !(0x1_0000..=0x10_00000).contains(&flash_size) {
-            return Err("harness flash size must be a power of two between 64 KiB and 16 MiB".into());
+            return Err(
+                "harness flash size must be a power of two between 64 KiB and 16 MiB".into(),
+            );
         }
         let density = flash_size.trailing_zeros();
         let flash_id = (density << 16) | 0x0085;
@@ -589,7 +594,10 @@ impl HarnessTransport {
             return Ok(());
         }
         if let Some(rest) = text.strip_prefix("uarts") {
-            let baud = rest.trim().parse::<u32>().map_err(|error| error.to_string())?;
+            let baud = rest
+                .trim()
+                .parse::<u32>()
+                .map_err(|error| error.to_string())?;
             self.queue(b"#OK");
             self.rom_baud = baud;
             return Ok(());
@@ -614,7 +622,10 @@ impl HarnessTransport {
             let _encoded = parse_hex_word(words.next().ok_or("cpbin encoded address")?)?;
             let len = parse_hex_word(words.next().ok_or("cpbin length")?)? as usize;
             let offset = parse_hex_word(words.next().ok_or("cpbin offset")?)? as usize;
-            if offset.checked_add(len).is_none_or(|end| end > self.flash.len()) {
+            if offset
+                .checked_add(len)
+                .is_none_or(|end| end > self.flash.len())
+            {
                 return Err("cpbin range exceeds harness flash".into());
             }
             self.queue(b"by hex mode:");
