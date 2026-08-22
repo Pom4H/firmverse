@@ -74,6 +74,7 @@ impl Bus for ResetAwareBus {
 mod tests {
     use super::*;
     use crate::bus::{Phy6252Bus, SRAM_SIZE, XIP_SIZE};
+    use zmu_cortex_m::Processor;
 
     fn bus(flag: Rc<Cell<bool>>) -> ResetAwareBus {
         ResetAwareBus::new(
@@ -100,5 +101,16 @@ mod tests {
         let mut bus = bus(Rc::clone(&flag));
         bus.write32(SCB_AIRCR, AIRCR_SYSRESETREQ).unwrap();
         assert!(!flag.get());
+    }
+
+    #[test]
+    fn processor_routes_aircr_write_to_soc_wrapper() {
+        let flag = Rc::new(Cell::new(false));
+        let mut processor = Processor::new();
+        processor.device(Some(Box::new(bus(Rc::clone(&flag)))));
+        processor
+            .write32(SCB_AIRCR, AIRCR_VECTKEY | AIRCR_SYSRESETREQ)
+            .unwrap();
+        assert!(flag.get());
     }
 }
