@@ -93,7 +93,7 @@ pub fn handle(cpu: &mut Processor) -> bool {
         return false;
     }
     match cpu.get_pc() {
-        ROM_HCI_INIT => register(cpu, HCI_TASK_ID, "HCI"),
+        ROM_HCI_INIT => init_hci(cpu),
         ROM_HCI_GAP_TASK_REGISTER => register(cpu, HCI_GAP_TASK_ID, "GAP"),
         ROM_HCI_L2CAP_TASK_REGISTER => register(cpu, HCI_L2CAP_TASK_ID, "L2CAP"),
         ROM_HCI_SMP_TASK_REGISTER => register(cpu, HCI_SMP_TASK_ID, "SMP"),
@@ -111,6 +111,30 @@ pub fn handle(cpu: &mut Processor) -> bool {
         CONT_TRAP if cpu.get_r(Reg::R2) == CONT_MAGIC => continue_event(cpu),
         _ => false,
     }
+}
+
+fn init_hci(cpu: &mut Processor) -> bool {
+    /* The mailbox is flash-like backing memory and starts erased (0xFF), while
+     * these words are emulator-owned runtime caches. Leaving them erased makes
+     * bit 0 look like an already-connected host and injects a fake disconnect
+     * before the guest ever enabled advertising. It also turns cached ATT
+     * handles into 0xFFFF. Initialize the cache explicitly at the HCI lifecycle
+     * boundary; do not infer runtime state from erased bytes. */
+    let rx_seq = cpu.read32(mailbox::BASE + mailbox::RX_SEQ).unwrap_or(0);
+    for (addr, value) in [
+        (RADIO_STATUS_SHADOW, 0),
+        (RX_SEQ_SHADOW, rx_seq),
+        (RX_HANDLE_SHADOW, 0),
+        (TX_CCCD_HANDLE_SHADOW, 0),
+        (PENDING_HANDLE_SHADOW, 0),
+        (PENDING_LEN_SHADOW, 0),
+        (RX_MSG_SHADOW, 0),
+    ] {
+        if cpu.write32(addr, value).is_err() {
+            return false;
+        }
+    }
+    register(cpu, HCI_TASK_ID, "HCI")
 }
 
 fn poll_host_radio(cpu: &mut Processor) -> bool {
