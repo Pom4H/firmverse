@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 pub const ENTRY_BAUD: u32 = 9_600;
 pub const COMMAND_BAUD: u32 = 115_200;
 const ENTRY_MAGIC: &[u8] = b"UXTDWU";
-const RESET_COMMAND: &[u8] = b"reset ";
+const RESET_COMMAND: &[u8] = b"reset";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
