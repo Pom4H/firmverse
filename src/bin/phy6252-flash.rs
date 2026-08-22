@@ -168,7 +168,9 @@ fn flash_harness(
         fs::write(path, &encoded).map_err(|error| format!("{}: {error}", path.display()))?;
         let reparsed = parse_intel_hex(&encoded)?;
         if reparsed != reconstructed {
-            return Err("reconstructed boot HEX does not round-trip through Intel HEX parser".into());
+            return Err(
+                "reconstructed boot HEX does not round-trip through Intel HEX parser".into(),
+            );
         }
         println!(
             "boot image reconstructed from virtual NOR: {} segment(s) -> {}",
@@ -290,7 +292,7 @@ fn pick_port(names: &[String]) -> Option<String> {
 mod tests {
     use super::{flash_harness, pick_port};
     use firmverse::flash::FlashOptions;
-    use firmverse::programmer::{parse_intel_hex, build_flash_image, Segment};
+    use firmverse::programmer::{build_flash_image, parse_intel_hex, Segment};
     use std::fs;
 
     #[test]
@@ -333,13 +335,7 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_file(&path);
-        flash_harness(
-            &image,
-            256 * 1024,
-            FlashOptions::default(),
-            Some(&path),
-        )
-        .unwrap();
+        flash_harness(&image, 256 * 1024, FlashOptions::default(), Some(&path)).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         let parsed = parse_intel_hex(&text).unwrap();
         assert_eq!(parsed.entry, Some(0x1FFF_0101));
