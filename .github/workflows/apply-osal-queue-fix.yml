@@ -1,0 +1,99 @@
+name: Apply PHY6252 OSAL queue fix
+
+on:
+  push:
+    paths:
+      - .github/workflows/apply-osal-queue-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Patch HostOsal message receive semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/soc/phy6252/osal.rs')
+          text = path.read_text()
+          old = '''    fn msg_receive(&mut self, cpu: &mut Processor) -> bool {
+              let task = cpu.get_r(Reg::R0) as u8;
+              let pos = self
+                  .messages
+                  .iter()
+                  .position(|payload| cpu.read8(*payload - MSG_HDR + MSG_DEST_OFF).ok() == Some(task));
+              let payload = pos.and_then(|i| self.messages.remove(i)).unwrap_or(0);
+              if payload != 0 {
+                  let _ = cpu.write32(payload - MSG_HDR, 0);
+              }
+              self.once(ROM_MSG_RECEIVE, || {
+                  eprintln!("OSAL host message queue receive")
+              });
+              cpu.set_r(Reg::R0, payload);
+              ret(cpu);
+              true
+          }
+          '''
+          new = '''    fn msg_receive(&mut self, cpu: &mut Processor) -> bool {
+              let task = cpu.get_r(Reg::R0) as u8;
+              let pos = self
+                  .messages
+                  .iter()
+                  .position(|payload| cpu.read8(*payload - MSG_HDR + MSG_DEST_OFF).ok() == Some(task));
+              let payload = pos.and_then(|i| self.messages.remove(i)).unwrap_or(0);
+              if payload != 0 {
+                  let _ = cpu.write32(payload - MSG_HDR, 0);
+              }
+
+              // Настоящий PHY/TI OSAL снова ставит SYS_EVENT_MSG, если после
+              // извлечения одного сообщения для этого task в очереди осталось
+              // ещё хотя бы одно. Без этого второй HCI CommandComplete теряется:
+              // scheduler уже очистил bitmap перед вызовом task handler.
+              let more_for_task = self.messages.iter().any(|queued| {
+                  cpu.read8(*queued - MSG_HDR + MSG_DEST_OFF).ok() == Some(task)
+              });
+              if more_for_task && !self.post(cpu, task, SYS_EVENT_MSG) {
+                  return false;
+              }
+
+              self.once(ROM_MSG_RECEIVE, || {
+                  eprintln!("OSAL host message queue receive")
+              });
+              cpu.set_r(Reg::R0, payload);
+              ret(cpu);
+              true
+          }
+          '''
+          if old not in text:
+              raise SystemExit('expected msg_receive body not found; refusing blind patch')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Verify Rust formatting and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --locked
+
+      - name: Commit fix directly to main and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/apply-osal-queue-fix.yml
+          git config user.name 'Roman Popov'
+          git config user.email 'atfpom4h@gmail.com'
+          git add src/soc/phy6252/osal.rs .github/workflows/apply-osal-queue-fix.yml
+          git commit -m 'fix(phy6252): rearm SYS_EVENT_MSG for queued messages'
+          git push origin HEAD:main
