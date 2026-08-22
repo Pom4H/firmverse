@@ -2,6 +2,9 @@
 
 **Virtual embedded systems lab for real firmware.**
 
+[![Release](https://img.shields.io/github/v/release/Pom4H/firmverse)](https://github.com/Pom4H/firmverse/releases/latest)
+[![CI](https://github.com/Pom4H/firmverse/actions/workflows/ci.yml/badge.svg)](https://github.com/Pom4H/firmverse/actions/workflows/ci.yml)
+
 Firmverse runs firmware against explicit CPU, SoC and board models, then places one or more virtual devices into a shared World. It can be used as a CLI locally, as a reusable GitHub Action, or as a WebAssembly Browser Lab.
 
 **[Open the live Browser Lab →](https://pom4h.github.io/firmverse/)**
@@ -73,6 +76,7 @@ Supported Action inputs:
 | `nodes` | `2` | Number of identical firmware nodes in mesh mode |
 | `ticks` | `200` | Deterministic mesh duration |
 | `strict` | `true` | Fail on unknown SoC MMIO / vendor ROM behavior |
+| `require-advertising` | `false` | In single-node PHY6252 mode, require guest firmware to enable BLE advertising; uses a 50M instruction budget unless overridden |
 | `max-insns` | empty | Optional instruction budget override |
 | `expect` | empty | Newline-separated fixed strings that must occur in output |
 | `log` | `firmverse.log` | Output log path |
@@ -190,6 +194,31 @@ Deterministic CLI form:
 
 A World works with node identity, position, radio observations and environment inputs. It does not know that a node happens to be a PB-03F-Kit.
 
+## Flash a real PHY62xx target
+
+The transport-independent `phy6252-flash` binary uses the same flasher core
+against real USB-UART hardware and the deterministic in-memory ROM/NOR harness:
+
+```sh
+cargo run --release --bin phy6252-flash -- firmware.hex \
+  --port /dev/cu.usbserial-...
+
+cargo run --release --bin phy6252-flash -- firmware.hex --harness
+```
+
+Dev firmware with a project-owned UART listener can request an
+application-assisted ROM handoff. After the first manual installation, later
+updates can enter the immutable PHY62xx ROM without KEY1:
+
+```sh
+cargo run --release --bin phy6252-flash -- firmware.hex \
+  --application-handoff-token TOKEN_AS_HEX
+```
+
+The generic flasher never hard-codes a product token or product flash address.
+See [`HARDWARE_FLASH.md`](HARDWARE_FLASH.md) for the safety contract, recovery
+behavior and the distinction between boot-info start and Intel HEX entry.
+
 ## Repository layout
 
 ```text
@@ -227,6 +256,7 @@ PHY6252 implementation files are being namespaced incrementally. They already li
 - [`docs/CI.md`](docs/CI.md) — deeper CI strategy and direct CLI integration.
 - [`HARDWARE_FLASH.md`](HARDWARE_FLASH.md) — flashing real PHY6252 hardware and SDK 3.1.2 flow.
 - [`PROTOCOL.md`](PROTOCOL.md) — raw line protocol used by frontends and tests.
+- [`CHANGELOG.md`](CHANGELOG.md) — versioned release history.
 
 ## Design principle
 

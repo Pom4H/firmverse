@@ -7,3 +7,4 @@ __pycache__/
 /firmware/build/*
 !/firmware/build/.gitkeep
 /firmware/silicon/build/
+/web/dist/
