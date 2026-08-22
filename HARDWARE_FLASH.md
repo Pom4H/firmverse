@@ -1,13 +1,60 @@
 # Flashing a real PHY6252 over USB-UART
 
-`phy6252-emu` contains a host-side flasher for real PHY62xx silicon:
+Firmverse contains a transport-independent Rust flasher for real PHY62xx
+silicon and a compatibility Python workflow for SDK provenance checks:
 
 ```text
+phy6252-flash
 tools/phy6252_flash.py
 ```
 
 It talks directly to the serial monitor in the PHY62xx ROM. It does **not** use
 emulator ROM shims and does not require PhyPlusKit.
+
+For an already-built Intel HEX, the native CLI is:
+
+```sh
+cargo run --release --bin phy6252-flash -- firmware.hex --port /dev/cu.usbserial-...
+```
+
+The default entry method waits for manual ROM entry. `--control-lines` is
+available only when RTS/DTR are physically wired to the board's test/reset
+inputs.
+
+`--start` is the address consumed by the PHY62xx boot-info loader. Some SDK
+images require the jump/vector-table base (for PHY62XX SDK 3.1.2 commonly
+`0x1fff1838`) instead of the Intel HEX type-05 `Reset_Handler` address. Product
+wrappers should pass the verified value explicitly.
+
+## Application-assisted ROM entry (no KEY1 after first install)
+
+Firmverse can cooperate with an application that has a project-specific UART
+handoff listener. Pass its token as hex:
+
+```sh
+cargo run --release --bin phy6252-flash -- firmware.hex \
+  --port /dev/cu.usbserial-... \
+  --application-handoff-token 0011223344556677
+```
+
+The generic sequence is:
+
+1. probe whether an earlier run already left the ROM command monitor open;
+2. send UART BREAK at the application's baud to wake its RX path;
+3. send the configured token repeatedly;
+4. let the application make its boot-info invalid and reset;
+5. synchronize the ROM with `UXTDWU` at 9600 baud;
+6. attach to its 115200-baud command monitor and use the normal flasher core.
+
+The token and application behavior are project-owned; Firmverse does not
+hard-code a product secret or a flash address. The first installation still
+needs manual ROM entry. A deterministic end-to-end harness mode exercises the
+same transition, including NOR programming of `boot_info.part_count`:
+
+```sh
+cargo run --bin phy6252-flash -- firmware.hex --harness \
+  --application-handoff-token 0011223344556677
+```
 
 ## BLE firmware must use the real SDK stack
 

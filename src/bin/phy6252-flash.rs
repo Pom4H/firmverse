@@ -1,8 +1,10 @@
 //! PHY62x2 UART bootloader CLI for PB-03F-Kit.
+#![allow(unknown_lints)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 use clap::Parser;
 use firmverse::flash::{
-    FlashOptions, Flasher, HarnessTarget, Pb03fBoot, Pb03fKit, SerialTransport,
+    ApplicationHandoff, FlashOptions, Flasher, HarnessTarget, Pb03fBoot, Pb03fKit, SerialTransport,
 };
 use firmverse::programmer::{
     build_flash_image, encode_intel_hex, parse_intel_hex, programmed_flash_to_hex, FlashImage,
@@ -10,6 +12,7 @@ use firmverse::programmer::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(
@@ -26,8 +29,8 @@ struct Cli {
     /// Run the exact same flasher against the deterministic in-memory PHY62xx ROM harness.
     #[arg(long, conflicts_with_all = ["port", "control_lines", "list_ports"])]
     harness: bool,
-    /// Virtual NOR size used by --harness. PHY6252/PB-03F uses 256 KiB.
-    #[arg(long, default_value_t = 256 * 1024, requires = "harness")]
+    /// Virtual NOR size used by --harness. The verified PB-03F reports 512 KiB.
+    #[arg(long, default_value_t = 512 * 1024, requires = "harness")]
     harness_flash_size: usize,
     /// After --harness flashing, reconstruct a bootable Intel HEX using only
     /// the bytes stored in virtual NOR and write it to this path.
@@ -39,13 +42,32 @@ struct Cli {
     /// Do not send `reset` after a successful write
     #[arg(long)]
     no_reset: bool,
-    /// Application start address (default: lowest SRAM segment)
+    /// PHY62xx boot-info start address (default: Intel HEX entry, then lowest SRAM segment)
     #[arg(long, value_parser = clap_u32)]
     start: Option<u32>,
     /// Use RTS/DTR boot control for adapters that physically route those lines.
     /// PB-03F-Kit normally uses a manual power-cycle/KEY1 sequence.
     #[arg(long)]
     control_lines: bool,
+    /// Hex-encoded token understood by the running application. This enables
+    /// BREAK + project token + boot-info invalidation, so later flashes need no KEY1.
+    #[arg(long, value_name = "HEX", conflicts_with = "control_lines")]
+    application_handoff_token: Option<String>,
+    /// UART baud used by the running application handoff listener.
+    #[arg(long, default_value_t = 115_200)]
+    handoff_baud: u32,
+    /// Duration of the UART BREAK wake-up pulse.
+    #[arg(long, default_value_t = 60)]
+    handoff_break_ms: u64,
+    /// Delay after BREAK before transmitting the handoff token.
+    #[arg(long, default_value_t = 150)]
+    handoff_wake_ms: u64,
+    /// Number of consecutive token copies sent per attempt.
+    #[arg(long, default_value_t = 32)]
+    handoff_token_repetitions: usize,
+    /// Number of BREAK/token/ROM-sync attempts.
+    #[arg(long, default_value_t = 4)]
+    handoff_attempts: usize,
     /// List serial ports and exit
     #[arg(long)]
     list_ports: bool,
@@ -53,6 +75,26 @@ struct Cli {
 
 fn clap_u32(s: &str) -> Result<u32, String> {
     parse_u32(s).ok_or_else(|| format!("not an integer: {s}"))
+}
+
+fn parse_hex_bytes(s: &str) -> Result<Vec<u8>, String> {
+    let compact: String = s
+        .chars()
+        .filter(|character| {
+            !character.is_ascii_whitespace() && *character != ':' && *character != '-'
+        })
+        .collect();
+    if compact.is_empty() || !compact.len().is_multiple_of(2) {
+        return Err("token must contain a non-empty even number of hex digits".into());
+    }
+    compact
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).map_err(|error| error.to_string())?;
+            u8::from_str_radix(text, 16).map_err(|_| format!("invalid token hex byte {text:?}"))
+        })
+        .collect()
 }
 
 fn parse_u32(s: &str) -> Option<u32> {
@@ -84,6 +126,20 @@ fn run() -> Result<(), String> {
         chip_erase: cli.erase,
         reset_after: !cli.no_reset,
     };
+    let handoff = cli
+        .application_handoff_token
+        .map(|token| parse_hex_bytes(&token))
+        .transpose()?
+        .map(ApplicationHandoff::new)
+        .transpose()?
+        .map(|mut handoff| {
+            handoff.app_baud = cli.handoff_baud;
+            handoff.break_duration = Duration::from_millis(cli.handoff_break_ms);
+            handoff.wake_delay = Duration::from_millis(cli.handoff_wake_ms);
+            handoff.token_repetitions = cli.handoff_token_repetitions;
+            handoff.attempts = cli.handoff_attempts;
+            handoff
+        });
 
     if cli.harness {
         print_plan("firmverse-harness", &hex_path, &image);
@@ -92,13 +148,17 @@ fn run() -> Result<(), String> {
             cli.harness_flash_size,
             options,
             cli.harness_boot_hex.as_deref(),
+            handoff,
         );
     }
 
     let port_name = cli.port.unwrap_or(auto_port()?);
     print_plan(&port_name, &hex_path, &image);
 
-    let boot = if cli.control_lines {
+    let boot = if let Some(handoff) = handoff {
+        println!("requesting ROM entry through the running application");
+        Pb03fBoot::ApplicationHandoff(handoff)
+    } else if cli.control_lines {
         Pb03fBoot::ControlLines
     } else {
         println!("Hold KEY1 / power off the PB-03F-Kit now.");
@@ -128,8 +188,17 @@ fn flash_harness(
     flash_size: usize,
     options: FlashOptions,
     boot_hex: Option<&Path>,
+    handoff: Option<ApplicationHandoff>,
 ) -> Result<(), String> {
-    let mut target = HarnessTarget::new(flash_size)?;
+    let mut target = if let Some(handoff) = handoff {
+        let mut target = HarnessTarget::new_application(flash_size, handoff)?;
+        // Seed a valid installed image so the harness must execute the exact
+        // application -> invalid boot-info -> ROM transition before reflashing.
+        target.install_image(image)?;
+        target
+    } else {
+        HarnessTarget::new(flash_size)?
+    };
     let report = Flasher::new(options).flash(&mut target, image)?;
 
     for part in &image.parts {
@@ -156,6 +225,9 @@ fn flash_harness(
             "expected one ROM reset after programming, got {}",
             target.reset_count()
         ));
+    }
+    if target.handoff_count() > 0 {
+        println!("application handoff observed by harness");
     }
 
     if let Some(path) = boot_hex {
@@ -317,7 +389,7 @@ mod tests {
             Some(0x1FFF_0101),
         )
         .unwrap();
-        flash_harness(&image, 256 * 1024, FlashOptions::default(), None).unwrap();
+        flash_harness(&image, 256 * 1024, FlashOptions::default(), None, None).unwrap();
     }
 
     #[test]
@@ -335,7 +407,14 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_file(&path);
-        flash_harness(&image, 256 * 1024, FlashOptions::default(), Some(&path)).unwrap();
+        flash_harness(
+            &image,
+            256 * 1024,
+            FlashOptions::default(),
+            Some(&path),
+            None,
+        )
+        .unwrap();
         let text = fs::read_to_string(&path).unwrap();
         let parsed = parse_intel_hex(&text).unwrap();
         assert_eq!(parsed.entry, Some(0x1FFF_0101));
