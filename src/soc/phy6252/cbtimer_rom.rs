@@ -7,9 +7,15 @@ const ROM_CB_TIMER_PROCESS_EVENT: u32 = 0x0001_4640;
 const ROM_CB_TIMER_START: u32 = 0x0001_46A8;
 const ROM_CB_TIMER_STOP: u32 = 0x0001_4710;
 const ROM_CB_TIMER_UPDATE: u32 = 0x0001_4750;
+const ROM_SET_TIMER: u32 = 0x0001_6C2C;
 const IDLE_BX_LR_ROM: u32 = 0x0000_A9C8;
 const CONT_TRAP: u32 = 0x0000_00D0;
 const CONT_MAGIC: u32 = 0x4342_544D; // "CBTM"
+
+// Observed PHY6252 SDK baseband timer instance used during LL startup.
+// The vendor ROM symbol map identifies 0x16c2d as set_timer(AP_TIM_TypeDef*, int).
+const AP_TIM2: u32 = 0x4000_1028;
+const BASE_TIME_UNITS: u32 = 0x003f_ffff;
 
 const SUCCESS: u32 = 0;
 const FAILURE: u32 = 1;
@@ -43,6 +49,7 @@ pub fn handle(cpu: &mut Processor) -> bool {
         ROM_CB_TIMER_START => start(cpu),
         ROM_CB_TIMER_STOP => stop(cpu),
         ROM_CB_TIMER_UPDATE => update(cpu),
+        ROM_SET_TIMER => set_timer(cpu),
         IDLE_BX_LR_ROM => dispatch_due(cpu),
         _ => false,
     }
@@ -57,6 +64,22 @@ fn process_event(cpu: &mut Processor) -> bool {
         eprintln!("OSAL callback timer ProcessEvent task={task} consumed={events:#06x}");
     }
     cpu.set_r(Reg::R0, 0);
+    ret(cpu);
+    true
+}
+
+/// PHY6252 ROM set_timer() arms the baseband free-running timer used by LL.
+/// Firmverse advances LL/OSAL time from the CPU cycle counter, so the hardware
+/// countdown itself must not be duplicated. Keep strict validation of the
+/// exact startup call observed in the pinned SDK and complete it synchronously.
+fn set_timer(cpu: &mut Processor) -> bool {
+    let timer = cpu.get_r(Reg::R0);
+    let time = cpu.get_r(Reg::R1);
+    if timer != AP_TIM2 || time != BASE_TIME_UNITS {
+        eprintln!("TIMER strict unsupported ROM set_timer timer={timer:#010x} time={time:#010x}");
+        return false;
+    }
+    eprintln!("TIMER host ROM set_timer AP_TIM2 base_time_units={time:#x}");
     ret(cpu);
     true
 }
@@ -182,5 +205,11 @@ mod tests {
         assert!(!reached(9, 10));
         assert!(reached(10, 10));
         assert!(reached(1, 0xffff_fffe));
+    }
+
+    #[test]
+    fn ll_base_timer_contract_matches_sdk_boot_call() {
+        assert_eq!(AP_TIM2, 0x4000_1028);
+        assert_eq!(BASE_TIME_UNITS, 0x003f_ffff);
     }
 }
