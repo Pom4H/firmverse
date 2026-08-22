@@ -359,7 +359,8 @@ impl Chip {
         self.processor
             .reset()
             .map_err(|fault| format!("ROM reset command failed: {fault}"))?;
-        mailbox::plant_magic(&mut self.processor).map_err(|fault| format!("mailbox plant {fault}"))?;
+        mailbox::plant_magic(&mut self.processor)
+            .map_err(|fault| format!("mailbox plant {fault}"))?;
         self.pending_rx.clear();
         self.last_tx_seq = 0;
         self.uart_line.clear();
@@ -397,10 +398,9 @@ impl Chip {
 
     fn collect_bootrom(&mut self, delta: &mut ChipDelta) {
         while let Some((baud, bytes)) = self.bootrom.take_tx() {
-            delta.uart_lines.push(format!(
-                "ROM0@{baud} {}",
-                String::from_utf8_lossy(&bytes)
-            ));
+            delta
+                .uart_lines
+                .push(format!("ROM0@{baud} {}", String::from_utf8_lossy(&bytes)));
         }
     }
 
