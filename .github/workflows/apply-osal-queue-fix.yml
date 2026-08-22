@@ -1,5 +1,6 @@
 name: Apply PHY6252 OSAL queue fix
 
+# One-shot migration: the workflow deletes itself after the verified patch.
 on:
   push:
     paths:
