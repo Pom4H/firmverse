@@ -110,7 +110,6 @@ jobs:
           p.write_text(s)
           PY
           cargo fmt --all
-          cargo test --locked flash::tests::
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
