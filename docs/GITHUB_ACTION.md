@@ -54,6 +54,27 @@ Single-node Action mode is deterministic `--once --raw`; assert firmware/applica
 
 This keeps application behavior in the firmware repository while Firmverse owns emulation behavior.
 
+## BLE advertising boot assertion
+
+For a single PHY6252 node, `require-advertising` turns successful BLE startup
+into a first-class CI assertion. The Action fails if the real guest firmware
+does not reach `HCI_LE_SetAdvEnable(1)` before its execution budget ends:
+
+```yaml
+- uses: Pom4H/firmverse@v1
+  with:
+    firmware: build/app.hex
+    board: pb03f-kit
+    strict: 'true'
+    require-advertising: 'true'
+```
+
+The option intentionally requires `mode: single`. It proves that CPU and OSAL
+startup continued far enough to enable advertising; it does not claim that an
+external radio received a packet. Because the pinned SDK runs a startup LED
+sequence before BLE initialization, this assertion uses a deterministic 50
+million instruction budget unless `max-insns` is set explicitly.
+
 ## Mesh regression
 
 The same firmware image can be instantiated several times inside one deterministic World:
@@ -88,6 +109,7 @@ Each node gets an independent firmware instance and deterministic identity. The 
 | `nodes` | no | `2` | Number of identical firmware nodes in mesh mode; must be at least 2 |
 | `ticks` | no | `200` | Deterministic world ticks in mesh mode |
 | `strict` | no | `true` | Enable fail-closed unknown MMIO/vendor-ROM behavior |
+| `require-advertising` | no | `false` | In single-node PHY6252 mode, fail unless guest firmware enables BLE advertising; defaults that assertion to 50M instructions |
 | `max-insns` | no | empty | Optional instruction budget override |
 | `expect` | no | empty | Newline-separated fixed strings required in the log |
 | `log` | no | `firmverse.log` | Log path, relative to the caller workspace unless absolute |

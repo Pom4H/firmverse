@@ -51,6 +51,12 @@ if [[ "$require_advertising" == true && "$mode" != single ]]; then
   echo "::error::require-advertising currently requires mode=single" >&2
   exit 2
 fi
+if [[ "$require_advertising" == true && -z "$max_insns" ]]; then
+  # The pinned SDK performs a visible LED chase before entering its BLE/OSAL
+  # startup. The normal one-shot default is deliberately smaller, so give this
+  # deeper contract an explicit deterministic budget unless the caller chose one.
+  max_insns=50000000
+fi
 
 mkdir -p "$(dirname "$log")"
 
@@ -109,7 +115,7 @@ printf '\n'
 "${cmd[@]}" 2>&1 | tee "$log"
 
 if [[ "$require_advertising" == true ]]; then
-  if ! grep -Fq -- 'BLE HCI LE_SetAdvEnable enabled=1' "$log"; then
+  if ! grep -Fxq -- 'BLE HCI LE_SetAdvEnable enabled=1' "$log"; then
     echo "::error::PHY6252 firmware did not enable BLE advertising before the execution budget ended" >&2
     exit 3
   fi

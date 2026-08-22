@@ -85,17 +85,39 @@ jobs:
           git -C "$SDK_ROOT" reset --hard "$SDK_COMMIT"
           git -C "$SDK_ROOT" clean -fdx
 
-      - name: Build real PHY6252 BLE image
+      - name: Build real PHY6252 BLE observer image
         run: make -C firmware/silicon clean all PHY62XX_SDK="$SDK_ROOT"
 
-      - name: BLE boot regression contract
+      - name: Real BLE observer boot regression contract
         uses: ./
         with:
           firmware: firmware/build/rssi-rank-ble.hex
           board: pb03f-kit
           strict: 'true'
-          require-advertising: 'true'
+          max-insns: '50000000'
           log: firmverse-action-logs/ble-boot.log
+          expect: |
+            BLE HCI LE_SetScanEnable enabled=1
+
+      - name: Advertising assertion wrapper contract
+        run: |
+          set -euo pipefail
+          stub="$(mktemp)"
+          image="$(mktemp)"
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'case " $* " in *" --max-insns 50000000 "*) ;; *) exit 41;; esac' \
+            "printf '%s\\n' 'BLE HCI LE_SetAdvEnable enabled=1'" \
+            > "$stub"
+          chmod +x "$stub"
+          printf '%s\n' ':00000001FF' > "$image"
+          FIRMVERSE_BIN="$stub" \
+          FIRMVERSE_FIRMWARE="$image" \
+          FIRMVERSE_REQUIRE_ADVERTISING=true \
+          FIRMVERSE_LOG=firmverse-action-logs/advertising-contract.log \
+            bash action/run.sh
+          grep -Fxq 'BLE HCI LE_SetAdvEnable enabled=1' \
+            firmverse-action-logs/advertising-contract.log
 
       - name: Mesh action contract
         id: mesh

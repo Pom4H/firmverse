@@ -33,7 +33,7 @@ inputs:
     required: false
     default: 'true'
   require-advertising:
-    description: "Fail unless PHY6252 firmware reaches HCI LE advertising enable"
+    description: "Fail unless PHY6252 firmware reaches HCI LE advertising enable (50M instructions by default)"
     required: false
     default: 'false'
   max-insns:
