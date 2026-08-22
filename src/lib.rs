@@ -67,11 +67,11 @@ pub mod web_runtime;
 pub mod world;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub mod flash;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod ble_host;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod emu;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod flash;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod sim;
 #[cfg(not(target_arch = "wasm32"))]
