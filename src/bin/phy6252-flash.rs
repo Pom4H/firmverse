@@ -98,7 +98,12 @@ fn run() -> Result<(), String> {
     let mut target = Pb03fKit::new(link, boot);
     let report = Flasher::new(options).flash(&mut target, &image)?;
 
-    print_report(&report.revision, report.flash_size, report.flash_id, report.bytes_written);
+    print_report(
+        &report.revision,
+        report.flash_size,
+        report.flash_id,
+        report.bytes_written,
+    );
     if !cli.no_reset {
         println!("reset sent — application boot requested");
     }
@@ -106,7 +111,11 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn flash_harness(image: &FlashImage, flash_size: usize, options: FlashOptions) -> Result<(), String> {
+fn flash_harness(
+    image: &FlashImage,
+    flash_size: usize,
+    options: FlashOptions,
+) -> Result<(), String> {
     let mut target = HarnessTarget::new(flash_size)?;
     let report = Flasher::new(options).flash(&mut target, image)?;
 
@@ -136,8 +145,16 @@ fn flash_harness(image: &FlashImage, flash_size: usize, options: FlashOptions) -
         ));
     }
 
-    print_report(&report.revision, report.flash_size, report.flash_id, report.bytes_written);
-    println!("verified {} image part(s) byte-for-byte in virtual NOR", image.parts.len());
+    print_report(
+        &report.revision,
+        report.flash_size,
+        report.flash_id,
+        report.bytes_written,
+    );
+    println!(
+        "verified {} image part(s) byte-for-byte in virtual NOR",
+        image.parts.len()
+    );
     if options.reset_after {
         println!("reset observed by harness");
     }
