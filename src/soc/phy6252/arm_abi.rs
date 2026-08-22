@@ -12,6 +12,7 @@ const C_MEMCMP: u32 = 0x0000_0EF2;
 const C_STRNCMP: u32 = 0x0000_0F0C;
 const AEABI_UREAD4: u32 = 0x0000_0F74;
 const ARM_COMMON_SWITCH8: u32 = 0x0000_8960;
+const OSAL_MEMCMP: u32 = 0x0001_4CCC;
 
 pub fn handle(cpu: &mut Processor) -> bool {
     match cpu.get_pc() {
@@ -25,6 +26,7 @@ pub fn handle(cpu: &mut Processor) -> bool {
         C_STRNCMP => strcmp(cpu, Some(cpu.get_r(Reg::R2))),
         AEABI_UREAD4 => uread4(cpu),
         ARM_COMMON_SWITCH8 => common_switch8(cpu),
+        OSAL_MEMCMP => memcmp(cpu),
         _ => false,
     }
 }
