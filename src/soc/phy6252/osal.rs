@@ -945,6 +945,17 @@ impl HostOsal {
         if payload != 0 {
             let _ = cpu.write32(payload - MSG_HDR, 0);
         }
+
+        // Настоящий PHY/TI OSAL снова ставит SYS_EVENT_MSG, если после
+        // извлечения одного сообщения для этого task в очереди осталось ещё одно.
+        // Иначе scheduler уже очистил bitmap, и следующий HCI completion зависнет.
+        let more_for_task = self.messages.iter().any(|queued| {
+            cpu.read8(*queued - MSG_HDR + MSG_DEST_OFF).ok() == Some(task)
+        });
+        if more_for_task && !self.post(cpu, task, SYS_EVENT_MSG) {
+            return false;
+        }
+
         self.once(ROM_MSG_RECEIVE, || {
             eprintln!("OSAL host message queue receive")
         });
