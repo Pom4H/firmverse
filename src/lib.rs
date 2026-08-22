@@ -16,6 +16,8 @@ mod arm_abi;
 mod ble_rom;
 #[path = "soc/phy6252/bm_rom.rs"]
 mod bm_rom;
+#[path = "soc/phy6252/bootrom.rs"]
+mod bootrom;
 #[path = "soc/phy6252/bus.rs"]
 mod bus;
 #[path = "soc/phy6252/cbtimer_rom.rs"]
@@ -52,6 +54,8 @@ mod osal;
 mod osal_power;
 #[path = "soc/phy6252/osal_queue.rs"]
 mod osal_queue;
+#[path = "soc/phy6252/reset_bus.rs"]
+mod reset_bus;
 #[path = "soc/phy6252/silicon_regs.rs"]
 mod silicon_regs;
 
