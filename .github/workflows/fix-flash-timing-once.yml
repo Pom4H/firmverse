@@ -1,3 +1,4 @@
+# Temporary branch-only repair; delete after it commits the formatted timing fix.
 name: Preserve flasher transport timing once
 
 on:
@@ -112,7 +113,7 @@ jobs:
           cargo test --locked flash::tests::
           git diff --check
           git config user.name 'github-actions[bot]'
-          git config user.email '4189824+github-actions[bot]@users.noreply.github.com'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/flash.rs
           if ! git diff --cached --quiet; then
             git commit -m 'fix(flash): preserve PHY62xx serial timing'
