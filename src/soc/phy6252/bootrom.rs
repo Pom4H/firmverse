@@ -139,10 +139,7 @@ mod tests {
         rom.feed_uart0(ENTRY_BAUD, b"UXTDWU");
         let _ = rom.take_tx();
         assert_eq!(rom.feed_uart0(COMMAND_BAUD, b"res"), Action::None);
-        assert_eq!(
-            rom.feed_uart0(COMMAND_BAUD, b"et "),
-            Action::RunApplication
-        );
+        assert_eq!(rom.feed_uart0(COMMAND_BAUD, b"et "), Action::RunApplication);
         assert!(!rom.active());
     }
 }
