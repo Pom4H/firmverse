@@ -25,6 +25,7 @@ use zmu_cortex_m::executor::Executor;
 use zmu_cortex_m::Processor;
 
 const VECTOR_MIRROR_BYTES: usize = 0xC0;
+const PHY62XX_SDK_BOOT_OFFSET: usize = 0x1838;
 const CPU_THUNK_DISABLE_IRQ: u32 = 0x0000_00C0;
 const CPU_THUNK_ENABLE_IRQ: u32 = 0x0000_00C4;
 const BOOT_FLASH_BYTES: usize = 0xC8;
@@ -545,6 +546,16 @@ pub(crate) fn locate_vector_table(sram: &[u8]) -> Result<(u32, Vec<u8>), String>
     if vector_pair_plausible(sram, 0) {
         return Ok((SRAM_BASE, vector_table(sram, 0)));
     }
+    // PHY62XX SDK 3.1.2 links its two-word boot vector at 0x1fff1838. Prefer
+    // this documented ABI location before applying the generic heuristic:
+    // executable SRAM often contains incidental SP/code pairs that otherwise
+    // score like a larger Cortex-M vector table.
+    if vector_pair_plausible(sram, PHY62XX_SDK_BOOT_OFFSET) {
+        return Ok((
+            SRAM_BASE + PHY62XX_SDK_BOOT_OFFSET as u32,
+            vector_table(sram, PHY62XX_SDK_BOOT_OFFSET),
+        ));
+    }
 
     let mut best: Option<(u32, usize, u32)> = None;
     for offset in (0..sram.len().saturating_sub(8)).step_by(4) {
@@ -636,7 +647,7 @@ mod tests {
     #[test]
     fn finds_sdk_vectors_after_jump_table_and_mirrors_exceptions() {
         let mut sram = vec![0u8; SRAM_SIZE];
-        let offset = 0x1838usize;
+        let offset = PHY62XX_SDK_BOOT_OFFSET;
         sram[offset..offset + 4].copy_from_slice(&0x1FFF_9000u32.to_le_bytes());
         sram[offset + 4..offset + 8].copy_from_slice(&0x1FFF_19E1u32.to_le_bytes());
         sram[offset + 8..offset + 12].copy_from_slice(&0x0000_8481u32.to_le_bytes());
@@ -656,6 +667,30 @@ mod tests {
         assert_eq!(
             u32::from_le_bytes(vectors[0xBC..0xC0].try_into().unwrap()),
             0x1FFF_2223
+        );
+    }
+
+    #[test]
+    fn sdk_boot_vector_wins_over_incidental_code_pairs() {
+        let mut sram = vec![0u8; SRAM_SIZE];
+        sram[PHY62XX_SDK_BOOT_OFFSET..PHY62XX_SDK_BOOT_OFFSET + 4]
+            .copy_from_slice(&0x1FFF_B458u32.to_le_bytes());
+        sram[PHY62XX_SDK_BOOT_OFFSET + 4..PHY62XX_SDK_BOOT_OFFSET + 8]
+            .copy_from_slice(&0x1FFF_1841u32.to_le_bytes());
+
+        let incidental = 0x3E80usize;
+        sram[incidental..incidental + 4].copy_from_slice(&0x1FFF_01B8u32.to_le_bytes());
+        sram[incidental + 4..incidental + 8].copy_from_slice(&0x1102_FE51u32.to_le_bytes());
+        for index in 2..16 {
+            let start = incidental + index * 4;
+            sram[start..start + 4].copy_from_slice(&0x1102_0001u32.to_le_bytes());
+        }
+
+        let (base, vectors) = locate_vector_table(&sram).unwrap();
+        assert_eq!(base, SRAM_BASE + PHY62XX_SDK_BOOT_OFFSET as u32);
+        assert_eq!(
+            u32::from_le_bytes(vectors[4..8].try_into().unwrap()),
+            0x1FFF_1841
         );
     }
 

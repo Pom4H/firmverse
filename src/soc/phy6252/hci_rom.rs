@@ -11,6 +11,8 @@ const ROM_HCI_LE_READ_BUF_SIZE_CMD: u32 = 0x0000_1C28;
 const ROM_HCI_LE_SET_ADV_DATA_CMD: u32 = 0x0000_1F4C;
 const ROM_HCI_LE_SET_ADV_ENABLE_CMD: u32 = 0x0000_1F68;
 const ROM_HCI_LE_SET_ADV_PARAM_CMD: u32 = 0x0000_1F84;
+const ROM_HCI_LE_SET_SCAN_ENABLE_CMD: u32 = 0x0000_2218;
+const ROM_HCI_LE_SET_SCAN_PARAM_CMD: u32 = 0x0000_2234;
 const ROM_HCI_LE_SET_SCAN_RSP_DATA_CMD: u32 = 0x0000_2254;
 const ROM_HCI_READ_BDADDR_CMD: u32 = 0x0000_2550;
 const ROM_HCI_SEND_DATA_PKT: u32 = 0x0000_27E8;
@@ -71,6 +73,8 @@ const OPCODE_LE_SET_ADV_PARAM: u16 = 0x2006;
 const OPCODE_LE_SET_ADV_DATA: u16 = 0x2008;
 const OPCODE_LE_SET_SCAN_RSP_DATA: u16 = 0x2009;
 const OPCODE_LE_SET_ADV_ENABLE: u16 = 0x200A;
+const OPCODE_LE_SET_SCAN_PARAM: u16 = 0x200B;
+const OPCODE_LE_SET_SCAN_ENABLE: u16 = 0x200C;
 const CMD_COMPLETE_BYTES: u32 = 12;
 const HCI_DATA_EVENT_BYTES: u32 = 12;
 const CONN_COMPLETE_BYTES: u32 = 22;
@@ -107,6 +111,8 @@ pub fn handle(cpu: &mut Processor) -> bool {
         }
         ROM_HCI_LE_SET_ADV_ENABLE_CMD => set_adv_enable(cpu),
         ROM_HCI_LE_SET_ADV_PARAM_CMD => set_adv_params(cpu),
+        ROM_HCI_LE_SET_SCAN_ENABLE_CMD => set_scan_enable(cpu),
+        ROM_HCI_LE_SET_SCAN_PARAM_CMD => set_scan_params(cpu),
         ROM_HCI_SEND_DATA_PKT => send_data_pkt(cpu),
         CONT_TRAP if cpu.get_r(Reg::R2) == CONT_MAGIC => continue_event(cpu),
         _ => false,
@@ -465,6 +471,39 @@ fn set_adv_params(cpu: &mut Processor) -> bool {
     begin_status_event(cpu, OPCODE_LE_SET_ADV_PARAM)
 }
 
+fn set_scan_params(cpu: &mut Processor) -> bool {
+    let scan_type = cpu.get_r(Reg::R0) as u8;
+    let interval = cpu.get_r(Reg::R1) as u16;
+    let window = cpu.get_r(Reg::R2) as u16;
+    let own_addr_type = cpu.get_r(Reg::R3) as u8;
+    let wl_policy = match cpu.read32(cpu.get_r(Reg::SP)) {
+        Ok(value) => value as u8,
+        Err(_) => return false,
+    };
+    if scan_type > 1
+        || !(4..=0x4000).contains(&interval)
+        || !(4..=interval).contains(&window)
+        || own_addr_type > 3
+        || wl_policy > 3
+    {
+        return immediate_error(cpu);
+    }
+    eprintln!(
+        "BLE HCI LE_SetScanParam type={scan_type} interval={interval} window={window} own_addr={own_addr_type} policy={wl_policy}"
+    );
+    begin_status_event(cpu, OPCODE_LE_SET_SCAN_PARAM)
+}
+
+fn set_scan_enable(cpu: &mut Processor) -> bool {
+    let enabled = cpu.get_r(Reg::R0) as u8;
+    let filter_duplicates = cpu.get_r(Reg::R1) as u8;
+    if enabled > 1 || filter_duplicates > 1 {
+        return immediate_error(cpu);
+    }
+    eprintln!("BLE HCI LE_SetScanEnable enabled={enabled} filter_duplicates={filter_duplicates}");
+    begin_status_event(cpu, OPCODE_LE_SET_SCAN_ENABLE)
+}
+
 fn send_data_pkt(cpu: &mut Processor) -> bool {
     let len = cpu.get_r(Reg::R2) as usize;
     let ptr = cpu.get_r(Reg::R3);
@@ -791,6 +830,8 @@ mod tests {
         assert_eq!(OPCODE_LE_SET_ADV_DATA, 0x2008);
         assert_eq!(OPCODE_LE_SET_SCAN_RSP_DATA, 0x2009);
         assert_eq!(OPCODE_LE_SET_ADV_ENABLE, 0x200A);
+        assert_eq!(OPCODE_LE_SET_SCAN_PARAM, 0x200B);
+        assert_eq!(OPCODE_LE_SET_SCAN_ENABLE, 0x200C);
     }
 
     #[test]
