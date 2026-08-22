@@ -44,6 +44,10 @@ const TIM_CURRENT: [u32; 6] = [
     0x4000_1054,
     0x4000_1068,
 ];
+// PHY6252 SDK BASE_TIME_UNITS is 0x3fffff and the hardware timer runs at
+// 4 MHz, so CurrentCount starts at BASE_TIME_UNITS * 4. WaitUs() converts
+// CurrentCount back to microseconds with >> 2.
+const TIMER_BASE_LOAD: u32 = 0x00FF_FFFC;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GpioBank {
@@ -101,7 +105,7 @@ impl Phy6252Bus {
             pwm: Rc::new(RefCell::new([0; PWM_CHANNELS])),
             pwm_changed: Rc::new(RefCell::new(false)),
             adc_mv: Rc::new(RefCell::new(adc)),
-            timer_count: Cell::new(0xFFFF_0000),
+            timer_count: Cell::new(TIMER_BASE_LOAD),
             flash_addr: Cell::new(0),
         }
     }
@@ -304,7 +308,12 @@ impl Phy6252Bus {
         let aligned = addr & !3;
         if TIM_CURRENT.contains(&aligned) {
             let value = self.timer_count.get();
-            self.timer_count.set(value.wrapping_sub(4));
+            let next = if value >= 4 {
+                value - 4
+            } else {
+                TIMER_BASE_LOAD
+            };
+            self.timer_count.set(next);
             return Some(value);
         }
         if let Some(value) = self.adc_read(aligned) {
@@ -564,6 +573,14 @@ mod tests {
         assert_eq!(bus.read32(UART0_BASE + 0x04).unwrap(), 0x81);
         assert_eq!(bus.read32(UART0_BASE + 0x14).unwrap(), 0x60);
         assert_eq!(bus.read32(UART0_BASE + 0x7C).unwrap(), 0x06);
+    }
+
+    #[test]
+    fn base_timer_matches_sdk_4mhz_countdown() {
+        let mut bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]);
+        assert_eq!(TIMER_BASE_LOAD >> 2, 0x003f_ffff);
+        assert_eq!(bus.read32(TIM_CURRENT[2]).unwrap(), TIMER_BASE_LOAD);
+        assert_eq!(bus.read32(TIM_CURRENT[2]).unwrap(), TIMER_BASE_LOAD - 4);
     }
 
     #[test]
