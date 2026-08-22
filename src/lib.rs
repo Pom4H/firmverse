@@ -61,6 +61,7 @@ mod silicon_regs;
 
 pub mod board;
 pub mod hex;
+pub mod programmer;
 pub mod soc;
 pub mod web_runtime;
 pub mod world;
@@ -69,6 +70,8 @@ pub mod world;
 pub mod ble_host;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod emu;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod flash;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod sim;
 #[cfg(not(target_arch = "wasm32"))]
