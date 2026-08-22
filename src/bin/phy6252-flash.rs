@@ -42,10 +42,7 @@ fn clap_u32(s: &str) -> Result<u32, String> {
 
 fn parse_u32(s: &str) -> Option<u32> {
     let text = s.trim();
-    if let Some(hex) = text
-        .strip_prefix("0x")
-        .or_else(|| text.strip_prefix("0X"))
-    {
+    if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
         u32::from_str_radix(hex, 16).ok()
     } else {
         text.parse().ok()
