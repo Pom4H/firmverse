@@ -118,8 +118,9 @@ fn parse_friendly(line: &str) -> Result<ChipCmd, String> {
                 .map(ChipCmd::Write)
                 .ok_or_else(|| "write needs text or even-length hex".into())
         }
-        "uart" => parse_uart(&line[verb.len()..])
-            .ok_or_else(|| "uart <0|1> <baud> <text|hex>".into()),
+        "uart" => {
+            parse_uart(&line[verb.len()..]).ok_or_else(|| "uart <0|1> <baud> <text|hex>".into())
+        }
         "adc" => parse_adc(line[verb.len()..].trim())
             .ok_or_else(|| "adc P20 P15 P24 P23 — volts (3.3) or millivolts (3300)".into()),
         "tick" => {
