@@ -16,6 +16,8 @@ mod arm_abi;
 mod ble_rom;
 #[path = "soc/phy6252/bm_rom.rs"]
 mod bm_rom;
+#[path = "soc/phy6252/bootrom.rs"]
+mod bootrom;
 #[path = "soc/phy6252/bus.rs"]
 mod bus;
 #[path = "soc/phy6252/cbtimer_rom.rs"]
