@@ -1,5 +1,6 @@
 //! One PHY6252 guest: load a HEX, apply host commands, step the Cortex-M0.
 
+use crate::bootrom::{Action as BootRomAction, BootRom, ENTRY_BAUD};
 use crate::bus::{
     GpioBank, Phy6252Bus, ADC_CH_COUNT, GPIO_PIN_MASK, PWM_CHANNELS, ROM_END, SRAM_BASE, SRAM_SIZE,
     XIP_BASE, XIP_SIZE,
@@ -9,7 +10,8 @@ use crate::discovery::DiscoveryBus;
 use crate::hex::HexImage;
 use crate::mailbox;
 use crate::osal::HostOsal;
-use std::cell::RefCell;
+use crate::reset_bus::ResetAwareBus;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::path::Path;
 use std::rc::Rc;
@@ -51,6 +53,8 @@ pub struct Chip {
     clock_ms: u32,
     cpu_rom_seen: u8,
     host_osal: HostOsal,
+    reset_requested: Rc<Cell<bool>>,
+    bootrom: BootRom,
     pub insn: u64,
     pub hex_label: String,
     stop: Option<String>,
@@ -125,7 +129,11 @@ impl Chip {
         let pwm = Rc::clone(&device.pwm);
         let pwm_changed = Rc::clone(&device.pwm_changed);
         let adc_mv = Rc::clone(&device.adc_mv);
-        let device = DiscoveryBus::new(device, strict);
+        let reset_requested = Rc::new(Cell::new(false));
+        let device = ResetAwareBus::new(
+            DiscoveryBus::new(device, strict),
+            Rc::clone(&reset_requested),
+        );
         let sp = u32::from_le_bytes(vectors[0..4].try_into().unwrap());
         let reset = u32::from_le_bytes(vectors[4..8].try_into().unwrap());
         eprintln!("hex {hex_label}");
@@ -167,6 +175,8 @@ impl Chip {
             clock_ms: 0,
             cpu_rom_seen: 0,
             host_osal: HostOsal::new(),
+            reset_requested,
+            bootrom: BootRom::default(),
             insn: 0,
             stop: None,
         })
@@ -197,6 +207,21 @@ impl Chip {
             }
             ChipCmd::Write(bytes) => {
                 self.pending_rx.push_back(bytes);
+                Ok(Apply::Continue)
+            }
+            ChipCmd::Uart { port, baud, bytes } => {
+                if port != 0 {
+                    return Err("PHY6252 ROM programmer is modeled on UART0 only".into());
+                }
+                if !self.bootrom.active() {
+                    return Err(
+                        "host UART RX is currently modeled only while PHY6252 ROM programmer is active"
+                            .into(),
+                    );
+                }
+                if self.bootrom.feed_uart0(baud, &bytes) == BootRomAction::RunApplication {
+                    self.restart_application()?;
+                }
                 Ok(Apply::Continue)
             }
             ChipCmd::Scan { addr, rssi } => {
@@ -243,6 +268,10 @@ impl Chip {
         if self.stop.is_some() {
             return delta;
         }
+        if self.bootrom.active() {
+            self.collect_bootrom(&mut delta);
+            return delta;
+        }
         apply_ext(&self.gpio, &self.ext_in);
         self.redirect();
         if let Some(trap) = self.processor.take_pending_fault_trap() {
@@ -273,6 +302,15 @@ impl Chip {
             let r3 = self.processor.get_r(Reg::R3);
             self.processor.step();
             self.insn += 1;
+            if self.reset_requested.replace(false) {
+                match self.enter_bootrom_after_system_reset() {
+                    Ok(()) => delta
+                        .uart_lines
+                        .push(format!("ROM0@{ENTRY_BAUD} await UXTDWU")),
+                    Err(error) => self.stop = Some(error),
+                }
+                break;
+            }
             if let Some(trap) = self.processor.take_pending_fault_trap() {
                 eprintln!(
                     "CPU fault pc={pc:#010x} lr={lr:#010x} r0={r0:#010x} r1={r1:#010x} r2={r2:#010x} r3={r3:#010x} trap={trap:?}"
@@ -287,7 +325,8 @@ impl Chip {
             }
         }
         self.collect(&mut delta);
-        if live_clock {
+        self.collect_bootrom(&mut delta);
+        if live_clock && !self.bootrom.active() {
             self.clock_ms = self.clock_ms.wrapping_add(1);
             let _ = mailbox::set_tick(&mut self.processor, self.clock_ms);
         }
@@ -300,6 +339,34 @@ impl Chip {
             self.processor.lr,
             self.processor.msp,
         )
+    }
+
+    fn enter_bootrom_after_system_reset(&mut self) -> Result<(), String> {
+        self.processor
+            .reset()
+            .map_err(|fault| format!("system reset failed: {fault}"))?;
+        self.pending_rx.clear();
+        self.last_tx_seq = 0;
+        self.uart_line.clear();
+        self.uart_rx.borrow_mut().clear();
+        self.cpu_rom_seen = 0;
+        self.host_osal = HostOsal::new();
+        self.bootrom.enter_after_system_reset();
+        Ok(())
+    }
+
+    fn restart_application(&mut self) -> Result<(), String> {
+        self.processor
+            .reset()
+            .map_err(|fault| format!("ROM reset command failed: {fault}"))?;
+        mailbox::plant_magic(&mut self.processor).map_err(|fault| format!("mailbox plant {fault}"))?;
+        self.pending_rx.clear();
+        self.last_tx_seq = 0;
+        self.uart_line.clear();
+        self.uart_rx.borrow_mut().clear();
+        self.cpu_rom_seen = 0;
+        self.host_osal = HostOsal::new();
+        Ok(())
     }
 
     fn collect(&mut self, delta: &mut ChipDelta) {
@@ -325,6 +392,15 @@ impl Chip {
             Ok(Some(frame)) => delta.frames.push(frame),
             Ok(None) => {}
             Err(fault) => eprintln!("err mailbox {fault}"),
+        }
+    }
+
+    fn collect_bootrom(&mut self, delta: &mut ChipDelta) {
+        while let Some((baud, bytes)) = self.bootrom.take_tx() {
+            delta.uart_lines.push(format!(
+                "ROM0@{baud} {}",
+                String::from_utf8_lossy(&bytes)
+            ));
         }
     }
 
