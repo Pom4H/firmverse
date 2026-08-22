@@ -1,4 +1,4 @@
-# Temporary branch-only repair; delete after it commits the formatted timing fix.
+# Temporary branch-only repair; delete after it commits the timing fix.
 name: Preserve flasher transport timing once
 
 on:
@@ -16,9 +16,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: feature/abstract-flasher-harness
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
       - name: Preserve real-serial timing behind Transport
         shell: bash
         run: |
@@ -28,43 +25,43 @@ jobs:
           p = Path('src/flash.rs')
           s = p.read_text()
 
-          old = '''    fn set_timeout(&mut self, timeout: Duration) -> Result<(), String>;
+          replacements = [
+              (
+                  '''    fn set_timeout(&mut self, timeout: Duration) -> Result<(), String>;
               fn clear(&mut self) -> Result<(), String>;
               fn write_all(&mut self, bytes: &[u8]) -> Result<(), String>;
-          '''
-          new = '''    fn set_timeout(&mut self, timeout: Duration) -> Result<(), String>;
+          ''',
+                  '''    fn set_timeout(&mut self, timeout: Duration) -> Result<(), String>;
               fn delay(&mut self, duration: Duration) -> Result<(), String>;
               fn clear(&mut self) -> Result<(), String>;
               fn write_all(&mut self, bytes: &[u8]) -> Result<(), String>;
-          '''
-          if old not in s:
-              raise SystemExit('Transport signature changed')
-          s = s.replace(old, new, 1)
-
-          old = '''        if ack.as_slice() != b"#OK" {
+          ''',
+                  'Transport signature',
+              ),
+              (
+                  '''        if ack.as_slice() != b"#OK" {
                   self.read_reg(0x1FFF_0000)?;
               }
               self.io.clear()?;
-          '''
-          new = '''        if ack.as_slice() != b"#OK" {
+          ''',
+                  '''        if ack.as_slice() != b"#OK" {
                   self.read_reg(0x1FFF_0000)?;
               }
               self.io.delay(Duration::from_millis(50))?;
               self.io.clear()?;
-          '''
-          if old not in s:
-              raise SystemExit('set_baud body changed')
-          s = s.replace(old, new, 1)
-
-          old = '''        for _ in 0..77 {
+          ''',
+                  'set_baud body',
+              ),
+              (
+                  '''        for _ in 0..77 {
                   if self.flash_status()? & 1 == 0 {
                       self.erased_from = 0;
                       self.erased_to = self.flash_size();
                       return Ok(());
                   }
               }
-          '''
-          new = '''        for _ in 0..77 {
+          ''',
+                  '''        for _ in 0..77 {
                   if self.flash_status()? & 1 == 0 {
                       self.erased_from = 0;
                       self.erased_to = self.flash_size();
@@ -72,10 +69,14 @@ jobs:
                   }
                   self.io.delay(Duration::from_millis(100))?;
               }
-          '''
-          if old not in s:
-              raise SystemExit('erase_all body changed')
-          s = s.replace(old, new, 1)
+          ''',
+                  'erase_all body',
+              ),
+          ]
+          for old, new, label in replacements:
+              if old not in s:
+                  raise SystemExit(f'{label} changed')
+              s = s.replace(old, new, 1)
 
           marker = '''    fn clear(&mut self) -> Result<(), String> {
                   self.port
@@ -109,12 +110,9 @@ jobs:
 
           p.write_text(s)
           PY
-          cargo fmt --all
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/flash.rs
-          if ! git diff --cached --quiet; then
-            git commit -m 'fix(flash): preserve PHY62xx serial timing'
-            git push origin HEAD:feature/abstract-flasher-harness
-          fi
+          git commit -m 'fix(flash): preserve PHY62xx serial timing'
+          git push origin HEAD:feature/abstract-flasher-harness
