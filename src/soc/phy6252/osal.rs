@@ -120,9 +120,10 @@ pub struct HostOsal {
 impl HostOsal {
     pub fn new() -> Self {
         let sequence = NEXT_FLASH_UID.fetch_add(1, Ordering::Relaxed);
-        let mut host = Self::default();
-        host.flash_uid = (FLASH_UID_PREFIX | sequence).to_le_bytes();
-        host
+        Self {
+            flash_uid: (FLASH_UID_PREFIX | sequence).to_le_bytes(),
+            ..Self::default()
+        }
     }
 
     pub fn handle(&mut self, cpu: &mut Processor) -> bool {
