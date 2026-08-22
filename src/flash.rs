@@ -18,6 +18,7 @@ pub trait Transport {
     fn baud(&self) -> Result<u32, String>;
     fn set_baud(&mut self, baud: u32) -> Result<(), String>;
     fn set_timeout(&mut self, timeout: Duration) -> Result<(), String>;
+    fn delay(&mut self, duration: Duration) -> Result<(), String>;
     fn clear(&mut self) -> Result<(), String>;
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), String>;
     fn read(&mut self, len: usize) -> Result<Vec<u8>, String>;
@@ -197,6 +198,7 @@ impl<'a, T: Transport> Phy62xxRom<'a, T> {
         if ack.as_slice() != b"#OK" {
             self.read_reg(0x1FFF_0000)?;
         }
+        self.io.delay(Duration::from_millis(50))?;
         self.io.clear()?;
         Ok(())
     }
@@ -220,6 +222,7 @@ impl<'a, T: Transport> Phy62xxRom<'a, T> {
                 self.erased_to = self.flash_size();
                 return Ok(());
             }
+            self.io.delay(Duration::from_millis(100))?;
         }
         Err("PHY62xx chip erase timed out".into())
     }
@@ -415,6 +418,11 @@ impl Transport for SerialTransport {
         self.port
             .set_timeout(timeout)
             .map_err(|error| error.to_string())
+    }
+
+    fn delay(&mut self, duration: Duration) -> Result<(), String> {
+        std::thread::sleep(duration);
+        Ok(())
     }
 
     fn clear(&mut self) -> Result<(), String> {
@@ -716,6 +724,10 @@ impl Transport for HarnessTransport {
 
     fn set_timeout(&mut self, timeout: Duration) -> Result<(), String> {
         self.timeout = timeout;
+        Ok(())
+    }
+
+    fn delay(&mut self, _duration: Duration) -> Result<(), String> {
         Ok(())
     }
 
