@@ -1,4 +1,5 @@
 //! PHY62x2 UART bootloader image layout (pvvx `rdwr_phy62x2` compatible).
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 const SRAM_WINDOW: u32 = 0x1FFF_0000;
 const FLASH_WINDOW: u32 = 0x1100_0000;
