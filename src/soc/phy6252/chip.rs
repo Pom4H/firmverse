@@ -452,8 +452,21 @@ fn take_flag(flag: &Rc<RefCell<bool>>) -> bool {
 }
 
 fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8, host_osal: &mut HostOsal) {
-    if host_osal.handle(processor) {
-        return;
+    // A host-modeled ROM helper may return directly into another modeled
+    // continuation (for example HCI CommandComplete -> GAP -> next HCI
+    // command). Drain that chain before zmu fetches an instruction from the
+    // emulator-only continuation address.
+    for hop in 0..32 {
+        let before = processor.get_pc();
+        if !host_osal.handle(processor) {
+            break;
+        }
+        if processor.get_pc() == before {
+            return;
+        }
+        if hop == 31 {
+            return;
+        }
     }
     let pc = processor.get_pc();
     if pc == ROM_CLK_GET_PCLK {

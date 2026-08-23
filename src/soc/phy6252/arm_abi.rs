@@ -26,7 +26,7 @@ pub fn handle(cpu: &mut Processor) -> bool {
         C_STRNCMP => strcmp(cpu, Some(cpu.get_r(Reg::R2))),
         AEABI_UREAD4 => uread4(cpu),
         ARM_COMMON_SWITCH8 => common_switch8(cpu),
-        OSAL_MEMCMP => memcmp(cpu),
+        OSAL_MEMCMP => osal_memcmp(cpu),
         _ => false,
     }
 }
@@ -162,6 +162,36 @@ fn memcmp(cpu: &mut Processor) -> bool {
     true
 }
 
+fn osal_memcmp(cpu: &mut Processor) -> bool {
+    // PHY6252 OSAL follows the TI contract: TRUE means all bytes match.
+    // This is intentionally the inverse of the C library memcmp ABI above.
+    let a = cpu.get_r(Reg::R0);
+    let b = cpu.get_r(Reg::R1);
+    let len = cpu.get_r(Reg::R2);
+    for i in 0..len {
+        let av = match cpu.read8(a.wrapping_add(i)) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let bv = match cpu.read8(b.wrapping_add(i)) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        if av != bv {
+            cpu.set_r(Reg::R0, osal_memcmp_result(false));
+            ret(cpu);
+            return true;
+        }
+    }
+    cpu.set_r(Reg::R0, osal_memcmp_result(true));
+    ret(cpu);
+    true
+}
+
+fn osal_memcmp_result(equal: bool) -> u32 {
+    u32::from(equal)
+}
+
 fn uread4(cpu: &mut Processor) -> bool {
     let ptr = cpu.get_r(Reg::R0);
     let mut value = 0u32;
@@ -212,6 +242,8 @@ fn ret(cpu: &mut Processor) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn byte_order_for_uread4_is_little_endian() {
         assert_eq!(u32::from_le_bytes([1, 2, 3, 4]), 0x0403_0201);
@@ -222,5 +254,11 @@ mod tests {
         let max_slot = 5u32;
         assert_eq!(3u32.min(max_slot), 3);
         assert_eq!(99u32.min(max_slot), 5);
+    }
+
+    #[test]
+    fn osal_memcmp_is_boolean_not_c_memcmp() {
+        assert_eq!(osal_memcmp_result(true), 1);
+        assert_eq!(osal_memcmp_result(false), 0);
     }
 }

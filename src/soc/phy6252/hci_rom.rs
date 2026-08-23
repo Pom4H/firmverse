@@ -40,6 +40,9 @@ const PENDING_HANDLE_SHADOW: u32 = mailbox::BASE + 0x310;
 const PENDING_LEN_SHADOW: u32 = mailbox::BASE + 0x314;
 const RX_MSG_SHADOW: u32 = mailbox::BASE + 0x318;
 const PENDING_BYTES: u32 = mailbox::BASE + 0x320;
+const RESUME_SHADOW: u32 = mailbox::BASE + 0x3F0;
+const RESUME_R2_SHADOW: u32 = mailbox::BASE + 0x3F4;
+const RESUME_R3_SHADOW: u32 = mailbox::BASE + 0x3F8;
 
 const IDLE_BX_LR_ROM: u32 = 0x0000_A9C8;
 const CONT_TRAP: u32 = 0x0000_00C2;
@@ -550,13 +553,17 @@ fn begin_status_event(cpu: &mut Processor, opcode: u16) -> bool {
 }
 
 fn begin_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
-    cpu.set_r(Reg::R12, cpu.get_r(Reg::LR));
+    if !save_resume(cpu, cpu.get_r(Reg::LR)) {
+        return false;
+    }
     begin_event_common(cpu, bytes, stage)
 }
 
 fn begin_async_event(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
     let resume = cpu.get_pc() | 1;
-    cpu.set_r(Reg::R12, resume);
+    if !save_resume(cpu, resume) {
+        return false;
+    }
     begin_event_common(cpu, bytes, stage)
 }
 
@@ -794,8 +801,7 @@ fn finish_status_alloc(cpu: &mut Processor, opcode: u16) -> bool {
 
 fn finish_failed_alloc(cpu: &mut Processor) -> bool {
     cpu.set_r(Reg::R0, HCI_ERROR_MEM_CAP_EXCEEDED);
-    cpu.set_pc(cpu.get_r(Reg::R12) & !1);
-    true
+    resume(cpu)
 }
 
 fn finish_send(cpu: &mut Processor) -> bool {
@@ -810,8 +816,32 @@ fn finish_send(cpu: &mut Processor) -> bool {
     );
     cpu.set_r(Reg::R2, 0);
     cpu.set_r(Reg::R3, 0);
-    cpu.set_pc(cpu.get_r(Reg::R12) & !1);
+    resume(cpu)
+}
+
+fn resume(cpu: &mut Processor) -> bool {
+    let return_pc = match cpu.read32(RESUME_SHADOW) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let caller_r2 = match cpu.read32(RESUME_R2_SHADOW) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let caller_r3 = match cpu.read32(RESUME_R3_SHADOW) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    cpu.set_r(Reg::R2, caller_r2);
+    cpu.set_r(Reg::R3, caller_r3);
+    cpu.set_pc(return_pc & !1);
     true
+}
+
+fn save_resume(cpu: &mut Processor, return_pc: u32) -> bool {
+    cpu.write32(RESUME_SHADOW, return_pc).is_ok()
+        && cpu.write32(RESUME_R2_SHADOW, cpu.get_r(Reg::R2)).is_ok()
+        && cpu.write32(RESUME_R3_SHADOW, cpu.get_r(Reg::R3)).is_ok()
 }
 
 fn ret(cpu: &mut Processor) {

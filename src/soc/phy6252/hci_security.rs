@@ -29,6 +29,9 @@ const SHADOW_PARAMS: u32 = mailbox::BASE + 0x708;
 const SHADOW_STATUS: u32 = mailbox::BASE + 0x730;
 const SHADOW_FOLLOWUP: u32 = mailbox::BASE + 0x734;
 const SHADOW_ENCRYPTED: u32 = mailbox::BASE + 0x738;
+const SHADOW_RESUME: u32 = mailbox::BASE + 0x73C;
+const SHADOW_RESUME_R2: u32 = mailbox::BASE + 0x740;
+const SHADOW_RESUME_R3: u32 = mailbox::BASE + 0x744;
 const MAX_PARAMS: usize = 32;
 
 const HCI_SMP_EVENT_EVENT: u8 = 0x92;
@@ -154,8 +157,8 @@ fn begin_status(cpu: &mut Processor, opcode: u16, status: u8, followup: bool) ->
 }
 
 fn begin_alloc(cpu: &mut Processor, bytes: u32, stage: u32, save_return: bool) -> bool {
-    if save_return {
-        cpu.set_r(Reg::R12, cpu.get_r(Reg::LR));
+    if save_return && !save_resume(cpu, cpu.get_r(Reg::LR)) {
+        return false;
     }
     cpu.set_r(Reg::R2, CONT_MAGIC);
     cpu.set_r(Reg::R3, stage);
@@ -291,8 +294,7 @@ fn finish_alloc_error(cpu: &mut Processor) -> bool {
     cpu.set_r(Reg::R0, HCI_ERROR_MEM_CAP_EXCEEDED as u32);
     cpu.set_r(Reg::R2, 0);
     cpu.set_r(Reg::R3, 0);
-    cpu.set_pc(cpu.get_r(Reg::R12) & !1);
-    true
+    resume(cpu)
 }
 
 fn finish_return(cpu: &mut Processor) -> bool {
@@ -307,8 +309,32 @@ fn finish_return(cpu: &mut Processor) -> bool {
     );
     cpu.set_r(Reg::R2, 0);
     cpu.set_r(Reg::R3, 0);
-    cpu.set_pc(cpu.get_r(Reg::R12) & !1);
+    resume(cpu)
+}
+
+fn resume(cpu: &mut Processor) -> bool {
+    let return_pc = match cpu.read32(SHADOW_RESUME) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let caller_r2 = match cpu.read32(SHADOW_RESUME_R2) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let caller_r3 = match cpu.read32(SHADOW_RESUME_R3) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    cpu.set_r(Reg::R2, caller_r2);
+    cpu.set_r(Reg::R3, caller_r3);
+    cpu.set_pc(return_pc & !1);
     true
+}
+
+fn save_resume(cpu: &mut Processor, return_pc: u32) -> bool {
+    cpu.write32(SHADOW_RESUME, return_pc).is_ok()
+        && cpu.write32(SHADOW_RESUME_R2, cpu.get_r(Reg::R2)).is_ok()
+        && cpu.write32(SHADOW_RESUME_R3, cpu.get_r(Reg::R3)).is_ok()
 }
 
 fn immediate(cpu: &mut Processor, status: u8) -> bool {

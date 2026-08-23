@@ -26,6 +26,9 @@ const STAGE_SEND_DONE: u32 = 3;
 const SHADOW_OPCODE: u32 = mailbox::BASE + 0x500;
 const SHADOW_PARAM_LEN: u32 = mailbox::BASE + 0x504;
 const SHADOW_PARAMS: u32 = mailbox::BASE + 0x508;
+const SHADOW_RESUME: u32 = mailbox::BASE + 0x548;
+const SHADOW_RESUME_R2: u32 = mailbox::BASE + 0x54C;
+const SHADOW_RESUME_R3: u32 = mailbox::BASE + 0x550;
 const MAX_PARAMS: usize = 64;
 
 const HCI_GAP_EVENT_EVENT: u8 = 0x91;
@@ -206,7 +209,9 @@ fn stage_status(cpu: &mut Processor, status: u8, opcode: u16) -> bool {
 }
 
 fn begin(cpu: &mut Processor, bytes: u32, stage: u32) -> bool {
-    cpu.set_r(Reg::R12, cpu.get_r(Reg::LR));
+    if !save_resume(cpu, cpu.get_r(Reg::LR)) {
+        return false;
+    }
     cpu.set_r(Reg::R2, CONT_MAGIC);
     cpu.set_r(Reg::R3, stage);
     cpu.set_r(Reg::R0, bytes);
@@ -292,8 +297,7 @@ fn route_to_gap(cpu: &mut Processor, msg: u32) -> bool {
         _ => {
             // HCI_CommandCompleteEvent can be used before GAP registration.
             cpu.set_r(Reg::R0, HCI_SUCCESS as u32);
-            cpu.set_pc(cpu.get_r(Reg::R12) & !1);
-            return true;
+            return resume(cpu);
         }
     };
     cpu.set_r(Reg::R2, CONT_MAGIC);
@@ -307,8 +311,7 @@ fn route_to_gap(cpu: &mut Processor, msg: u32) -> bool {
 
 fn finish_alloc_failure(cpu: &mut Processor) -> bool {
     cpu.set_r(Reg::R0, 0x07);
-    cpu.set_pc(cpu.get_r(Reg::R12) & !1);
-    true
+    resume(cpu)
 }
 
 fn finish_send(cpu: &mut Processor) -> bool {
@@ -323,8 +326,32 @@ fn finish_send(cpu: &mut Processor) -> bool {
     );
     cpu.set_r(Reg::R2, 0);
     cpu.set_r(Reg::R3, 0);
-    cpu.set_pc(cpu.get_r(Reg::R12) & !1);
+    resume(cpu)
+}
+
+fn resume(cpu: &mut Processor) -> bool {
+    let return_pc = match cpu.read32(SHADOW_RESUME) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let caller_r2 = match cpu.read32(SHADOW_RESUME_R2) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let caller_r3 = match cpu.read32(SHADOW_RESUME_R3) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    cpu.set_r(Reg::R2, caller_r2);
+    cpu.set_r(Reg::R3, caller_r3);
+    cpu.set_pc(return_pc & !1);
     true
+}
+
+fn save_resume(cpu: &mut Processor, return_pc: u32) -> bool {
+    cpu.write32(SHADOW_RESUME, return_pc).is_ok()
+        && cpu.write32(SHADOW_RESUME_R2, cpu.get_r(Reg::R2)).is_ok()
+        && cpu.write32(SHADOW_RESUME_R3, cpu.get_r(Reg::R3)).is_ok()
 }
 
 fn readable(cpu: &mut Processor, ptr: u32, len: u32) -> bool {

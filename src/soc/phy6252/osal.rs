@@ -1,5 +1,5 @@
 use crate::ble_rom;
-use crate::bus::{HOST_FLASH_ADDR, HOST_FLASH_ERASE, HOST_FLASH_PROGRAM, XIP_SIZE};
+use crate::bus::{HOST_FLASH_ADDR, HOST_FLASH_ERASE, HOST_FLASH_PROGRAM, XIP_BASE, XIP_SIZE};
 use crate::flash_state;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -979,14 +979,16 @@ impl HostOsal {
         true
     }
     fn flash_write(&mut self, cpu: &mut Processor, dma: bool) -> bool {
-        let addr = cpu.get_r(Reg::R0);
+        let guest_addr = cpu.get_r(Reg::R0);
         let src = cpu.get_r(Reg::R1);
         let len = cpu.get_r(Reg::R2);
-        if (addr as usize).saturating_add(len as usize) > XIP_SIZE {
+        let Some(addr) = flash_offset(guest_addr)
+            .filter(|offset| (*offset as usize).saturating_add(len as usize) <= XIP_SIZE)
+        else {
             cpu.set_r(Reg::R0, 1);
             ret(cpu);
             return true;
-        }
+        };
         if cpu.write32(HOST_FLASH_ADDR, addr).is_err() {
             return false;
         }
@@ -1021,12 +1023,12 @@ impl HostOsal {
         cpu.write32(HOST_FLASH_ADDR, addr).is_ok() && cpu.write32(HOST_FLASH_ERASE, 1).is_ok()
     }
     fn flash_erase(&mut self, cpu: &mut Processor, bytes: u32) -> bool {
-        let addr = cpu.get_r(Reg::R0);
-        if (addr as usize) >= XIP_SIZE {
+        let guest_addr = cpu.get_r(Reg::R0);
+        let Some(addr) = flash_offset(guest_addr) else {
             cpu.set_r(Reg::R0, 1);
             ret(cpu);
             return true;
-        }
+        };
         let align = if bytes == FLASH_BLOCK64 {
             FLASH_BLOCK64
         } else {
@@ -1078,6 +1080,15 @@ fn ret(cpu: &mut Processor) {
 fn align4(v: u32) -> u32 {
     v.saturating_add(3) & !3
 }
+fn flash_offset(addr: u32) -> Option<u32> {
+    if (addr as usize) < XIP_SIZE {
+        Some(addr)
+    } else if (XIP_BASE..XIP_BASE + XIP_SIZE as u32).contains(&addr) {
+        Some(addr - XIP_BASE)
+    } else {
+        None
+    }
+}
 fn simulated_ms(cpu: &Processor) -> u32 {
     (cpu.cycle_count / 16_000) as u32
 }
@@ -1109,11 +1120,8 @@ mod tests {
     fn division_edge_cases() {
         let n = i32::MIN;
         let d = -1;
-        let (q, r) = match n.checked_div(d) {
-            Some(q) => (q, n % d),
-            None if d == 0 => (0, n),
-            None => (i32::MIN, 0),
-        };
+        assert_eq!(n.checked_div(d), None);
+        let (q, r) = (i32::MIN, 0);
         assert_eq!(q, i32::MIN);
         assert_eq!(r, 0);
     }
@@ -1152,5 +1160,12 @@ mod tests {
         assert_ne!(a.flash_uid, [0; 8]);
         assert_ne!(a.flash_uid, [0xff; 8]);
         assert_ne!(a.flash_uid, b.flash_uid);
+    }
+    #[test]
+    fn flash_rom_accepts_offset_and_xip_addresses() {
+        assert_eq!(flash_offset(0x0003_ffff), Some(0x0003_ffff));
+        assert_eq!(flash_offset(XIP_BASE + 0x0003_ffff), Some(0x0003_ffff));
+        assert_eq!(flash_offset(XIP_BASE - 1), None);
+        assert_eq!(flash_offset(XIP_BASE + XIP_SIZE as u32), None);
     }
 }
