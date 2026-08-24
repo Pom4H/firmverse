@@ -13,7 +13,15 @@ pub struct StorageReg {
 
 pub const IOMUX_ANALOG_IO_EN: u32 = 0x4000_3800;
 pub const IOMUX_FULL_MUX0_EN: u32 = 0x4000_380C;
+pub const IOMUX_GPIO_SEL0: u32 = 0x4000_3818;
 pub const IOMUX_GPIO_SEL1: u32 = 0x4000_381C;
+pub const IOMUX_GPIO_SEL2: u32 = 0x4000_3820;
+pub const IOMUX_GPIO_SEL3: u32 = 0x4000_3824;
+pub const IOMUX_GPIO_SEL4: u32 = 0x4000_3828;
+pub const IOMUX_GPIO_SEL5: u32 = 0x4000_382C;
+pub const IOMUX_GPIO_SEL6: u32 = 0x4000_3830;
+pub const IOMUX_GPIO_SEL7: u32 = 0x4000_3834;
+pub const IOMUX_GPIO_SEL8: u32 = 0x4000_3838;
 pub const IOMUX_PAD_PS0: u32 = 0x4000_3844;
 pub const AP_CACHE_CTRL0: u32 = 0x4000_C000;
 pub const AP_CACHE_CTRL1: u32 = 0x4000_C004;
@@ -59,8 +67,48 @@ const STORAGE_REGS: &[StorageReg] = &[
         reset: 0,
     },
     StorageReg {
+        addr: IOMUX_GPIO_SEL0,
+        name: "IOMUX.gpio_sel[0]",
+        reset: 0,
+    },
+    StorageReg {
         addr: IOMUX_GPIO_SEL1,
         name: "IOMUX.gpio_sel[1]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL2,
+        name: "IOMUX.gpio_sel[2]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL3,
+        name: "IOMUX.gpio_sel[3]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL4,
+        name: "IOMUX.gpio_sel[4]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL5,
+        name: "IOMUX.gpio_sel[5]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL6,
+        name: "IOMUX.gpio_sel[6]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL7,
+        name: "IOMUX.gpio_sel[7]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_SEL8,
+        name: "IOMUX.gpio_sel[8]",
         reset: 0,
     },
     StorageReg {
@@ -353,10 +401,21 @@ mod tests {
     fn observed_iomux_registers_are_exact() {
         assert_eq!(storage_reg(IOMUX_ANALOG_IO_EN).unwrap().reset, 0);
         assert_eq!(storage_reg(IOMUX_FULL_MUX0_EN).unwrap().reset, 0);
-        assert_eq!(storage_reg(IOMUX_GPIO_SEL1).unwrap().reset, 0);
+        for addr in [
+            IOMUX_GPIO_SEL0,
+            IOMUX_GPIO_SEL1,
+            IOMUX_GPIO_SEL2,
+            IOMUX_GPIO_SEL3,
+            IOMUX_GPIO_SEL4,
+            IOMUX_GPIO_SEL5,
+            IOMUX_GPIO_SEL6,
+            IOMUX_GPIO_SEL7,
+            IOMUX_GPIO_SEL8,
+        ] {
+            assert_eq!(storage_reg(addr).unwrap().reset, 0);
+        }
         assert_eq!(storage_reg(IOMUX_PAD_PS0).unwrap().reset, 0);
-        assert!(storage_reg(0x4000_3818).is_none());
-        assert!(storage_reg(0x4000_3820).is_none());
+        assert!(storage_reg(0x4000_383C).is_none());
     }
 
     #[test]

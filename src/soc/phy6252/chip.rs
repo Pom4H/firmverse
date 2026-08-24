@@ -33,8 +33,12 @@ const BOOT_FLASH_BYTES: usize = 0xC8;
 const ROM_DRV_DISABLE_IRQ: u32 = 0x0000_A974;
 const ROM_DRV_ENABLE_IRQ: u32 = 0x0000_A99C;
 const ROM_SPIF_READ_ID: u32 = 0x0001_7208;
+// Same 256 KiB PHY6252 NOR identity used by the ROM flashing harness:
+// capacity exponent 0x12 and manufacturer/device suffix 0x0085.
+const PHY6252_FLASH_ID: u32 = 0x0012_0085;
 const ROM_CLK_GET_PCLK: u32 = 0x0000_A5D0;
 const PHY6252_G_HCLK: u32 = 0x1FFF_0874;
+const PHY6252_BOOT_HCLK_HZ: u32 = 16_000_000;
 const ADCC_IRQN: usize = 29;
 const ROM_IRQ_TRAMPOLINE: u32 = 0x0000_0008;
 const JUMP_TABLE_BASE: u32 = 0x1FFF_0000;
@@ -519,15 +523,11 @@ fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8, host_osal: &mu
     if pc == ROM_CLK_GET_PCLK {
         let pclk = match processor.read32(PHY6252_G_HCLK) {
             Ok(value) if value != 0 => value,
-            Ok(_) => {
-                if *seen & 16 == 0 {
-                    eprintln!(
-                        "ROM CPU strict clk_get_pclk entry={pc:#010x} -- g_hclk is zero before clock init"
-                    );
-                    *seen |= 16;
-                }
-                return;
-            }
+            // The physical boot ROM establishes XTAL16M before transferring
+            // control to SRAM. A reconstructed NOR image has no ROM prelude,
+            // so reproduce that documented reset state when the mirrored
+            // g_hclk cell is still blank.
+            Ok(_) => PHY6252_BOOT_HCLK_HZ,
             Err(fault) => {
                 eprintln!(
                     "ROM CPU strict clk_get_pclk entry={pc:#010x} -- cannot read g_hclk: {fault}"
@@ -548,10 +548,10 @@ fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8, host_osal: &mu
     }
     if pc == ROM_SPIF_READ_ID {
         let pid_ptr = processor.get_r(Reg::R0);
-        if pid_ptr != 0 {
+        if pid_ptr != 0 && processor.write32(pid_ptr, PHY6252_FLASH_ID).is_err() {
             if *seen & 4 == 0 {
                 eprintln!(
-                    "ROM CPU strict spif_read_id entry={pc:#010x} pid={pid_ptr:#010x} -- flash identity profile not configured"
+                    "ROM CPU strict spif_read_id entry={pc:#010x} pid={pid_ptr:#010x} -- invalid destination"
                 );
                 *seen |= 4;
             }
@@ -559,7 +559,7 @@ fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8, host_osal: &mu
         }
         if *seen & 8 == 0 {
             eprintln!(
-                "ROM CPU shim spif_read_id entry={pc:#010x} behavior=NULL-probe-success (no JEDEC ID invented)"
+                "ROM CPU shim spif_read_id entry={pc:#010x} behavior=PHY6252-256KiB id={PHY6252_FLASH_ID:#010x}"
             );
             *seen |= 8;
         }

@@ -38,6 +38,11 @@ const AON_PMCTL0: u32 = 0x4000_F014;
 const AON_PMCTL1: u32 = 0x4000_F018;
 const AON_PMCTL2_0: u32 = 0x4000_F01C;
 const AON_PMCTL2_1: u32 = 0x4000_F020;
+const AON_RTCCTL: u32 = 0x4000_F024;
+const AON_RTCCC0: u32 = 0x4000_F02C;
+const AON_RTCCC1: u32 = 0x4000_F030;
+const AON_REG_S11: u32 = 0x4000_F0A8;
+const AON_PCLK_CLK_GATE: u32 = 0x4000_F0B8;
 const AON_XTAL_16M_CTRL: u32 = 0x4000_F0BC;
 const AON_SLEEP_R1: u32 = 0x4000_F0C4;
 const PCRM_EFUSE_CFG: u32 = 0x4000_F054;
@@ -207,6 +212,31 @@ const KNOWN_STUB_REGS: &[StubReg] = &[
     StubReg {
         addr: AON_PMCTL2_1,
         name: "AON.PMCTL2_1",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_RTCCTL,
+        name: "AON.RTCCTL",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_RTCCC0,
+        name: "AON.RTCCC0",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_RTCCC1,
+        name: "AON.RTCCC1",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_REG_S11,
+        name: "AON.REG_S11",
+        reset: 0,
+    },
+    StubReg {
+        addr: AON_PCLK_CLK_GATE,
+        name: "AON.PCLK_CLK_GATE",
         reset: 0,
     },
     StubReg {
@@ -991,7 +1021,8 @@ mod tests {
         assert_eq!(bus.sparse_mmio.borrow().get(&WAKEUP_MASK_31_0), Some(&0));
         assert_eq!(bus.sparse_mmio.borrow().get(&WAKEUP_MASK_34_32), Some(&0));
         assert!(matches!(bus.read32(WAKEUP_MASK_31_0), Err(Fault::DAccViol)));
-        assert!(matches!(bus.write32(0x4000_F0A8, 0), Err(Fault::DAccViol)));
+        bus.write32(AON_REG_S11, 0).unwrap();
+        assert_eq!(bus.read32(AON_REG_S11).unwrap(), 0);
     }
 
     #[test]
@@ -1072,6 +1103,11 @@ mod tests {
             AON_PMCTL1,
             AON_PMCTL2_0,
             AON_PMCTL2_1,
+            AON_RTCCTL,
+            AON_RTCCC0,
+            AON_RTCCC1,
+            AON_REG_S11,
+            AON_PCLK_CLK_GATE,
         ] {
             assert_eq!(bus.read32(addr).unwrap(), 0);
             bus.write32(addr, 0x003E_0084).unwrap();
