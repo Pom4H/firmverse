@@ -208,11 +208,27 @@ impl Phy6252Bus {
         if !off.is_multiple_of(4) {
             return None;
         }
-        let ch = off / 4;
-        if ch >= ADC_CH_COUNT {
+
+        // Keep the compact channel words used by the host controls, and model
+        // the PHY6252 SDK sample RAM layout used by hal_ADC_IRQHandler. Each
+        // hardware channel owns an 0x80-byte block and each word packs two
+        // 12-bit samples. Single-ended channels are reported on the paired
+        // hardware result channel (2<->3, 4<->5, 6<->7).
+        if off < ADC_CH_COUNT * 4 {
+            return Some(u32::from(self.adc_mv.borrow()[off / 4]));
+        }
+        let result_ch = off / 0x80;
+        let sample_off = off % 0x80;
+        if !(2..=7).contains(&result_ch) || !(8..0x80).contains(&sample_off) {
             return None;
         }
-        Some(u32::from(self.adc_mv.borrow()[ch]))
+        let source_ch = if result_ch.is_multiple_of(2) {
+            result_ch + 1
+        } else {
+            result_ch - 1
+        };
+        let sample = u32::from(self.adc_mv.borrow()[source_ch]) & 0x0fff;
+        Some(sample | (sample << 16))
     }
 
     fn pwm_write(&self, addr: u32, value: u32) -> bool {
@@ -581,6 +597,14 @@ mod tests {
         assert_eq!(TIMER_BASE_LOAD >> 2, 0x003f_ffff);
         assert_eq!(bus.read32(TIM_CURRENT[2]).unwrap(), TIMER_BASE_LOAD);
         assert_eq!(bus.read32(TIM_CURRENT[2]).unwrap(), TIMER_BASE_LOAD - 4);
+    }
+
+    #[test]
+    fn adc_sample_ram_packs_paired_channel_samples() {
+        let mut bus = Phy6252Bus::new(vec![0; SRAM_SIZE], vec![0; XIP_SIZE]);
+        bus.adc_mv.borrow_mut()[3] = 0x456;
+        assert_eq!(bus.read32(ADC_CH_BASE + 2 * 0x80 + 8).unwrap(), 0x0456_0456);
+        assert!(bus.adc_read(ADC_CH_BASE + 8 * 0x80 + 8).is_none());
     }
 
     #[test]

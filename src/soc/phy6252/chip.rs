@@ -19,9 +19,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::fault::FaultTrapMode;
-use zmu_cortex_m::core::register::{BaseReg, Reg};
+use zmu_cortex_m::core::register::{BaseReg, Ipsr, Reg};
 use zmu_cortex_m::core::reset::Reset;
 use zmu_cortex_m::executor::Executor;
+use zmu_cortex_m::peripheral::nvic::NVIC;
 use zmu_cortex_m::Processor;
 
 const VECTOR_MIRROR_BYTES: usize = 0xC0;
@@ -34,6 +35,10 @@ const ROM_DRV_ENABLE_IRQ: u32 = 0x0000_A99C;
 const ROM_SPIF_READ_ID: u32 = 0x0001_7208;
 const ROM_CLK_GET_PCLK: u32 = 0x0000_A5D0;
 const PHY6252_G_HCLK: u32 = 0x1FFF_0874;
+const ADCC_IRQN: usize = 29;
+const ROM_IRQ_TRAMPOLINE: u32 = 0x0000_0008;
+const JUMP_TABLE_BASE: u32 = 0x1FFF_0000;
+const V0_IRQ_HANDLER_INDEX: u32 = 224;
 
 pub struct Chip {
     pub id: String,
@@ -47,6 +52,7 @@ pub struct Chip {
     pwm: Rc<RefCell<[u32; PWM_CHANNELS]>>,
     pwm_changed: Rc<RefCell<bool>>,
     adc_mv: Rc<RefCell<[u16; ADC_CH_COUNT]>>,
+    adc_irq_pending: Rc<Cell<bool>>,
     ext_in: Arc<AtomicU32>,
     pending_rx: VecDeque<Vec<u8>>,
     last_tx_seq: u32,
@@ -131,10 +137,9 @@ impl Chip {
         let pwm_changed = Rc::clone(&device.pwm_changed);
         let adc_mv = Rc::clone(&device.adc_mv);
         let reset_requested = Rc::new(Cell::new(false));
-        let device = ResetAwareBus::new(
-            DiscoveryBus::new(device, strict),
-            Rc::clone(&reset_requested),
-        );
+        let device = DiscoveryBus::new(device, strict);
+        let adc_irq_pending = device.adc_irq_pending();
+        let device = ResetAwareBus::new(device, Rc::clone(&reset_requested));
         let sp = u32::from_le_bytes(vectors[0..4].try_into().unwrap());
         let reset = u32::from_le_bytes(vectors[4..8].try_into().unwrap());
         eprintln!("hex {hex_label}");
@@ -169,6 +174,7 @@ impl Chip {
             pwm,
             pwm_changed,
             adc_mv,
+            adc_irq_pending,
             ext_in: Arc::new(AtomicU32::new(0)),
             pending_rx: VecDeque::new(),
             last_tx_seq: 0,
@@ -295,6 +301,13 @@ impl Chip {
         }
         for _ in 0..burst {
             self.redirect();
+            if self.stop.is_some() {
+                break;
+            }
+            if self.adc_irq_pending.replace(false) {
+                self.processor
+                    .nvic_write_ispr(ADCC_IRQN / 32, 1 << (ADCC_IRQN % 32));
+            }
             let pc = self.processor.get_pc();
             let lr = self.processor.get_r(Reg::LR);
             let r0 = self.processor.get_r(Reg::R0);
@@ -352,6 +365,7 @@ impl Chip {
         self.uart_rx.borrow_mut().clear();
         self.cpu_rom_seen = 0;
         self.host_osal = HostOsal::new();
+        self.adc_irq_pending.set(false);
         self.bootrom.enter_after_system_reset();
         Ok(())
     }
@@ -368,6 +382,7 @@ impl Chip {
         self.uart_rx.borrow_mut().clear();
         self.cpu_rom_seen = 0;
         self.host_osal = HostOsal::new();
+        self.adc_irq_pending.set(false);
         Ok(())
     }
 
@@ -406,12 +421,41 @@ impl Chip {
     }
 
     fn redirect(&mut self) {
+        self.redirect_irq_trampoline();
         redirect_cpu_rom_abi(
             &mut self.processor,
             &mut self.cpu_rom_seen,
             &mut self.host_osal,
         );
     }
+
+    fn redirect_irq_trampoline(&mut self) {
+        if self.processor.get_pc() != ROM_IRQ_TRAMPOLINE {
+            return;
+        }
+        let exception = self.processor.psr.get_isr_number();
+        let Some(irqn) = exception.checked_sub(16) else {
+            return;
+        };
+        let slot = irq_jump_slot(irqn as u32);
+        match self.processor.read32(slot) {
+            Ok(handler) if handler & 1 != 0 => self.processor.set_pc(handler & !1),
+            Ok(handler) => {
+                self.stop = Some(format!(
+                    "PHY6252 IRQ{irqn} trampoline has invalid handler {handler:#010x}"
+                ));
+            }
+            Err(fault) => {
+                self.stop = Some(format!(
+                    "PHY6252 IRQ{irqn} trampoline cannot read {slot:#010x}: {fault}"
+                ));
+            }
+        }
+    }
+}
+
+fn irq_jump_slot(irqn: u32) -> u32 {
+    JUMP_TABLE_BASE + (V0_IRQ_HANDLER_INDEX + irqn) * 4
 }
 
 pub fn format_mac(mac: &[u8; 6]) -> String {
@@ -457,11 +501,14 @@ fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8, host_osal: &mu
     // command). Drain that chain before zmu fetches an instruction from the
     // emulator-only continuation address.
     for hop in 0..32 {
-        let before = processor.get_pc();
+        let before = rom_abi_state(processor);
         if !host_osal.handle(processor) {
             break;
         }
-        if processor.get_pc() == before {
+        // A staged helper can leave PC on the same continuation trap while
+        // advancing its stage/register state (HCI alloc -> send -> resume).
+        // Stop only if the complete host-visible ABI state is unchanged.
+        if !rom_abi_progressed(before, rom_abi_state(processor)) {
             return;
         }
         if hop == 31 {
@@ -542,6 +589,23 @@ fn redirect_cpu_rom_abi(processor: &mut Processor, seen: &mut u8, host_osal: &mu
         *seen |= bit;
     }
     processor.set_pc(thunk);
+}
+
+type RomAbiState = (u32, u32, u32, u32, u32, u32);
+
+fn rom_abi_state(processor: &mut Processor) -> RomAbiState {
+    (
+        processor.get_pc(),
+        processor.get_r(Reg::LR),
+        processor.get_r(Reg::R0),
+        processor.get_r(Reg::R1),
+        processor.get_r(Reg::R2),
+        processor.get_r(Reg::R3),
+    )
+}
+
+fn rom_abi_progressed(before: RomAbiState, after: RomAbiState) -> bool {
+    before != after
 }
 
 fn build_boot_flash(vectors: &[u8]) -> Vec<u8> {
@@ -713,6 +777,21 @@ mod tests {
         let flash = build_boot_flash(&vectors);
         assert_eq!(&flash[0xC0..0xC4], &[0x72, 0xB6, 0x70, 0x47]);
         assert_eq!(&flash[0xC4..0xC8], &[0x62, 0xB6, 0x70, 0x47]);
+    }
+
+    #[test]
+    fn phy6252_irq_trampoline_uses_vendor_jump_table_slots() {
+        assert_eq!(irq_jump_slot(0), 0x1FFF_0380);
+        assert_eq!(irq_jump_slot(ADCC_IRQN as u32), 0x1FFF_03F4);
+        assert_eq!(irq_jump_slot(31), 0x1FFF_03FC);
+    }
+
+    #[test]
+    fn rom_continuation_can_progress_without_changing_pc() {
+        let stage_alloc = (0xCC, 0xCD, 0, 0x1FFF_6268, 0x4843_4558, 1);
+        let stage_send = (0xCC, 0xCD, 0, 0x1FFF_6268, 0x4843_4558, 3);
+        assert!(rom_abi_progressed(stage_alloc, stage_send));
+        assert!(!rom_abi_progressed(stage_send, stage_send));
     }
 
     #[test]

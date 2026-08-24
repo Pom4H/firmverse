@@ -3,6 +3,7 @@ use crate::bus::{Phy6252Bus, ADC_CH_BASE, MMIO_BASE, MMIO_END, PWM_CHANNELS, ROM
 use crate::silicon_regs;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use zmu_cortex_m::bus::Bus;
 use zmu_cortex_m::core::fault::Fault;
 
@@ -42,6 +43,10 @@ const AON_SLEEP_R1: u32 = 0x4000_F0C4;
 const PCRM_EFUSE_CFG: u32 = 0x4000_F054;
 const PCRM_EFUSE_PROG0: u32 = 0x4000_F140;
 const PCRM_EFUSE_PROG1: u32 = 0x4000_F144;
+
+const ADCC_INTR_MASK: u32 = 0x4005_0034;
+const ADCC_INTR_CLEAR: u32 = 0x4005_0038;
+const ADCC_INTR_STATUS: u32 = 0x4005_003C;
 
 const SECURE_KEY_TAIL: u32 = 0x1100_2908;
 const SECURE_PLAINTEXT: u32 = 0x1100_2910;
@@ -371,6 +376,10 @@ pub struct DiscoveryBus {
     finidv_result: Cell<u32>,
     heap_base: Cell<u32>,
     heap_size: Cell<u32>,
+    adc_intr_mask: Cell<u32>,
+    adc_intr_status: Cell<u32>,
+    adc_armed: Cell<bool>,
+    adc_irq_pending: Rc<Cell<bool>>,
 }
 
 impl DiscoveryBus {
@@ -391,6 +400,10 @@ impl DiscoveryBus {
             finidv_result: Cell::new(0),
             heap_base: Cell::new(0),
             heap_size: Cell::new(0),
+            adc_intr_mask: Cell::new(0),
+            adc_intr_status: Cell::new(0),
+            adc_armed: Cell::new(false),
+            adc_irq_pending: Rc::new(Cell::new(false)),
         }
     }
 
@@ -411,6 +424,9 @@ impl DiscoveryBus {
     }
     pub fn sleep_mode(&self) -> u32 {
         self.sleep_mode.get()
+    }
+    pub fn adc_irq_pending(&self) -> Rc<Cell<bool>> {
+        Rc::clone(&self.adc_irq_pending)
     }
     fn is_mmio(addr: u32) -> bool {
         (MMIO_BASE..MMIO_END).contains(&addr)
@@ -476,7 +492,15 @@ impl DiscoveryBus {
 
     fn adc_read_known(addr: u32) -> bool {
         let aligned = addr & !3;
-        (ADC_CH_BASE..ADC_CH_BASE + 9 * 4).contains(&aligned)
+        let Some(off) = aligned.checked_sub(ADC_CH_BASE) else {
+            return false;
+        };
+        if off < 9 * 4 {
+            return true;
+        }
+        let channel = off / 0x80;
+        let sample = off % 0x80;
+        (2..=7).contains(&channel) && (8..0x80).contains(&sample)
     }
 
     fn pwm_write_known(addr: u32) -> bool {
@@ -548,6 +572,76 @@ impl DiscoveryBus {
             .copied()
             .unwrap_or_else(|| Self::storage_reset(aligned).unwrap_or(0xFFFF_FFFF));
         mmio.insert(aligned, (current & !mask) | ((value << shift) & mask));
+    }
+
+    fn adc_selected_status(&self) -> u32 {
+        let ctl1 = self.sparse_read(silicon_regs::PCRM_ADC_CTL1);
+        let ctl2 = self.sparse_read(silicon_regs::PCRM_ADC_CTL2);
+        let ctl3 = self.sparse_read(silicon_regs::PCRM_ADC_CTL3);
+        let mut status = 0u32;
+        if ctl1 & (1 << 20) != 0 {
+            status |= 1 << 3;
+        }
+        if ctl1 & (1 << 4) != 0 {
+            status |= 1 << 2;
+        }
+        if ctl2 & (1 << 20) != 0 {
+            status |= 1 << 5;
+        }
+        if ctl2 & (1 << 4) != 0 {
+            status |= 1 << 4;
+        }
+        if ctl3 & (1 << 20) != 0 {
+            status |= 1 << 7;
+        }
+        if ctl3 & (1 << 4) != 0 {
+            status |= 1 << 6;
+        }
+        status
+    }
+
+    fn arm_adc_after_channel_write(&self, addr: u32) {
+        let aligned = addr & !3;
+        if !matches!(
+            aligned,
+            silicon_regs::PCRM_ADC_CTL1 | silicon_regs::PCRM_ADC_CTL2 | silicon_regs::PCRM_ADC_CTL3
+        ) {
+            return;
+        }
+        let value = self.sparse_read(aligned);
+        if value & ((1 << 20) | (1 << 4)) != 0 {
+            self.adc_armed.set(true);
+        }
+    }
+
+    fn adcc_read(&self, addr: u32) -> Option<u32> {
+        match addr & !3 {
+            ADCC_INTR_MASK => Some(self.adc_intr_mask.get()),
+            ADCC_INTR_CLEAR => Some(0),
+            ADCC_INTR_STATUS => Some(self.adc_intr_status.get()),
+            _ => None,
+        }
+    }
+
+    fn adcc_write32(&self, addr: u32, value: u32) -> bool {
+        match addr & !3 {
+            ADCC_INTR_MASK => {
+                self.adc_intr_mask.set(value);
+                let status = self.adc_selected_status();
+                if self.adc_armed.get() && status != 0 && value & status == status {
+                    self.adc_intr_status.set(status);
+                    self.adc_armed.set(false);
+                    self.adc_irq_pending.set(true);
+                }
+                true
+            }
+            ADCC_INTR_CLEAR => {
+                self.adc_intr_status
+                    .set(self.adc_intr_status.get() & !value);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn guest_read_block(&self, addr: u32) -> Result<[u8; 16], Fault> {
@@ -719,6 +813,7 @@ impl DiscoveryBus {
             self.unknown(op, addr)?;
         }
         self.sparse_write(addr, value, width);
+        self.arm_adc_after_channel_write(addr);
         Ok(())
     }
 }
@@ -729,6 +824,9 @@ impl Bus for DiscoveryBus {
             return Ok(value);
         }
         if let Some(value) = self.emu_control_read(addr) {
+            return Ok(value);
+        }
+        if let Some(value) = self.adcc_read(addr) {
             return Ok(value);
         }
         if self.strict && Self::is_unmodeled_rom(addr) {
@@ -745,6 +843,9 @@ impl Bus for DiscoveryBus {
             return Ok(value as u16);
         }
         if let Some(value) = self.emu_control_read(addr) {
+            return Ok((value >> ((addr & 3) * 8)) as u16);
+        }
+        if let Some(value) = self.adcc_read(addr) {
             return Ok((value >> ((addr & 3) * 8)) as u16);
         }
         if self.strict && Self::is_unmodeled_rom(addr) {
@@ -764,6 +865,9 @@ impl Bus for DiscoveryBus {
         if let Some(value) = self.emu_control_read(addr) {
             return Ok((value >> ((addr & 3) * 8)) as u8);
         }
+        if let Some(value) = self.adcc_read(addr) {
+            return Ok((value >> ((addr & 3) * 8)) as u8);
+        }
         if self.strict && Self::is_unmodeled_rom(addr) {
             return self.rom_unknown("read8", addr);
         }
@@ -776,6 +880,9 @@ impl Bus for DiscoveryBus {
 
     fn write32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
         if self.emu_control_write(addr, value)? {
+            return Ok(());
+        }
+        if self.adcc_write32(addr, value) {
             return Ok(());
         }
         if self.strict && Self::is_unmodeled_rom(addr) {
@@ -913,6 +1020,45 @@ mod tests {
         bus.write32(silicon_regs::AP_CACHE_CTRL0, 2).unwrap();
         assert_eq!(bus.read32(silicon_regs::AP_CACHE_CTRL0).unwrap(), 2);
         assert!(matches!(bus.write32(0x4000_C008, 1), Err(Fault::DAccViol)));
+    }
+
+    #[test]
+    fn strict_adc_conversion_raises_one_irq_and_requires_rearm() {
+        let mut bus = bus(true);
+        let pending = bus.adc_irq_pending();
+
+        // SDK channel 3 is sampled through hardware result channel 2.
+        bus.write32(silicon_regs::PCRM_ADC_CTL1, 1 << 4).unwrap();
+        bus.write32(ADCC_INTR_MASK, 0x1ff).unwrap();
+        assert_eq!(bus.read32(ADCC_INTR_STATUS).unwrap(), 1 << 2);
+        assert!(pending.replace(false));
+
+        bus.write32(ADCC_INTR_CLEAR, 1 << 2).unwrap();
+        assert_eq!(bus.read32(ADCC_INTR_STATUS).unwrap(), 0);
+        bus.write32(ADCC_INTR_MASK, 0x1ff).unwrap();
+        assert!(!pending.get());
+
+        // A fresh channel-programming write represents a new one-shot sample.
+        bus.write32(silicon_regs::PCRM_ADC_CTL1, 1 << 4).unwrap();
+        bus.write32(ADCC_INTR_MASK, 0x1ff).unwrap();
+        assert!(pending.get());
+    }
+
+    #[test]
+    fn strict_adc_sample_ram_exposes_only_sdk_channel_blocks() {
+        let mut bus = bus(true);
+        assert_eq!(
+            bus.read32(ADC_CH_BASE + 6 * 0x80 + 8).unwrap(),
+            3300 | (3300 << 16)
+        );
+        assert!(matches!(
+            bus.read32(ADC_CH_BASE + 8 * 0x80 + 8),
+            Err(Fault::DAccViol)
+        ));
+        assert!(matches!(
+            bus.read32(ADC_CH_BASE + 6 * 0x80 + 0x80),
+            Err(Fault::DAccViol)
+        ));
     }
 
     #[test]

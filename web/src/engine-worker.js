@@ -52,10 +52,11 @@ function runLoop() {
   try {
     const result = call({ op: 'tick', ticks: 8, burst: 2000 });
     publishSnapshot(result);
-    const stopped = result.snapshot?.nodes?.some((node) => node.stopped);
+    const stopped = result.snapshot?.nodes?.find((node) => node.stopped);
     if (stopped) {
       stopRunLoop();
-      postMessage({ type: 'running', running: false });
+      const reason = typeof stopped.stopped === 'string' ? stopped.stopped : 'unknown reason';
+      postMessage({ type: 'error', error: `${stopped.id ?? 'node'} stopped: ${reason}` });
       return;
     }
   } catch (error) {

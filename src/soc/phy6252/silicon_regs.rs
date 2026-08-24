@@ -14,6 +14,7 @@ pub struct StorageReg {
 pub const IOMUX_ANALOG_IO_EN: u32 = 0x4000_3800;
 pub const IOMUX_FULL_MUX0_EN: u32 = 0x4000_380C;
 pub const IOMUX_GPIO_SEL1: u32 = 0x4000_381C;
+pub const IOMUX_PAD_PS0: u32 = 0x4000_3844;
 pub const AP_CACHE_CTRL0: u32 = 0x4000_C000;
 pub const AP_CACHE_CTRL1: u32 = 0x4000_C004;
 pub const SPIF_CONFIG: u32 = 0x4000_C800;
@@ -26,6 +27,12 @@ pub const SPIF_FCMD_WRDATA1: u32 = 0x4000_C8AC;
 pub const SPIF_POLL_FSTATUS: u32 = 0x4000_C8B0;
 pub const PCRM_CLKHF_CTL0: u32 = 0x4000_F040;
 pub const PCRM_CLKHF_CTL1: u32 = 0x4000_F044;
+pub const PCRM_ANA_CTL: u32 = 0x4000_F048;
+pub const PCRM_ADC_CTL0: u32 = 0x4000_F06C;
+pub const PCRM_ADC_CTL1: u32 = 0x4000_F070;
+pub const PCRM_ADC_CTL2: u32 = 0x4000_F074;
+pub const PCRM_ADC_CTL3: u32 = 0x4000_F078;
+pub const PCRM_ADC_CTL4: u32 = 0x4000_F07C;
 
 pub const DMAC_BASE: u32 = 0x4001_0000;
 pub const DMAC_CH_STRIDE: u32 = 0x58;
@@ -54,6 +61,11 @@ const STORAGE_REGS: &[StorageReg] = &[
     StorageReg {
         addr: IOMUX_GPIO_SEL1,
         name: "IOMUX.gpio_sel[1]",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_PAD_PS0,
+        name: "IOMUX.pad_ps0",
         reset: 0,
     },
     StorageReg {
@@ -117,6 +129,36 @@ const STORAGE_REGS: &[StorageReg] = &[
     StorageReg {
         addr: PCRM_CLKHF_CTL1,
         name: "PCRM.CLKHF_CTL1",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_ANA_CTL,
+        name: "PCRM.ANA_CTL",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_ADC_CTL0,
+        name: "PCRM.ADC_CTL0",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_ADC_CTL1,
+        name: "PCRM.ADC_CTL1",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_ADC_CTL2,
+        name: "PCRM.ADC_CTL2",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_ADC_CTL3,
+        name: "PCRM.ADC_CTL3",
+        reset: 0,
+    },
+    StorageReg {
+        addr: PCRM_ADC_CTL4,
+        name: "PCRM.ADC_CTL4",
         reset: 0,
     },
     // Public SDK AP_DMA_CH_CFG(n), AP_DMA_INT and AP_DMA_MISC registers used by
@@ -312,6 +354,7 @@ mod tests {
         assert_eq!(storage_reg(IOMUX_ANALOG_IO_EN).unwrap().reset, 0);
         assert_eq!(storage_reg(IOMUX_FULL_MUX0_EN).unwrap().reset, 0);
         assert_eq!(storage_reg(IOMUX_GPIO_SEL1).unwrap().reset, 0);
+        assert_eq!(storage_reg(IOMUX_PAD_PS0).unwrap().reset, 0);
         assert!(storage_reg(0x4000_3818).is_none());
         assert!(storage_reg(0x4000_3820).is_none());
     }
@@ -338,7 +381,23 @@ mod tests {
     fn high_frequency_clock_controls_are_exact() {
         assert_eq!(storage_reg(PCRM_CLKHF_CTL0).unwrap().reset, 0);
         assert_eq!(storage_reg(PCRM_CLKHF_CTL1).unwrap().reset, 0);
-        assert!(storage_reg(0x4000_F048).is_none());
+        assert_eq!(storage_reg(PCRM_ANA_CTL).unwrap().reset, 0);
+        assert!(storage_reg(0x4000_F04C).is_none());
+    }
+
+    #[test]
+    fn adc_power_and_channel_controls_match_sdk_layout() {
+        for addr in [
+            PCRM_ADC_CTL0,
+            PCRM_ADC_CTL1,
+            PCRM_ADC_CTL2,
+            PCRM_ADC_CTL3,
+            PCRM_ADC_CTL4,
+        ] {
+            assert_eq!(storage_reg(addr).unwrap().reset, 0);
+        }
+        assert!(storage_reg(0x4000_F068).is_none());
+        assert!(storage_reg(0x4000_F080).is_none());
     }
 
     #[test]
