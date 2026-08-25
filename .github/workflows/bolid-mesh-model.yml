@@ -1,0 +1,48 @@
+name: Bolid Mesh model
+
+on:
+  pull_request:
+    paths:
+      - 'tools/bolid_mesh_model.py'
+      - 'tools/bolid_mesh/**'
+      - 'tests/test_bolid_mesh_model.py'
+      - 'examples/bolid-mesh-v2.json'
+      - 'actions/bolid-mesh/**'
+      - 'docs/BOLID_MESH.md'
+      - '.github/workflows/bolid-mesh-model.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/bolid_mesh_model.py'
+      - 'tools/bolid_mesh/**'
+      - 'tests/test_bolid_mesh_model.py'
+      - 'examples/bolid-mesh-v2.json'
+      - 'actions/bolid-mesh/**'
+      - 'docs/BOLID_MESH.md'
+      - '.github/workflows/bolid-mesh-model.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -p 'test_bolid_mesh_model.py' -v
+      - name: Reference regression
+        run: |
+          mkdir -p tmp
+          python3 tools/bolid_mesh_model.py examples/bolid-mesh-v2.json \
+            --trace tmp/bolid-mesh-v2.jsonl | tee tmp/bolid-mesh-v2.log
+          grep -q '^BOLID_MESH_PASS ' tmp/bolid-mesh-v2.log
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bolid-mesh-model-evidence
+          path: |
+            tmp/bolid-mesh-v2.jsonl
+            tmp/bolid-mesh-v2.log
+          if-no-files-found: warn

@@ -1,0 +1,36 @@
+name: Firmverse Bolid Bluetooth Mesh model
+description: Run deterministic Bolid v2 relay, transaction and fail-safe scenarios
+
+inputs:
+  scenario:
+    description: Path to a firmverse.bolid-mesh/v1 JSON scenario
+    required: true
+  trace:
+    description: JSONL trace output path
+    required: false
+    default: firmverse-bolid-mesh.jsonl
+
+outputs:
+  trace:
+    description: Absolute path to the JSONL trace
+    value: ${{ steps.run.outputs.trace }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        FIRMVERSE_BOLID_SCENARIO: ${{ inputs.scenario }}
+        FIRMVERSE_BOLID_TRACE: ${{ inputs.trace }}
+      run: |
+        set -euo pipefail
+        scenario="$FIRMVERSE_BOLID_SCENARIO"
+        trace="$FIRMVERSE_BOLID_TRACE"
+        [[ "$scenario" = /* ]] || scenario="$GITHUB_WORKSPACE/$scenario"
+        [[ "$trace" = /* ]] || trace="$GITHUB_WORKSPACE/$trace"
+        mkdir -p "$(dirname "$trace")"
+        python3 "$GITHUB_ACTION_PATH/../../tools/bolid_mesh_model.py" \
+          "$scenario" --trace "$trace" | tee "${trace%.jsonl}.log"
+        grep -q '^BOLID_MESH_PASS ' "${trace%.jsonl}.log"
+        echo "trace=$trace" >> "$GITHUB_OUTPUT"

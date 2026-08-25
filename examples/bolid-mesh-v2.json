@@ -1,0 +1,40 @@
+{
+  "schema": "firmverse.bolid-mesh/v1",
+  "name": "bolid-v2-relay-replay-rollback-failsafe",
+  "gateway": "gw",
+  "range_m": 3.25,
+  "default_ttl": 5,
+  "lease_timeout_ms": 10000,
+  "prepare_timeout_ms": 3000,
+  "mode_timeout_ms": 300000,
+  "nodes": [
+    {"id": "gw", "address": "0x0001", "x": 0.0, "y": 0.0, "relay": true, "device": false},
+    {"id": "r1", "address": "0x0002", "x": 3.0, "y": 0.0, "relay": true, "device": false},
+    {"id": "d1", "address": "0x0101", "x": 6.0, "y": 0.0, "relay": true, "device": true},
+    {"id": "d2", "address": "0x0102", "x": 9.0, "y": 0.0, "relay": false, "device": true}
+  ],
+  "events": [
+    {"at_ms": 0, "op": "assert_route", "from": "gw", "to": "d2", "reachable": true, "hops": 3},
+    {"at_ms": 1, "op": "lease_open", "targets": ["d1", "d2"], "lease_id": "0xA11CE", "expect": "ok"},
+    {"at_ms": 100, "op": "transaction", "targets": ["d1", "d2"], "transaction_id": 1, "lease_id": "0xA11CE", "mode": "SHORT_1", "expect": "complete"},
+    {"at_ms": 101, "op": "duplicate_last", "target": "d1", "expect": "duplicate"},
+    {"at_ms": 102, "op": "replay", "target": "d1", "opcode": "MODE_ABORT", "transaction_id": 1, "lease_id": "0xA11CE", "expect": "REPLAY"},
+    {"at_ms": 5000, "op": "lease_renew", "targets": ["d1", "d2"], "lease_id": "0xA11CE", "expect": "ok"},
+    {"at_ms": 5100, "op": "drop_once", "target": "d2", "opcode": "MODE_COMMIT"},
+    {"at_ms": 5200, "op": "transaction", "targets": ["d1", "d2"], "transaction_id": 2, "lease_id": "0xA11CE", "mode": "OPEN_T", "expect": "abort"},
+    {"at_ms": 5201, "op": "assert_modes", "modes": {"d1": "NORMAL", "d2": "NORMAL"}},
+    {"at_ms": 6000, "op": "transaction", "targets": ["d1", "d2"], "transaction_id": 3, "lease_id": "0xA11CE", "mode": "SHORT_2", "expect": "complete"},
+    {"at_ms": 14999, "op": "assert_modes", "modes": {"d1": "SHORT_2", "d2": "SHORT_2"}},
+    {"at_ms": 15000, "op": "assert_all_normal", "targets": ["d1", "d2"]},
+    {"at_ms": 16000, "op": "partition", "node": "r1", "enabled": true},
+    {"at_ms": 16001, "op": "assert_route", "from": "gw", "to": "d2", "reachable": false},
+    {"at_ms": 16002, "op": "partition", "node": "r1", "enabled": false},
+    {"at_ms": 16003, "op": "assert_route", "from": "gw", "to": "d2", "reachable": true, "hops": 3},
+    {"at_ms": 17000, "op": "lease_open", "targets": ["d1", "d2"], "lease_id": "0xB011D", "expect": "ok"},
+    {"at_ms": 17100, "op": "transaction", "targets": ["d1", "d2"], "transaction_id": 4, "lease_id": "0xB011D", "mode": "SHORT_T", "expect": "complete"},
+    {"at_ms": 17101, "op": "set_input", "node": "d1", "reserve_low": true},
+    {"at_ms": 17102, "op": "assert_modes", "modes": {"d1": "NORMAL", "d2": "SHORT_T"}},
+    {"at_ms": 17103, "op": "transaction", "targets": ["d1", "d2"], "transaction_id": 5, "lease_id": "0xB011D", "mode": "NORMAL", "expect": "complete"},
+    {"at_ms": 17104, "op": "assert_all_normal", "targets": ["d1", "d2"]}
+  ]
+}

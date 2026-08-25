@@ -1,0 +1,24 @@
+name: Bolid Bluetooth Mesh v2 regression
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  mesh-access-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - id: mesh
+        uses: Pom4H/firmverse/actions/bolid-mesh@main
+        with:
+          scenario: examples/bolid-mesh-v2.json
+          trace: tmp/bolid-mesh-v2.jsonl
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bolid-mesh-v2-trace
+          path: ${{ steps.mesh.outputs.trace }}
+          if-no-files-found: warn
