@@ -18,7 +18,7 @@ def write_trace(world: World, stream: TextIO) -> None:
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Deterministic Bluetooth Mesh access-model emulator for Bolid Test-DPLS v2"
+        description="Deterministic Bluetooth Mesh access-model emulator for Bolid v2"
     )
     parser.add_argument("scenario", type=Path, help="firmverse.bolid-mesh/v1 JSON scenario")
     parser.add_argument("--trace", type=Path, help="also write JSONL trace to this file")
