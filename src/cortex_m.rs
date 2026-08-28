@@ -188,21 +188,26 @@ pub fn run(opts: ProbeOpts) -> Result<ExitCode, String> {
         println!("GUEST {line}");
     }
 
+    let instructions = processor.instruction_count;
+    let cycles = processor.cycle_count;
+    let pc = processor.get_pc();
+    let exit_code = processor.exit_code;
+    let reason = stop.detail();
+
     println!(
-        "PROBE status={} board={} soc={} profile={} instructions={} cycles={} stack_used={} stack_window={} stack_saturated={} initial_sp=0x{initial_sp:08x} pc=0x{:08x} exit_code={} strict={} reason={}",
+        "PROBE status={} board={} soc={} profile={} instructions={} cycles={} stack_used={} stack_window={} stack_saturated={} initial_sp=0x{initial_sp:08x} pc=0x{pc:08x} exit_code={} strict={} reason={}",
         stop.status(),
         board.id,
         soc_profile.id,
         soc_profile.cpu.label(),
-        processor.instruction_count,
-        processor.cycle_count,
+        instructions,
+        cycles,
         stack_used,
         STACK_SCAN_BYTES,
         stack_saturated,
-        processor.get_pc(),
-        processor.exit_code,
+        exit_code,
         opts.strict,
-        stop.detail(),
+        reason,
     );
 
     Ok(ExitCode::from(if stop.success() { 0 } else { 2 }))
