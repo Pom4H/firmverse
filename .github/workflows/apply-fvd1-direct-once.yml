@@ -41,7 +41,7 @@ jobs:
           python3 -m py_compile /tmp/patch_firmverse.py
           python3 /tmp/patch_firmverse.py
 
-      - name: Make GDB exchange paths host-local and observable
+      - name: Make GDB exchange paths host-local and reset the target
         shell: bash
         run: |
           set -euo pipefail
@@ -87,13 +87,14 @@ jobs:
               text = text.replace(old, new, 1)
 
           remote_marker = '            f"target remote 127.0.0.1:{port}",\n'
-          remote_with_probe = (
+          remote_with_reset = (
               remote_marker
+              + '            "monitor system_reset",\n'
               + '            f"shell ls -l {quote_gdb_path(pattern_path)}",\n'
           )
           if remote_marker not in text:
-              raise SystemExit("GDB shell probe anchor was not found")
-          text = text.replace(remote_marker, remote_with_probe, 1)
+              raise SystemExit("GDB reset anchor was not found")
+          text = text.replace(remote_marker, remote_with_reset, 1)
           path.write_text(text, encoding="utf-8")
           PY
           python3 -m py_compile tools/cortex_m_probe.py
