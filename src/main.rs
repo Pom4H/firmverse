@@ -142,7 +142,10 @@ fn run_cli() -> Result<ExitCode, String> {
         SocKind::GenericCortexM4 => run_generic_cortex_m4(cli),
         kind => {
             soc::require_implemented(kind)?;
-            Err(format!("no runtime composition exists for SoC {}", kind.id()))
+            Err(format!(
+                "no runtime composition exists for SoC {}",
+                kind.id()
+            ))
         }
     }
 }

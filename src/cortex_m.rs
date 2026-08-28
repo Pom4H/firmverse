@@ -18,9 +18,7 @@ use zmu_cortex_m::core::reset::Reset;
 use zmu_cortex_m::executor::Executor;
 use zmu_cortex_m::memory::map::MemoryMapConfig;
 use zmu_cortex_m::memory::ram::RAM;
-use zmu_cortex_m::semihosting::{
-    SemihostingCommand, SemihostingResponse, SysExceptionReason,
-};
+use zmu_cortex_m::semihosting::{SemihostingCommand, SemihostingResponse, SysExceptionReason};
 use zmu_cortex_m::Processor;
 
 pub const FLASH_ORIGIN: u32 = 0x0800_0000;
@@ -169,11 +167,7 @@ pub fn run(opts: ProbeOpts) -> Result<ExitCode, String> {
     processor.sram = RAM::new_with_fill(RAM_ORIGIN, RAM_BYTES, STACK_PATTERN);
     fill_ram_image(&image, &mut processor)?;
     processor.flash_memory(FLASH_BYTES, &flash);
-    processor.memory_map(Some(MemoryMapConfig::new(
-        FLASH_ORIGIN,
-        0,
-        FLASH_BYTES,
-    )));
+    processor.memory_map(Some(MemoryMapConfig::new(FLASH_ORIGIN, 0, FLASH_BYTES)));
     processor.device(Some(Box::new(ProbeMailbox::new(Rc::clone(&signal)))));
     processor.semihost(Some(Box::new(move |command| {
         handle_semihost(command, &semihost_capture)
@@ -219,7 +213,11 @@ fn validate_vectors(flash: &[u8]) -> Result<(), String> {
         .get(..8)
         .ok_or_else(|| "Cortex-M image has no vector table".to_string())?;
     let sp = u32::from_le_bytes(vectors[..4].try_into().map_err(|_| "invalid SP vector")?);
-    let reset = u32::from_le_bytes(vectors[4..8].try_into().map_err(|_| "invalid reset vector")?);
+    let reset = u32::from_le_bytes(
+        vectors[4..8]
+            .try_into()
+            .map_err(|_| "invalid reset vector")?,
+    );
     validate_stack_pointer(sp)?;
     let reset_address = reset & !1;
     let flash_end = FLASH_ORIGIN + u32::try_from(FLASH_BYTES).map_err(|_| "Flash too large")?;

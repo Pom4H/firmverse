@@ -102,35 +102,101 @@ const PB03F_INDICATORS: &[GpioSignal] = &[
 ];
 
 const PB03F_CONNECTOR_ROWS: &[ConnectorRow] = &[
-    ConnectorRow { left: "P13", right: "P24" },
-    ConnectorRow { left: "P11", right: "P23" },
-    ConnectorRow { left: "P31", right: "P20" },
-    ConnectorRow { left: "P7", right: "P3" },
-    ConnectorRow { left: "P32", right: "P2" },
-    ConnectorRow { left: "P33", right: "3V3" },
-    ConnectorRow { left: "P14", right: "GND" },
-    ConnectorRow { left: "P16", right: "NC" },
-    ConnectorRow { left: "P17", right: "P34" },
-    ConnectorRow { left: "GND", right: "P0" },
-    ConnectorRow { left: "3V3", right: "P18" },
-    ConnectorRow { left: "NC", right: "RX0" },
-    ConnectorRow { left: "NC", right: "TX0" },
-    ConnectorRow { left: "GND", right: "GND" },
-    ConnectorRow { left: "5V", right: "3V3" },
+    ConnectorRow {
+        left: "P13",
+        right: "P24",
+    },
+    ConnectorRow {
+        left: "P11",
+        right: "P23",
+    },
+    ConnectorRow {
+        left: "P31",
+        right: "P20",
+    },
+    ConnectorRow {
+        left: "P7",
+        right: "P3",
+    },
+    ConnectorRow {
+        left: "P32",
+        right: "P2",
+    },
+    ConnectorRow {
+        left: "P33",
+        right: "3V3",
+    },
+    ConnectorRow {
+        left: "P14",
+        right: "GND",
+    },
+    ConnectorRow {
+        left: "P16",
+        right: "NC",
+    },
+    ConnectorRow {
+        left: "P17",
+        right: "P34",
+    },
+    ConnectorRow {
+        left: "GND",
+        right: "P0",
+    },
+    ConnectorRow {
+        left: "3V3",
+        right: "P18",
+    },
+    ConnectorRow {
+        left: "NC",
+        right: "RX0",
+    },
+    ConnectorRow {
+        left: "NC",
+        right: "TX0",
+    },
+    ConnectorRow {
+        left: "GND",
+        right: "GND",
+    },
+    ConnectorRow {
+        left: "5V",
+        right: "3V3",
+    },
 ];
 
 const PB03F_PIN_NOTES: &[PinNote] = &[
-    PinNote { pin: "P15", note: "Restore" },
+    PinNote {
+        pin: "P15",
+        note: "Restore",
+    },
     PinNote {
         pin: "P13",
         note: "silk only; no gpio_pin_e mapping",
     },
-    PinNote { pin: "3V3", note: "power" },
-    PinNote { pin: "5V", note: "power" },
-    PinNote { pin: "GND", note: "ground" },
-    PinNote { pin: "NC", note: "not connected" },
-    PinNote { pin: "TX0", note: "UART0 TX" },
-    PinNote { pin: "RX0", note: "UART0 RX" },
+    PinNote {
+        pin: "3V3",
+        note: "power",
+    },
+    PinNote {
+        pin: "5V",
+        note: "power",
+    },
+    PinNote {
+        pin: "GND",
+        note: "ground",
+    },
+    PinNote {
+        pin: "NC",
+        note: "not connected",
+    },
+    PinNote {
+        pin: "TX0",
+        note: "UART0 TX",
+    },
+    PinNote {
+        pin: "RX0",
+        note: "UART0 RX",
+    },
 ];
 
 pub const PB03F_KIT: BoardProfile = BoardProfile {
@@ -162,7 +228,8 @@ pub const HARDWARE_WALLET_DEV: BoardProfile = BoardProfile {
     id: "hardware-wallet-dev",
     name: "Hardware Wallet development target",
     soc: SocKind::GenericCortexM4,
-    description: "strict Cortex-M4 linear-memory target for boot, cycle and stack-high-water measurements",
+    description:
+        "strict Cortex-M4 linear-memory target for boot, cycle and stack-high-water measurements",
     indicators: &[],
     pinout_title: None,
     connector_rows: &[],
