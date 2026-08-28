@@ -120,7 +120,6 @@ runs:
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
           ~/.cargo/git/db
-          ${{ github.action_path }}/target
         key: firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu-profile.outputs.name }}-${{ steps.cache-identity.outputs.rust }}-${{ steps.cache-identity.outputs.source }}
         restore-keys: |
           firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu-profile.outputs.name }}-${{ steps.cache-identity.outputs.rust }}-
