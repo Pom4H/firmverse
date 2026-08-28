@@ -52,9 +52,9 @@ jobs:
                   indent = first[:len(first) - len(first.lstrip())]
                   replacement = new
                   if indent and not new.startswith(indent):
-                      replacement = "\n".join(
+                      replacement = "\\n".join(
                           (indent + line if line else line)
-                          for line in new.split("\n")
+                          for line in new.split("\\n")
                       )
                   actual = "".join(candidate)
                   file.write_text(text.replace(actual, replacement, 1), encoding="utf-8")
