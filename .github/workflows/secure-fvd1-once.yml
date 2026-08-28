@@ -43,15 +43,15 @@ jobs:
           python3 -m py_compile /tmp/patch_firmverse.py
           python3 /tmp/patch_firmverse.py
 
-      - name: Use the AN505 secure execution map
+      - name: Use AN505 secure aliases and firmware-published FVD1
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('tools/cortex_m_probe.py')
-          text = path.read_text(encoding='utf-8')
+          probe = Path('tools/cortex_m_probe.py')
+          text = probe.read_text(encoding='utf-8')
 
           replacements = [
               (
@@ -96,7 +96,7 @@ jobs:
           if breakpoint not in text:
               raise SystemExit('breakpoint anchor missing')
           text = text.replace(breakpoint, startup, 1)
-          path.write_text(text, encoding='utf-8')
+          probe.write_text(text, encoding='utf-8')
 
           action = Path('actions/cortex-m-probe/action.yml')
           action_text = action.read_text(encoding='utf-8')
@@ -118,6 +118,67 @@ jobs:
               if old not in workflow_text:
                   raise SystemExit(f'durable workflow anchor missing: {old}')
               workflow_text = workflow_text.replace(old, new, 1)
+
+          old_trace = '''          .section .data.device_trace,"aw",%progbits
+          .align 2
+          .global firmverse_device_trace
+          .type firmverse_device_trace,%object
+          firmverse_device_trace:
+              .word 0x31445646
+              .word 1
+              .word 64
+              .word 1
+              .word 0x1f
+              .word 3
+              .word 2
+              .word 0x12345678
+              .word 32
+              .word 0x87654321
+              .word 2
+              .word 2
+              .word 0xaabbccdd
+              .word 1
+              .word 0xddccbbaa
+              .word 0
+
+'''
+          new_trace = '''          .section .bss.device_trace,"aw",%nobits
+          .align 2
+          .global firmverse_device_trace
+          .type firmverse_device_trace,%object
+          firmverse_device_trace:
+              .space 64
+          .size firmverse_device_trace, .-firmverse_device_trace
+
+          .section .rodata.device_trace_init,"a",%progbits
+          .align 2
+          trace_init:
+              .word 0x31445646, 1, 64, 1, 0x1f, 3, 2, 0x12345678
+              .word 32, 0x87654321, 2, 2, 0xaabbccdd, 1, 0xddccbbaa, 0
+          trace_init_end:
+
+'''
+          if old_trace not in workflow_text:
+              raise SystemExit('durable FVD1 fixture block missing')
+          workflow_text = workflow_text.replace(old_trace, new_trace, 1)
+
+          reset_anchor = '''          reset:
+              sub.w sp, sp, #256
+'''
+          reset_with_publish = '''          reset:
+              ldr r0, =trace_init
+              ldr r1, =firmverse_device_trace
+              ldr r2, =trace_init_end
+          0:
+              ldr r3, [r0], #4
+              str r3, [r1], #4
+              cmp r0, r2
+              blo 0b
+              sub.w sp, sp, #256
+'''
+          if reset_anchor not in workflow_text:
+              raise SystemExit('durable reset anchor missing')
+          workflow_text = workflow_text.replace(reset_anchor, reset_with_publish, 1)
           workflow.write_text(workflow_text, encoding='utf-8')
 
           docs = Path('docs/DEVICE_TRACE_ABI.md')
@@ -125,7 +186,8 @@ jobs:
               docs.read_text(encoding='utf-8')
               + '\nFor the default `mps2-an505` backend, Firmverse links secure code at '
                 '`0x10000000` and uses secure SRAM at `0x38000000`, matching '
-                'the board model Secure VTOR and TrustZone aliases.\n',
+                'the board model Secure VTOR and TrustZone aliases. The trace '
+                'must be published by executing firmware before `firmverse_done`.\n',
               encoding='utf-8',
           )
           PY
@@ -160,18 +222,33 @@ jobs:
           .word fault_handler
           .endr
 
-          .section .data.device_trace,"aw",%progbits
+          .section .bss.device_trace,"aw",%nobits
           .align 2
           .global firmverse_device_trace
           .type firmverse_device_trace,%object
           firmverse_device_trace:
+              .space 64
+          .size firmverse_device_trace, .-firmverse_device_trace
+
+          .section .rodata.device_trace_init,"a",%progbits
+          .align 2
+          trace_init:
               .word 0x31445646, 1, 64, 1, 0x1f, 3, 2, 0x12345678
               .word 32, 0x87654321, 2, 2, 0xaabbccdd, 1, 0xddccbbaa, 0
+          trace_init_end:
 
           .section .text.reset,"ax",%progbits
           .thumb_func
           .global reset
           reset:
+              ldr r0, =trace_init
+              ldr r1, =firmverse_device_trace
+              ldr r2, =trace_init_end
+          0:
+              ldr r3, [r0], #4
+              str r3, [r1], #4
+              cmp r0, r2
+              blo 0b
               sub.w sp, sp, #256
               movs r0, #0x42
               str r0, [sp]
@@ -207,7 +284,7 @@ jobs:
             -nostdlib -fuse-ld=lld -Wl,-T,target/fixture/linker.ld \
             -o target/fixture/device.elf target/fixture/device.S
 
-      - name: Execute real ELF and read FVD1 from secure RAM
+      - name: Execute real ELF and read firmware-published FVD1
         shell: bash
         run: |
           set -euo pipefail
