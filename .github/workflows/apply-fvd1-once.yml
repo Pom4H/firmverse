@@ -22,6 +22,21 @@ jobs:
         run: |
           set -euo pipefail
           cat .migration/fv.part* | tr -d '\n' | base64 -d > /tmp/patch_firmverse.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/patch_firmverse.py')
+          text = path.read_text(encoding='utf-8')
+          old_anchor = '\'\'\'        script = "\\n".join('
+          new_anchor = '\'\'\'        script = "\\\\n".join('
+          old_output = '        script = "\\n".join(commands)'
+          new_output = '        script = "\\\\n".join(commands)'
+          if old_anchor not in text or old_output not in text:
+              raise SystemExit('expected migration escaping anchors were not found')
+          text = text.replace(old_anchor, new_anchor, 1)
+          text = text.replace(old_output, new_output, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
           python3 -m py_compile /tmp/patch_firmverse.py
           python3 /tmp/patch_firmverse.py
           python3 -m py_compile tools/cortex_m_probe.py
