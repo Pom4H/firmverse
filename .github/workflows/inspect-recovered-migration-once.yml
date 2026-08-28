@@ -1,0 +1,48 @@
+name: Inspect recovered migration once
+
+on:
+  push:
+    paths:
+      - .github/workflows/inspect-recovered-migration-once.yml
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Compare recovered anchor with source
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk '
+            /^          from pathlib import Path$/ { capture = 1 }
+            capture { print }
+            /^          Path\("\.github\/workflows\/finalize-cortex-probe-once\.yml"\)\.unlink\(missing_ok=True\)$/ { exit }
+          ' .github/workflows/virtual-board-abi-once.yml \
+            | sed 's/^          //' > /tmp/patch.py
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+
+          source = Path("/tmp/patch.py").read_text(encoding="utf-8")
+          tree = ast.parse(source)
+          old = None
+          for node in ast.walk(tree):
+              if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                  continue
+              if node.func.id != "replace" or len(node.args) < 3:
+                  continue
+              value = ast.literal_eval(node.args[1])
+              if "def scan_stack_watermark" in value:
+                  old = value
+                  break
+          assert old is not None
+          target = Path("tools/cortex_m_probe.py").read_text(encoding="utf-8")
+          start = target.index("def scan_stack_watermark")
+          actual = target[start:start + len(old)]
+          print("OLD:", repr(old))
+          print("ACTUAL:", repr(actual))
+          print("OLD LINES:", [repr(line) for line in old.splitlines(keepends=True)])
+          print("ACTUAL LINES:", [repr(line) for line in actual.splitlines(keepends=True)])
+          print("EQUAL:", old == actual)
+          PY
