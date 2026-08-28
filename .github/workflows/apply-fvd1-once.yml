@@ -39,6 +39,27 @@ jobs:
           PY
           python3 -m py_compile /tmp/patch_firmverse.py
           python3 /tmp/patch_firmverse.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/cortex_m_probe.py')
+          text = path.read_text(encoding='utf-8')
+          old_temp = 'with tempfile.TemporaryDirectory(prefix="firmverse-") as temporary:'
+          new_temp = 'with tempfile.TemporaryDirectory(prefix=".firmverse-", dir=Path.cwd()) as temporary:'
+          marker = '        gdb_script.write_text(script, encoding="utf-8")\n'
+          diagnostic = (
+              marker
+              + '        print(\n'
+              + '            f"Firmverse pattern path={pattern_path} "\n'
+              + '            f"exists={pattern_path.is_file()} bytes={pattern_path.stat().st_size if pattern_path.is_file() else -1}"\n'
+              + '        )\n'
+          )
+          if old_temp not in text or marker not in text:
+              raise SystemExit('probe temp-file patch anchors were not found')
+          text = text.replace(old_temp, new_temp, 1)
+          text = text.replace(marker, diagnostic, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
           python3 -m py_compile tools/cortex_m_probe.py
           python3 -m unittest tools/test_cortex_m_probe.py
 
