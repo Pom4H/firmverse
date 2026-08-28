@@ -41,7 +41,7 @@ jobs:
           python3 -m py_compile /tmp/patch_firmverse.py
           python3 /tmp/patch_firmverse.py
 
-      - name: Make GDB exchange paths host-local and reset the target
+      - name: Start Cortex-M deterministically from its vector table
         shell: bash
         run: |
           set -euo pipefail
@@ -87,14 +87,28 @@ jobs:
               text = text.replace(old, new, 1)
 
           remote_marker = '            f"target remote 127.0.0.1:{port}",\n'
-          remote_with_reset = (
+          remote_with_diagnostic = (
               remote_marker
-              + '            "monitor system_reset",\n'
+              + '            "x/2wx 0x00000000",\n'
               + '            f"shell ls -l {quote_gdb_path(pattern_path)}",\n'
           )
           if remote_marker not in text:
-              raise SystemExit("GDB reset anchor was not found")
-          text = text.replace(remote_marker, remote_with_reset, 1)
+              raise SystemExit("GDB remote anchor was not found")
+          text = text.replace(remote_marker, remote_with_diagnostic, 1)
+
+          breakpoint_marker = '            f"hbreak *0x{completion_address:x}",\n'
+          context_and_breakpoint = (
+              '            "set $control = 0",\n'
+              + '            "set $msp = *(unsigned int*)0x00000000",\n'
+              + '            "set $sp = *(unsigned int*)0x00000000",\n'
+              + '            "set $pc = (*(unsigned int*)0x00000004) & 0xfffffffe",\n'
+              + '            "set $xpsr = 0x01000000",\n'
+              + '            "info registers msp sp pc xpsr control",\n'
+              + breakpoint_marker
+          )
+          if breakpoint_marker not in text:
+              raise SystemExit("GDB breakpoint anchor was not found")
+          text = text.replace(breakpoint_marker, context_and_breakpoint, 1)
           path.write_text(text, encoding="utf-8")
           PY
           python3 -m py_compile tools/cortex_m_probe.py
