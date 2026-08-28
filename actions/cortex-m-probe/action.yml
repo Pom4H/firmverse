@@ -1,0 +1,122 @@
+name: Firmverse Cortex-M probe
+description: Execute a Cortex-M ELF and measure its stack high-water mark
+
+inputs:
+  elf:
+    description: Path to the linked Cortex-M ELF
+    required: true
+  target:
+    description: Rust/LLVM target name recorded in the report
+    required: true
+  machine:
+    description: QEMU Cortex-M board
+    required: false
+    default: mps2-an505
+  cpu:
+    description: QEMU CPU model
+    required: false
+    default: cortex-m33
+  ram-origin:
+    description: Start of the firmware RAM region
+    required: false
+    default: "0x20000000"
+  ram-length:
+    description: Length of the firmware RAM region in bytes
+    required: false
+    default: "262144"
+  flash-origin:
+    description: Start of the firmware Flash region
+    required: false
+    default: "0x00000000"
+  flash-length:
+    description: Length of the firmware Flash region in bytes
+    required: false
+    default: "1048576"
+  done-symbol:
+    description: Substring identifying the non-inlined completion function
+    required: false
+    default: firmverse_done
+  stack-limit-bytes:
+    description: Fail when measured peak stack exceeds this value
+    required: false
+    default: "32768"
+  timeout-seconds:
+    description: Maximum emulation time
+    required: false
+    default: "120"
+  output-dir:
+    description: Directory for JSON and Markdown reports
+    required: false
+    default: firmverse-report
+
+outputs:
+  report-json:
+    description: Path to the generated JSON report
+    value: ${{ steps.probe.outputs.report-json }}
+  report-markdown:
+    description: Path to the generated Markdown report
+    value: ${{ steps.probe.outputs.report-markdown }}
+  peak-stack-bytes:
+    description: Measured stack high-water mark
+    value: ${{ steps.probe.outputs.peak-stack-bytes }}
+  recommended-stack-bytes:
+    description: Peak plus Firmverse safety margin
+    value: ${{ steps.probe.outputs.recommended-stack-bytes }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Cortex-M execution backend
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends qemu-system-arm gdb-multiarch
+
+    - name: Execute firmware and measure stack
+      id: probe
+      shell: bash
+      env:
+        INPUT_ELF: ${{ inputs.elf }}
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_MACHINE: ${{ inputs.machine }}
+        INPUT_CPU: ${{ inputs.cpu }}
+        INPUT_RAM_ORIGIN: ${{ inputs.ram-origin }}
+        INPUT_RAM_LENGTH: ${{ inputs.ram-length }}
+        INPUT_FLASH_ORIGIN: ${{ inputs.flash-origin }}
+        INPUT_FLASH_LENGTH: ${{ inputs.flash-length }}
+        INPUT_DONE_SYMBOL: ${{ inputs.done-symbol }}
+        INPUT_STACK_LIMIT: ${{ inputs.stack-limit-bytes }}
+        INPUT_TIMEOUT: ${{ inputs.timeout-seconds }}
+        INPUT_OUTPUT: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        host="$(rustc -vV | sed -n 's/^host: //p')"
+        llvm_root="$(rustc --print sysroot)/lib/rustlib/${host}/bin"
+        script="$GITHUB_ACTION_PATH/../../tools/cortex_m_probe.py"
+
+        python3 "$script" \
+          --elf "$INPUT_ELF" \
+          --target "$INPUT_TARGET" \
+          --machine "$INPUT_MACHINE" \
+          --cpu "$INPUT_CPU" \
+          --ram-origin "$INPUT_RAM_ORIGIN" \
+          --ram-length "$INPUT_RAM_LENGTH" \
+          --flash-origin "$INPUT_FLASH_ORIGIN" \
+          --flash-length "$INPUT_FLASH_LENGTH" \
+          --done-symbol "$INPUT_DONE_SYMBOL" \
+          --stack-limit-bytes "$INPUT_STACK_LIMIT" \
+          --timeout-seconds "$INPUT_TIMEOUT" \
+          --output-dir "$INPUT_OUTPUT" \
+          --llvm-nm "$llvm_root/llvm-nm" \
+          --llvm-size "$llvm_root/llvm-size"
+
+        report_json="$INPUT_OUTPUT/firmverse-report.json"
+        report_markdown="$INPUT_OUTPUT/firmverse-report.md"
+        peak="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["peak_stack_bytes"])' "$report_json")"
+        recommended="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["recommended_stack_bytes"])' "$report_json")"
+        echo "report-json=$report_json" >> "$GITHUB_OUTPUT"
+        echo "report-markdown=$report_markdown" >> "$GITHUB_OUTPUT"
+        echo "peak-stack-bytes=$peak" >> "$GITHUB_OUTPUT"
+        echo "recommended-stack-bytes=$recommended" >> "$GITHUB_OUTPUT"
+        cat "$report_markdown" >> "$GITHUB_STEP_SUMMARY"
