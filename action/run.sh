@@ -52,10 +52,11 @@ if [[ "$require_advertising" == true && "$mode" != single ]]; then
   exit 2
 fi
 if [[ "$require_advertising" == true && -z "$max_insns" ]]; then
-  # The pinned SDK performs a visible LED chase before entering its BLE/OSAL
-  # startup. The normal one-shot default is deliberately smaller, so give this
-  # deeper contract an explicit deterministic budget unless the caller chose one.
   max_insns=50000000
+fi
+if [[ "$board" == hardware-wallet-dev && "$mode" != single ]]; then
+  echo "::error::hardware-wallet-dev is a deterministic single-node probe board" >&2
+  exit 2
 fi
 
 mkdir -p "$(dirname "$log")"
@@ -133,6 +134,27 @@ if [[ -n "$expect" ]]; then
   done <<< "$expect"
 fi
 
+probe_line="$(grep '^PROBE ' "$log" | tail -n 1 || true)"
+probe_field() {
+  local key="$1"
+  awk -v key="$key" '{
+    for (i = 1; i <= NF; i++) {
+      split($i, pair, "=")
+      if (pair[1] == key) {
+        sub("^[^=]*=", "", $i)
+        print $i
+        exit
+      }
+    }
+  }' <<< "$probe_line"
+}
+
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   echo "log=$log" >> "$GITHUB_OUTPUT"
+  echo "probe-status=$(probe_field status)" >> "$GITHUB_OUTPUT"
+  echo "instructions=$(probe_field instructions)" >> "$GITHUB_OUTPUT"
+  echo "cycles=$(probe_field cycles)" >> "$GITHUB_OUTPUT"
+  echo "stack-used=$(probe_field stack_used)" >> "$GITHUB_OUTPUT"
+  echo "stack-window=$(probe_field stack_window)" >> "$GITHUB_OUTPUT"
+  echo "stack-saturated=$(probe_field stack_saturated)" >> "$GITHUB_OUTPUT"
 fi

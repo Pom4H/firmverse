@@ -14,6 +14,8 @@ pub enum BoardKind {
     Pb03fKit,
     #[value(name = "headless")]
     Headless,
+    #[value(name = "hardware-wallet-dev")]
+    HardwareWalletDev,
     #[value(name = "weact-ch592f")]
     WeactCh592f,
 }
@@ -100,101 +102,35 @@ const PB03F_INDICATORS: &[GpioSignal] = &[
 ];
 
 const PB03F_CONNECTOR_ROWS: &[ConnectorRow] = &[
-    ConnectorRow {
-        left: "P13",
-        right: "P24",
-    },
-    ConnectorRow {
-        left: "P11",
-        right: "P23",
-    },
-    ConnectorRow {
-        left: "P31",
-        right: "P20",
-    },
-    ConnectorRow {
-        left: "P7",
-        right: "P3",
-    },
-    ConnectorRow {
-        left: "P32",
-        right: "P2",
-    },
-    ConnectorRow {
-        left: "P33",
-        right: "3V3",
-    },
-    ConnectorRow {
-        left: "P14",
-        right: "GND",
-    },
-    ConnectorRow {
-        left: "P16",
-        right: "NC",
-    },
-    ConnectorRow {
-        left: "P17",
-        right: "P34",
-    },
-    ConnectorRow {
-        left: "GND",
-        right: "P0",
-    },
-    ConnectorRow {
-        left: "3V3",
-        right: "P18",
-    },
-    ConnectorRow {
-        left: "NC",
-        right: "RX0",
-    },
-    ConnectorRow {
-        left: "NC",
-        right: "TX0",
-    },
-    ConnectorRow {
-        left: "GND",
-        right: "GND",
-    },
-    ConnectorRow {
-        left: "5V",
-        right: "3V3",
-    },
+    ConnectorRow { left: "P13", right: "P24" },
+    ConnectorRow { left: "P11", right: "P23" },
+    ConnectorRow { left: "P31", right: "P20" },
+    ConnectorRow { left: "P7", right: "P3" },
+    ConnectorRow { left: "P32", right: "P2" },
+    ConnectorRow { left: "P33", right: "3V3" },
+    ConnectorRow { left: "P14", right: "GND" },
+    ConnectorRow { left: "P16", right: "NC" },
+    ConnectorRow { left: "P17", right: "P34" },
+    ConnectorRow { left: "GND", right: "P0" },
+    ConnectorRow { left: "3V3", right: "P18" },
+    ConnectorRow { left: "NC", right: "RX0" },
+    ConnectorRow { left: "NC", right: "TX0" },
+    ConnectorRow { left: "GND", right: "GND" },
+    ConnectorRow { left: "5V", right: "3V3" },
 ];
 
 const PB03F_PIN_NOTES: &[PinNote] = &[
-    PinNote {
-        pin: "P15",
-        note: "Restore",
-    },
+    PinNote { pin: "P15", note: "Restore" },
     PinNote {
         pin: "P13",
         note: "silk only; no gpio_pin_e mapping",
     },
-    PinNote {
-        pin: "3V3",
-        note: "power",
-    },
-    PinNote {
-        pin: "5V",
-        note: "power",
-    },
-    PinNote {
-        pin: "GND",
-        note: "ground",
-    },
-    PinNote {
-        pin: "NC",
-        note: "not connected",
-    },
-    PinNote {
-        pin: "TX0",
-        note: "UART0 TX",
-    },
-    PinNote {
-        pin: "RX0",
-        note: "UART0 RX",
-    },
+    PinNote { pin: "3V3", note: "power" },
+    PinNote { pin: "5V", note: "power" },
+    PinNote { pin: "GND", note: "ground" },
+    PinNote { pin: "NC", note: "not connected" },
+    PinNote { pin: "TX0", note: "UART0 TX" },
+    PinNote { pin: "RX0", note: "UART0 RX" },
 ];
 
 pub const PB03F_KIT: BoardProfile = BoardProfile {
@@ -221,6 +157,18 @@ pub const HEADLESS_PHY6252: BoardProfile = BoardProfile {
     pin_notes: &[],
 };
 
+pub const HARDWARE_WALLET_DEV: BoardProfile = BoardProfile {
+    kind: BoardKind::HardwareWalletDev,
+    id: "hardware-wallet-dev",
+    name: "Hardware Wallet development target",
+    soc: SocKind::GenericCortexM4,
+    description: "strict Cortex-M4 linear-memory target for boot, cycle and stack-high-water measurements",
+    indicators: &[],
+    pinout_title: None,
+    connector_rows: &[],
+    pin_notes: &[],
+};
+
 pub const WEACT_CH592F: BoardProfile = BoardProfile {
     kind: BoardKind::WeactCh592f,
     id: "weact-ch592f",
@@ -233,26 +181,45 @@ pub const WEACT_CH592F: BoardProfile = BoardProfile {
     pin_notes: &[],
 };
 
-pub const PROFILES: &[BoardProfile] = &[PB03F_KIT, HEADLESS_PHY6252, WEACT_CH592F];
+pub const PROFILES: &[BoardProfile] = &[
+    PB03F_KIT,
+    HEADLESS_PHY6252,
+    HARDWARE_WALLET_DEV,
+    WEACT_CH592F,
+];
 
 pub const fn profile(kind: BoardKind) -> &'static BoardProfile {
     match kind {
         BoardKind::Pb03fKit => &PB03F_KIT,
         BoardKind::Headless => &HEADLESS_PHY6252,
+        BoardKind::HardwareWalletDev => &HARDWARE_WALLET_DEV,
         BoardKind::WeactCh592f => &WEACT_CH592F,
     }
 }
 
-/// Guard the current execution path, which is still the PHY6252 implementation.
+/// Guard the legacy execution path, which owns the complete PHY6252 model.
 pub fn require_phy6252(kind: BoardKind) -> Result<&'static BoardProfile, String> {
     let board = profile(kind);
     if board.soc != SocKind::Phy6252 {
         let soc = crate::soc::profile(board.soc);
         return Err(format!(
-            "board {} requires SoC {} ({}) but this runtime currently executes PHY6252 only",
+            "board {} requires SoC {} ({}) but this runtime executes PHY6252 only",
             board.id,
             soc.id,
             soc.cpu.label()
+        ));
+    }
+    crate::soc::require_implemented(board.soc)?;
+    Ok(board)
+}
+
+/// Guard the generic Cortex-M execution path used by portable firmware probes.
+pub fn require_generic_cortex_m4(kind: BoardKind) -> Result<&'static BoardProfile, String> {
+    let board = profile(kind);
+    if board.soc != SocKind::GenericCortexM4 {
+        return Err(format!(
+            "board {} is not a generic Cortex-M4 probe target",
+            board.id
         ));
     }
     crate::soc::require_implemented(board.soc)?;
@@ -323,6 +290,14 @@ mod tests {
             gpio_summary(BoardKind::Pb03fKit, red | white, red | white),
             "red white"
         );
+    }
+
+    #[test]
+    fn hardware_wallet_profile_owns_no_fake_peripherals() {
+        let board = profile(BoardKind::HardwareWalletDev);
+        assert_eq!(board.soc, SocKind::GenericCortexM4);
+        assert!(board.indicators.is_empty());
+        assert!(board.connector_rows.is_empty());
     }
 
     #[test]

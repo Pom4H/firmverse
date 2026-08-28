@@ -5,6 +5,9 @@
 #![allow(unknown_lints)]
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
+#[cfg(not(any(feature = "armv6m", feature = "armv7em")))]
+compile_error!("Firmverse requires one CPU profile: armv6m or armv7em");
+
 // PHY6252 is physically grouped below src/soc/phy6252 while its internal
 // modules still use the historical crate-level names. Keeping that migration
 // shim in the library makes every frontend (CLI and browser) execute the exact
@@ -69,6 +72,8 @@ pub mod world;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ble_host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cortex_m;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod emu;
 #[cfg(not(target_arch = "wasm32"))]

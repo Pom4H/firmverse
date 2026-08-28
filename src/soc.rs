@@ -9,6 +9,7 @@ pub mod phy6252;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SocKind {
     Phy6252,
+    GenericCortexM4,
     Ch592f,
 }
 
@@ -16,6 +17,7 @@ impl SocKind {
     pub const fn id(self) -> &'static str {
         match self {
             Self::Phy6252 => "phy6252",
+            Self::GenericCortexM4 => "cortex-m4-generic",
             Self::Ch592f => "ch592f",
         }
     }
@@ -44,7 +46,7 @@ impl CortexMProfile {
     }
 }
 
-/// Profiles supported by the upstream jjkt/zmu Cortex-M engine.
+/// Profiles supported by the pinned jjkt/zmu Cortex-M engine.
 pub const ZMU_CORTEX_M_PROFILES: &[CortexMProfile] = &[
     CortexMProfile::M0,
     CortexMProfile::M0Plus,
@@ -84,8 +86,17 @@ pub const PHY6252: SocProfile = SocProfile {
     id: "phy6252",
     name: "PHY6252",
     cpu: CpuBackend::Zmu(CortexMProfile::M0),
-    implemented: true,
-    description: "Cortex-M0 BLE SoC; execution is provided by jjkt/zmu armv6m",
+    implemented: cfg!(feature = "armv6m"),
+    description: "Cortex-M0 BLE SoC; execution requires the Firmverse armv6m build",
+};
+
+pub const GENERIC_CORTEX_M4: SocProfile = SocProfile {
+    kind: SocKind::GenericCortexM4,
+    id: "cortex-m4-generic",
+    name: "Generic Cortex-M4",
+    cpu: CpuBackend::Zmu(CortexMProfile::M4),
+    implemented: cfg!(feature = "armv7em"),
+    description: "strict linear-memory Cortex-M4 target for portable firmware and resource probes",
 };
 
 pub const CH592F: SocProfile = SocProfile {
@@ -97,11 +108,12 @@ pub const CH592F: SocProfile = SocProfile {
     description: "BLE RISC-V SoC; model/backend boundary reserved, execution not implemented yet",
 };
 
-pub const PROFILES: &[SocProfile] = &[PHY6252, CH592F];
+pub const PROFILES: &[SocProfile] = &[PHY6252, GENERIC_CORTEX_M4, CH592F];
 
 pub const fn profile(kind: SocKind) -> &'static SocProfile {
     match kind {
         SocKind::Phy6252 => &PHY6252,
+        SocKind::GenericCortexM4 => &GENERIC_CORTEX_M4,
         SocKind::Ch592f => &CH592F,
     }
 }
@@ -110,7 +122,7 @@ pub fn require_implemented(kind: SocKind) -> Result<&'static SocProfile, String>
     let soc = profile(kind);
     if !soc.implemented {
         return Err(format!(
-            "SoC {} uses {} and is not implemented yet",
+            "SoC {} uses {} and is not available in this Firmverse build",
             soc.id,
             soc.cpu.label()
         ));
@@ -122,14 +134,23 @@ pub fn require_implemented(kind: SocKind) -> Result<&'static SocProfile, String>
 mod tests {
     use super::*;
 
+    #[cfg(feature = "armv6m")]
     #[test]
-    fn phy6252_uses_zmu_cortex_m0() {
+    fn armv6m_build_exposes_phy6252_only() {
         assert_eq!(PHY6252.cpu, CpuBackend::Zmu(CortexMProfile::M0));
         assert!(require_implemented(SocKind::Phy6252).is_ok());
+        assert!(require_implemented(SocKind::GenericCortexM4).is_err());
+    }
+
+    #[cfg(feature = "armv7em")]
+    #[test]
+    fn armv7em_build_exposes_generic_cortex_m4_only() {
+        assert!(require_implemented(SocKind::GenericCortexM4).is_ok());
+        assert!(require_implemented(SocKind::Phy6252).is_err());
     }
 
     #[test]
-    fn zmu_registry_keeps_other_cortex_m_profiles_visible() {
+    fn zmu_registry_keeps_supported_cortex_m_profiles_visible() {
         assert!(ZMU_CORTEX_M_PROFILES.contains(&CortexMProfile::M3));
         assert!(ZMU_CORTEX_M_PROFILES.contains(&CortexMProfile::M4));
         assert!(ZMU_CORTEX_M_PROFILES.contains(&CortexMProfile::M4F));
@@ -138,7 +159,7 @@ mod tests {
     #[test]
     fn ch592f_fails_closed_until_riscv_backend_exists() {
         let err = require_implemented(SocKind::Ch592f).unwrap_err();
-        assert!(err.contains("not implemented"));
+        assert!(err.contains("not available"));
         assert!(err.contains("qingke-v4c"));
     }
 }

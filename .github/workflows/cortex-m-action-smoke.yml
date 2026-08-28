@@ -1,0 +1,47 @@
+name: cortex-m-action-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  generic-cortex-m4:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Execute generic Cortex-M4 completion probe
+        id: probe
+        uses: ./
+        with:
+          firmware: firmware/cortex-m4-probe.hex
+          board: hardware-wallet-dev
+          strict: 'true'
+          max-insns: '1000'
+          log: firmverse-action-logs/cortex-m4.log
+          expect: |
+            PROBE status=ok board=hardware-wallet-dev
+
+      - name: Verify structured resource outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ steps.probe.outputs.probe-status }}' = ok
+          test '${{ steps.probe.outputs.stack-saturated }}' = false
+          test '${{ steps.probe.outputs.stack-window }}' = 262144
+          test '${{ steps.probe.outputs.instructions }}' -gt 0
+          test '${{ steps.probe.outputs.cycles }}' -gt 0
+          test -s '${{ steps.probe.outputs.log }}'
+
+      - name: Upload generic probe evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmverse-cortex-m4-smoke
+          path: firmverse-action-logs/cortex-m4.log
+          if-no-files-found: error

@@ -21,6 +21,11 @@ path = "src/main.rs"
 name = "phy6252-flash"
 path = "src/bin/phy6252-flash.rs"
 
+[features]
+default = ["armv6m"]
+armv6m = ["zmu_cortex_m/armv6m"]
+armv7em = ["zmu_cortex_m/armv7em"]
+
 [lints.rust]
 warnings = { level = "deny", priority = -1 }
 
@@ -30,9 +35,10 @@ all = { level = "deny", priority = -1 }
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
-# PHY6252 currently enables zmu's ARMv6-M engine. The SoC registry keeps the
-# backend boundary explicit so future Cortex-M SoCs can select other zmu profiles.
-zmu_cortex_m = { path = "third_party/zmu/zmu_cortex_m", default-features = false, features = ["armv6m"] }
+# zmu selects the Cortex-M architecture at compile time. The public Action
+# builds the default ARMv6-M profile for PHY6252 and an isolated ARMv7E-M
+# profile for generic hardware probes such as the reference hardware wallet.
+zmu_cortex_m = { path = "third_party/zmu/zmu_cortex_m", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 crossterm = "0.29"

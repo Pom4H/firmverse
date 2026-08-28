@@ -21,7 +21,7 @@ inputs:
     required: false
     default: mesh
   nodes:
-    description: "Number of firmware nodes in mesh mode"
+    description: "Number of identical firmware nodes in mesh mode"
     required: false
     default: '2'
   ticks:
@@ -56,12 +56,48 @@ outputs:
   binary:
     description: "Absolute path to the built Firmverse binary"
     value: ${{ steps.build.outputs.binary }}
+  probe-status:
+    description: "Generic Cortex-M PROBE status, when emitted"
+    value: ${{ steps.run.outputs.probe-status }}
+  instructions:
+    description: "Generic Cortex-M executed instruction count"
+    value: ${{ steps.run.outputs.instructions }}
+  cycles:
+    description: "Generic Cortex-M simulated cycle count"
+    value: ${{ steps.run.outputs.cycles }}
+  stack-used:
+    description: "Generic Cortex-M stack high-water bytes"
+    value: ${{ steps.run.outputs.stack-used }}
+  stack-window:
+    description: "Generic Cortex-M scanned stack window bytes"
+    value: ${{ steps.run.outputs.stack-window }}
+  stack-saturated:
+    description: "Whether the stack reached the bottom of the scanned window"
+    value: ${{ steps.run.outputs.stack-saturated }}
 
 runs:
   using: composite
   steps:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+
+    - name: Select CPU profile
+      id: cpu-profile
+      shell: bash
+      env:
+        FIRMVERSE_BOARD: ${{ inputs.board }}
+      run: |
+        set -euo pipefail
+        case "$FIRMVERSE_BOARD" in
+          hardware-wallet-dev)
+            echo 'name=armv7em' >> "$GITHUB_OUTPUT"
+            echo 'cargo_args=--no-default-features --features armv7em' >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo 'name=armv6m' >> "$GITHUB_OUTPUT"
+            echo 'cargo_args=' >> "$GITHUB_OUTPUT"
+            ;;
+        esac
 
     - name: Compute Firmverse cache identity
       id: cache-identity
@@ -85,10 +121,10 @@ runs:
           ~/.cargo/registry/cache
           ~/.cargo/git/db
           ${{ github.action_path }}/target
-        key: firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-identity.outputs.rust }}-${{ steps.cache-identity.outputs.source }}
+        key: firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu-profile.outputs.name }}-${{ steps.cache-identity.outputs.rust }}-${{ steps.cache-identity.outputs.source }}
         restore-keys: |
-          firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cache-identity.outputs.rust }}-
-          firmverse-action-${{ runner.os }}-${{ runner.arch }}-
+          firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu-profile.outputs.name }}-${{ steps.cache-identity.outputs.rust }}-
+          firmverse-action-${{ runner.os }}-${{ runner.arch }}-${{ steps.cpu-profile.outputs.name }}-
 
     - name: Prepare pinned zmu backend
       shell: bash
@@ -110,12 +146,16 @@ runs:
     - name: Build Firmverse
       id: build
       shell: bash
+      env:
+        FIRMVERSE_CARGO_ARGS: ${{ steps.cpu-profile.outputs.cargo_args }}
       run: |
         set -euo pipefail
+        read -r -a feature_args <<< "$FIRMVERSE_CARGO_ARGS"
         cargo build \
           --release \
           --locked \
           --bin firmverse \
+          "${feature_args[@]}" \
           --manifest-path "${GITHUB_ACTION_PATH}/Cargo.toml"
         binary="${GITHUB_ACTION_PATH}/target/release/firmverse"
         test -x "$binary"
