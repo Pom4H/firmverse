@@ -2,8 +2,6 @@ name: Finalize FVD1 backend once
 
 on:
   push:
-    paths:
-      - .github/workflows/finalize-fvd1-clean-once.yml
   workflow_dispatch:
 
 permissions:
