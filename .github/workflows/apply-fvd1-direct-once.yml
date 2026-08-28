@@ -41,7 +41,7 @@ jobs:
           python3 -m py_compile /tmp/patch_firmverse.py
           python3 /tmp/patch_firmverse.py
 
-      - name: Keep GDB exchange files inside the workspace
+      - name: Make GDB exchange paths host-local and observable
         shell: bash
         run: |
           set -euo pipefail
@@ -66,6 +66,34 @@ jobs:
               raise SystemExit("workspace GDB patch anchors were not found")
           text = text.replace(old_context, new_context, 1)
           text = text.replace(old_write, new_write, 1)
+
+          path_replacements = [
+              (
+                  "f'restore \"{quote_gdb_path(pattern_path)}\" binary '",
+                  "f'restore {quote_gdb_path(pattern_path)} binary '",
+              ),
+              (
+                  "f'dump binary memory \"{quote_gdb_path(dump_path)}\" '",
+                  "f'dump binary memory {quote_gdb_path(dump_path)} '",
+              ),
+              (
+                  "f'dump binary memory \"{quote_gdb_path(trace_path)}\" '",
+                  "f'dump binary memory {quote_gdb_path(trace_path)} '",
+              ),
+          ]
+          for old, new in path_replacements:
+              if old not in text:
+                  raise SystemExit(f"GDB path anchor was not found: {old}")
+              text = text.replace(old, new, 1)
+
+          remote_marker = '            f"target remote 127.0.0.1:{port}",\n'
+          remote_with_probe = (
+              remote_marker
+              + '            f"shell ls -l {quote_gdb_path(pattern_path)}",\n'
+          )
+          if remote_marker not in text:
+              raise SystemExit("GDB shell probe anchor was not found")
+          text = text.replace(remote_marker, remote_with_probe, 1)
           path.write_text(text, encoding="utf-8")
           PY
           python3 -m py_compile tools/cortex_m_probe.py
