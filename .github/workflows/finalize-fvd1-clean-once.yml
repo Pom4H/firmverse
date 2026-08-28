@@ -88,21 +88,16 @@ jobs:
           assert trace["secure_element_ops"] == 1
           PY
 
-      - name: Commit verified implementation without migration debris
+      - name: Commit verified source implementation
         run: |
           set -euo pipefail
+          # GITHUB_TOKEN cannot safely rewrite workflow files from a running workflow.
+          # Keep the repository workflows unchanged here; they are cleaned up separately.
+          git checkout -- .github/workflows
           rm -rf .migration
-          rm -f \
-            .github/workflows/finalize-fvd1-clean-once.yml \
-            .github/workflows/secure-fvd1-once.yml \
-            .github/workflows/apply-fvd1-direct-once.yml \
-            .github/workflows/apply-fvd1-once.yml \
-            .github/workflows/virtual-board-abi-once.yml \
-            .github/workflows/run-virtual-board-migration-once.yml \
-            .github/workflows/inspect-recovered-migration-once.yml \
-            .github/workflows/finalize-cortex-probe-once.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
+          git diff --cached --quiet && exit 0
           git commit -m "Add verified Cortex-M virtual device trace ABI"
           git push
