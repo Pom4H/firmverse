@@ -69,3 +69,10 @@ This integration does not claim side-channel equivalence, secure-element
 behavior, analog power behavior or production fault-injection resistance.
 Those require the later Firmverse peripheral models, NodeSpice co-simulation
 and hardware-in-the-loop tests.
+
+## Virtual device contract
+
+The reusable Cortex-M action can also read the `FVD1` RAM trace described in
+[`DEVICE_TRACE_ABI.md`](DEVICE_TRACE_ABI.md). This is the stable boundary for
+virtual buttons, display, entropy, journaled storage and secure-element
+operations.

@@ -19,7 +19,7 @@ inputs:
   ram-origin:
     description: Start of the firmware RAM region
     required: false
-    default: "0x20000000"
+    default: "0x38000000"
   ram-length:
     description: Length of the firmware RAM region in bytes
     required: false
@@ -27,7 +27,7 @@ inputs:
   flash-origin:
     description: Start of the firmware Flash region
     required: false
-    default: "0x00000000"
+    default: "0x10000000"
   flash-length:
     description: Length of the firmware Flash region in bytes
     required: false
@@ -36,6 +36,14 @@ inputs:
     description: Substring identifying the non-inlined completion function
     required: false
     default: firmverse_done
+  device-trace-symbol:
+    description: Optional symbol containing the 64-byte FVD1 device trace
+    required: false
+    default: ''
+  required-device-capabilities:
+    description: Capability bitmask that the FVD1 trace must expose
+    required: false
+    default: '0'
   stack-limit-bytes:
     description: Fail when measured peak stack exceeds this value
     required: false
@@ -62,6 +70,12 @@ outputs:
   recommended-stack-bytes:
     description: Peak plus Firmverse safety margin
     value: ${{ steps.probe.outputs.recommended-stack-bytes }}
+  device-status:
+    description: FVD1 virtual-board status when a trace is requested
+    value: ${{ steps.probe.outputs.device-status }}
+  device-capabilities:
+    description: FVD1 virtual-board capability mask
+    value: ${{ steps.probe.outputs.device-capabilities }}
 
 runs:
   using: composite
@@ -86,6 +100,8 @@ runs:
         INPUT_FLASH_ORIGIN: ${{ inputs.flash-origin }}
         INPUT_FLASH_LENGTH: ${{ inputs.flash-length }}
         INPUT_DONE_SYMBOL: ${{ inputs.done-symbol }}
+        INPUT_DEVICE_TRACE_SYMBOL: ${{ inputs.device-trace-symbol }}
+        INPUT_REQUIRED_DEVICE_CAPABILITIES: ${{ inputs.required-device-capabilities }}
         INPUT_STACK_LIMIT: ${{ inputs.stack-limit-bytes }}
         INPUT_TIMEOUT: ${{ inputs.timeout-seconds }}
         INPUT_OUTPUT: ${{ inputs.output-dir }}
@@ -105,6 +121,8 @@ runs:
           --flash-origin "$INPUT_FLASH_ORIGIN" \
           --flash-length "$INPUT_FLASH_LENGTH" \
           --done-symbol "$INPUT_DONE_SYMBOL" \
+          --device-trace-symbol "$INPUT_DEVICE_TRACE_SYMBOL" \
+          --required-device-capabilities "$INPUT_REQUIRED_DEVICE_CAPABILITIES" \
           --stack-limit-bytes "$INPUT_STACK_LIMIT" \
           --timeout-seconds "$INPUT_TIMEOUT" \
           --output-dir "$INPUT_OUTPUT" \
@@ -115,8 +133,12 @@ runs:
         report_markdown="$INPUT_OUTPUT/firmverse-report.md"
         peak="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["peak_stack_bytes"])' "$report_json")"
         recommended="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["recommended_stack_bytes"])' "$report_json")"
+        device_status="$(python3 -c 'import json,sys; value=json.load(open(sys.argv[1])).get("device_trace"); print(value.get("status", "") if value else "")' "$report_json")"
+        device_capabilities="$(python3 -c 'import json,sys; value=json.load(open(sys.argv[1])).get("device_trace"); print(value.get("capabilities", 0) if value else 0)' "$report_json")"
         echo "report-json=$report_json" >> "$GITHUB_OUTPUT"
         echo "report-markdown=$report_markdown" >> "$GITHUB_OUTPUT"
         echo "peak-stack-bytes=$peak" >> "$GITHUB_OUTPUT"
         echo "recommended-stack-bytes=$recommended" >> "$GITHUB_OUTPUT"
+        echo "device-status=$device_status" >> "$GITHUB_OUTPUT"
+        echo "device-capabilities=$device_capabilities" >> "$GITHUB_OUTPUT"
         cat "$report_markdown" >> "$GITHUB_STEP_SUMMARY"

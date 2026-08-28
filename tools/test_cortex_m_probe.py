@@ -53,5 +53,52 @@ Total               233256
         self.assertEqual(cortex_m_probe.parse_int("262144"), 262144)
 
 
+    def test_parses_fvd1_device_trace(self) -> None:
+        words = [
+            cortex_m_probe.DEVICE_TRACE_MAGIC,
+            1,
+            cortex_m_probe.DEVICE_TRACE_BYTES,
+            1,
+            0x1F,
+            3,
+            2,
+            0x12345678,
+            32,
+            0x87654321,
+            2,
+            2,
+            0xAABBCCDD,
+            1,
+            0xDDCCBBAA,
+            0,
+        ]
+        data = __import__("struct").pack("<16I", *words)
+        trace = cortex_m_probe.parse_device_trace(
+            data, "trace", 0x20000100
+        )
+        self.assertEqual(trace.status, "pass")
+        self.assertEqual(trace.capabilities, 0x1F)
+        self.assertEqual(trace.storage_generation, 2)
+        self.assertEqual(
+            cortex_m_probe.validate_device_trace(trace, 0x1F), ()
+        )
+
+    def test_device_trace_fails_closed(self) -> None:
+        words = [
+            cortex_m_probe.DEVICE_TRACE_MAGIC,
+            1,
+            64,
+            2,
+            1,
+        ] + [0] * 11
+        data = __import__("struct").pack("<16I", *words)
+        trace = cortex_m_probe.parse_device_trace(
+            data, "trace", 0x20000100
+        )
+        errors = cortex_m_probe.validate_device_trace(trace, 0x1F)
+        self.assertTrue(any("status" in error for error in errors))
+        self.assertTrue(any("capability" in error for error in errors))
+
+
 if __name__ == "__main__":
     unittest.main()

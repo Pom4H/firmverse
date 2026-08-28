@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,11 @@ from pathlib import Path
 from typing import Iterable
 
 PATTERN_BYTE = 0xA5
+DEVICE_TRACE_MAGIC = 0x31445646  # little-endian ASCII FVD1
+DEVICE_TRACE_VERSION = 1
+DEVICE_TRACE_WORDS = 16
+DEVICE_TRACE_BYTES = DEVICE_TRACE_WORDS * 4
+DEVICE_STATUS = {0: "running", 1: "pass", 2: "fail"}
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,29 @@ class Section:
     name: str
     size: int
     address: int
+
+
+@dataclass(frozen=True)
+class DeviceTrace:
+    symbol: str
+    address: int
+    magic: int
+    version: int
+    byte_len: int
+    status: str
+    status_code: int
+    capabilities: int
+    button_events: int
+    display_frames: int
+    display_digest: int
+    trng_bytes: int
+    trng_digest: int
+    storage_commits: int
+    storage_generation: int
+    storage_digest: int
+    secure_element_ops: int
+    secure_element_digest: int
+    failure_code: int
 
 
 @dataclass(frozen=True)
@@ -58,6 +87,8 @@ class ProbeReport:
     wall_time_ms: int
     cycle_count: int | None
     cycle_count_status: str
+    device_trace: DeviceTrace | None
+    device_trace_errors: tuple[str, ...]
     qemu_version: str
     gdb_version: str
 
@@ -185,6 +216,61 @@ def scan_stack_watermark(data: bytes, pattern: int = PATTERN_BYTE) -> tuple[int,
     return len(data) - lowest_changed, lowest_changed
 
 
+def parse_device_trace(data: bytes, symbol: str, address: int) -> DeviceTrace:
+    if len(data) != DEVICE_TRACE_BYTES:
+        raise ValueError(
+            f"device trace must be {DEVICE_TRACE_BYTES} bytes, got {len(data)}"
+        )
+    words = struct.unpack("<16I", data)
+    status_code = words[3]
+    return DeviceTrace(
+        symbol=symbol,
+        address=address,
+        magic=words[0],
+        version=words[1],
+        byte_len=words[2],
+        status=DEVICE_STATUS.get(status_code, f"unknown-{status_code}"),
+        status_code=status_code,
+        capabilities=words[4],
+        button_events=words[5],
+        display_frames=words[6],
+        display_digest=words[7],
+        trng_bytes=words[8],
+        trng_digest=words[9],
+        storage_commits=words[10],
+        storage_generation=words[11],
+        storage_digest=words[12],
+        secure_element_ops=words[13],
+        secure_element_digest=words[14],
+        failure_code=words[15],
+    )
+
+
+def validate_device_trace(
+    trace: DeviceTrace, required_capabilities: int
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    if trace.magic != DEVICE_TRACE_MAGIC:
+        errors.append(f"invalid device trace magic 0x{trace.magic:08x}")
+    if trace.version != DEVICE_TRACE_VERSION:
+        errors.append(f"unsupported device trace version {trace.version}")
+    if trace.byte_len != DEVICE_TRACE_BYTES:
+        errors.append(
+            f"device trace byte_len is {trace.byte_len}, expected {DEVICE_TRACE_BYTES}"
+        )
+    if trace.status != "pass":
+        errors.append(
+            f"virtual board status is {trace.status!r}, "
+            f"failure_code={trace.failure_code}"
+        )
+    missing = required_capabilities & ~trace.capabilities
+    if missing:
+        errors.append(
+            f"virtual board is missing capability mask 0x{missing:08x}"
+        )
+    return tuple(errors)
+
+
 def first_line(command: list[str]) -> str:
     completed = subprocess.run(command, check=True, capture_output=True, text=True)
     return completed.stdout.splitlines()[0].strip()
@@ -223,6 +309,12 @@ def run_probe(args: argparse.Namespace) -> ProbeReport:
         args.ram_length,
     )
     completion_address, completion_symbol = find_symbol(llvm_nm, elf, args.done_symbol)
+    device_trace_address: int | None = None
+    device_trace_symbol: str | None = None
+    if args.device_trace_symbol:
+        device_trace_address, device_trace_symbol = find_symbol(
+            llvm_nm, elf, args.device_trace_symbol
+        )
 
     stack_top = args.ram_origin + args.ram_length
     pattern_start = align_up(static_ram_end, 32)
@@ -230,36 +322,47 @@ def run_probe(args: argparse.Namespace) -> ProbeReport:
         raise ValueError("static RAM leaves no region for the stack")
     pattern_length = stack_top - pattern_start
 
-    with tempfile.TemporaryDirectory(prefix="firmverse-") as temporary:
+    with tempfile.TemporaryDirectory(prefix=".firmverse-", dir=Path.cwd()) as temporary:
         temp = Path(temporary)
         pattern_path = temp / "stack-pattern.bin"
         dump_path = temp / "stack-after.bin"
+        trace_path = temp / "device-trace.bin"
         gdb_script = temp / "probe.gdb"
         pattern_path.write_bytes(bytes([PATTERN_BYTE]) * pattern_length)
 
         port = find_free_port()
-        script = "\n".join(
-            [
-                "set pagination off",
-                "set confirm off",
-                "set remotetimeout 10",
-                f"target remote 127.0.0.1:{port}",
-                (
-                    f'restore "{quote_gdb_path(pattern_path)}" binary '
-                    f"0x{pattern_start:x}"
-                ),
-                f"hbreak *0x{completion_address:x}",
-                "continue",
-                (
-                    f'dump binary memory "{quote_gdb_path(dump_path)}" '
-                    f"0x{pattern_start:x} 0x{stack_top:x}"
-                ),
-                "info registers sp pc lr",
-                "detach",
-                "quit",
-                "",
-            ]
-        )
+        commands = [
+            "set pagination off",
+            "set confirm off",
+            "set remotetimeout 10",
+            f"target remote 127.0.0.1:{port}",
+            "load",
+            (
+                f'restore {quote_gdb_path(pattern_path)} binary '
+                f"0x{pattern_start:x}"
+            ),
+            f"set *(unsigned int*)0xe000ed08 = 0x{args.flash_origin:x}",
+            "set $control = 0",
+            "set $msplim = 0",
+            f"set $msp = *(unsigned int*)0x{args.flash_origin:x}",
+            f"set $sp = *(unsigned int*)0x{args.flash_origin:x}",
+            f"set $pc = (*(unsigned int*)0x{args.flash_origin + 4:x}) & 0xfffffffe",
+            "set $xpsr = 0x01000000",
+            f"hbreak *0x{completion_address:x}",
+            "continue",
+            (
+                f'dump binary memory {quote_gdb_path(dump_path)} '
+                f"0x{pattern_start:x} 0x{stack_top:x}"
+            ),
+        ]
+        if device_trace_address is not None:
+            commands.append(
+                f'dump binary memory {quote_gdb_path(trace_path)} '
+                f"0x{device_trace_address:x} "
+                f"0x{device_trace_address + DEVICE_TRACE_BYTES:x}"
+            )
+        commands.extend(["info registers sp pc lr", "detach", "quit", ""])
+        script = "\n".join(commands)
         gdb_script.write_text(script, encoding="utf-8")
 
         command = [
@@ -321,6 +424,26 @@ def run_probe(args: argparse.Namespace) -> ProbeReport:
                 "stack reached the bottom of the painted region; measurement overflowed"
             )
         final_sp = parse_register(combined_gdb, "sp")
+        device_trace = None
+        device_trace_errors: tuple[str, ...] = ()
+        if device_trace_address is not None and device_trace_symbol is not None:
+            if not trace_path.is_file():
+                raise RuntimeError(
+                    "GDB reached completion but produced no device trace dump"
+                )
+            device_trace = parse_device_trace(
+                trace_path.read_bytes(),
+                device_trace_symbol,
+                device_trace_address,
+            )
+            device_trace_errors = validate_device_trace(
+                device_trace, args.required_device_capabilities
+            )
+        elif args.required_device_capabilities:
+            device_trace_errors = (
+                "required device capabilities were requested without "
+                "a device trace symbol",
+            )
 
     recommended_stack = align_up(
         math.ceil(peak_stack_bytes * (100 + args.stack_margin_percent) / 100)
@@ -328,7 +451,7 @@ def run_probe(args: argparse.Namespace) -> ProbeReport:
         1024,
     )
     headroom = args.stack_limit_bytes - peak_stack_bytes
-    status = "pass" if headroom >= 0 else "fail"
+    status = "pass" if headroom >= 0 and not device_trace_errors else "fail"
 
     return ProbeReport(
         schema=1,
@@ -355,6 +478,8 @@ def run_probe(args: argparse.Namespace) -> ProbeReport:
             "not available from the initial QEMU backend; Firmverse instruction/cycle "
             "accounting or a target DWT counter is required before selecting clock MHz"
         ),
+        device_trace=device_trace,
+        device_trace_errors=device_trace_errors,
         qemu_version=first_line([str(qemu), "--version"]),
         gdb_version=first_line([str(gdb), "--version"]),
     )
@@ -376,27 +501,63 @@ def kib(value: int) -> str:
 
 def render_markdown(report: ProbeReport) -> str:
     result = "PASS" if report.status == "pass" else "FAIL"
-    final_sp = f"`0x{report.final_sp:08x}`" if report.final_sp is not None else "unavailable"
-    return "\n".join(
+    final_sp = (
+        f"`0x{report.final_sp:08x}`"
+        if report.final_sp is not None
+        else "unavailable"
+    )
+    lines = [
+        f"# Firmverse Cortex-M probe — {result}",
+        "",
+        "| Metric | Result |",
+        "| --- | ---: |",
+        f"| Target | `{report.target}` |",
+        f"| Virtual board | `{report.machine}` / `{report.cpu}` |",
+        f"| Linked Flash | {kib(report.flash_bytes)} |",
+        f"| Static RAM | {kib(report.static_ram_bytes)} |",
+        f"| Measured peak stack | **{kib(report.peak_stack_bytes)}** |",
+        f"| Current stack gate | {kib(report.stack_limit_bytes)} |",
+        f"| Stack headroom | {kib(report.stack_headroom_bytes)} |",
+        f"| Recommended stack | {kib(report.recommended_stack_bytes)} |",
+        f"| Final SP | {final_sp} |",
+        f"| Emulator wall time | {report.wall_time_ms} ms |",
+    ]
+    if report.device_trace is not None:
+        trace = report.device_trace
+        lines.extend(
+            [
+                "",
+                "## Virtual device trace",
+                "",
+                "| Device signal | Result |",
+                "| --- | ---: |",
+                f"| ABI | `FVD1` / v{trace.version} / {trace.byte_len} B |",
+                f"| Status | **{trace.status.upper()}** |",
+                f"| Capability mask | `0x{trace.capabilities:08x}` |",
+                f"| Button events | {trace.button_events} |",
+                f"| Display frames | {trace.display_frames} |",
+                f"| Display digest | `0x{trace.display_digest:08x}` |",
+                f"| TRNG bytes | {trace.trng_bytes} |",
+                f"| TRNG digest | `0x{trace.trng_digest:08x}` |",
+                f"| Storage commits | {trace.storage_commits} |",
+                f"| Storage generation | {trace.storage_generation} |",
+                f"| Storage digest | `0x{trace.storage_digest:08x}` |",
+                f"| Secure-element operations | {trace.secure_element_ops} |",
+                f"| Secure-element digest | `0x{trace.secure_element_digest:08x}` |",
+                f"| Failure code | `0x{trace.failure_code:08x}` |",
+            ]
+        )
+    if report.device_trace_errors:
+        lines.extend(["", "## Device gate failures", ""])
+        lines.extend(f"- {error}" for error in report.device_trace_errors)
+    lines.extend(
         [
-            f"# Firmverse Cortex-M probe — {result}",
-            "",
-            "| Metric | Result |",
-            "| --- | ---: |",
-            f"| Target | `{report.target}` |",
-            f"| Virtual board | `{report.machine}` / `{report.cpu}` |",
-            f"| Linked Flash | {kib(report.flash_bytes)} |",
-            f"| Static RAM | {kib(report.static_ram_bytes)} |",
-            f"| Measured peak stack | **{kib(report.peak_stack_bytes)}** |",
-            f"| Current stack gate | {kib(report.stack_limit_bytes)} |",
-            f"| Stack headroom | {kib(report.stack_headroom_bytes)} |",
-            f"| Recommended stack | {kib(report.recommended_stack_bytes)} |",
-            f"| Final SP | {final_sp} |",
-            f"| Emulator wall time | {report.wall_time_ms} ms |",
             "",
             "The stack value is measured by painting the available RAM before reset,",
             "running the real Cortex-M ELF to its completion symbol, and scanning the",
-            "remaining pattern. It includes compiler, crypto and parser stack frames.",
+            "remaining pattern. The optional FVD1 block is read directly from guest RAM",
+            "after completion, so CI can assert virtual buttons, display, entropy, atomic",
+            "storage and secure-element boundary behavior without parsing debug text.",
             "",
             f"Cycle status: {report.cycle_count_status}.",
             "",
@@ -404,6 +565,7 @@ def render_markdown(report: ProbeReport) -> str:
             "",
         ]
     )
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -417,6 +579,10 @@ def main() -> int:
     parser.add_argument("--flash-origin", type=parse_int, default=0x00000000)
     parser.add_argument("--flash-length", type=parse_int, default=1024 * 1024)
     parser.add_argument("--done-symbol", default="firmverse_done")
+    parser.add_argument("--device-trace-symbol", default="")
+    parser.add_argument(
+        "--required-device-capabilities", type=parse_int, default=0
+    )
     parser.add_argument("--stack-limit-bytes", type=parse_int, default=32 * 1024)
     parser.add_argument("--stack-margin-percent", type=int, default=50)
     parser.add_argument("--exception-reserve-bytes", type=parse_int, default=512)
