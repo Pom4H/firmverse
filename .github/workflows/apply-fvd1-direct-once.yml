@@ -110,6 +110,15 @@ jobs:
               raise SystemExit("GDB breakpoint anchor was not found")
           text = text.replace(breakpoint_marker, context_and_breakpoint, 1)
           path.write_text(text, encoding="utf-8")
+
+          workflow = Path(".github/workflows/cortex-m-probe.yml")
+          workflow_text = workflow.read_text(encoding="utf-8")
+          if ".word reset + 1" not in workflow_text:
+              raise SystemExit("Cortex-M fixture reset-vector anchor was not found")
+          workflow.write_text(
+              workflow_text.replace(".word reset + 1", ".word reset", 1),
+              encoding="utf-8",
+          )
           PY
           python3 -m py_compile tools/cortex_m_probe.py
           python3 -m unittest tools/test_cortex_m_probe.py
@@ -137,7 +146,7 @@ jobs:
 
           .section .vector_table,"a",%progbits
           .word 0x20040000
-          .word reset + 1
+          .word reset
           .rept 126
           .word 0
           .endr
