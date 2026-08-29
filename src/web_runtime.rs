@@ -9,6 +9,9 @@ use crate::chip::{format_mac, mac_from_id, Chip};
 use crate::cmd::ChipCmd;
 use crate::controller;
 use crate::controller::saturn::{INPUT_TERMINALS, OUTPUT_TERMINALS};
+use crate::controller::saturn_compiler::{
+    compile_control_ir, parse_control_ir_json, CONTROL_IR_SCHEMA,
+};
 use crate::soc;
 use crate::soc::phy6252::pins;
 use crate::world::World;
@@ -363,6 +366,7 @@ pub fn registry() -> Value {
         "boards": boards,
         "socs": socs,
         "controllers": controllers,
+        "compilerSchemas": { "saturn-plc": CONTROL_IR_SCHEMA },
         "pins": {
             "phy6252": phy6252_pins,
         },
@@ -414,6 +418,42 @@ fn dispatch(raw: &str) -> Result<Value, String> {
     let op = string(&request, "op")?;
     match op {
         "registry" => Ok(json!({ "ok": true, "registry": registry() })),
+        "compileSaturnControlIr" => {
+            let control_ir = request
+                .get("controlIr")
+                .ok_or_else(|| "field controlIr is required".to_string())?;
+            let source = serde_json::to_string(control_ir)
+                .map_err(|error| format!("cannot encode Saturn ControlIR: {error}"))?;
+            let ir = parse_control_ir_json(&source)?;
+            let compiled = compile_control_ir(&ir)?;
+            let listing = compiled
+                .listing
+                .iter()
+                .map(|row| {
+                    json!({
+                        "index": row.index,
+                        "id": row.id,
+                        "type": row.kind,
+                        "inputs": row.inputs,
+                        "params": row.params,
+                        "comment": row.comment,
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(json!({
+                "ok": true,
+                "artifact": {
+                    "format": "fbdbin",
+                    "encoding": "hex",
+                    "data": hex(&compiled.fbdbin),
+                    "bytes": compiled.fbdbin.len(),
+                    "elements": compiled.element_count,
+                    "screens": compiled.screen_count,
+                    "rtl": compiled.required_rtl,
+                },
+                "listing": listing,
+            }))
+        }
         "new" => {
             let world = request
                 .get("world")
@@ -646,5 +686,41 @@ mod tests {
         let response = dispatch(r#"{"op":"registry"}"#).expect("registry rpc");
         assert_eq!(response["ok"], true);
         assert_eq!(response["registry"]["socs"][0]["id"], "phy6252");
+        assert_eq!(
+            response["registry"]["compilerSchemas"]["saturn-plc"],
+            CONTROL_IR_SCHEMA
+        );
+    }
+
+    #[test]
+    fn saturn_compiler_rpc_does_not_require_a_lab() {
+        let request = json!({
+            "op": "compileSaturnControlIr",
+            "controlIr": {
+                "schema": CONTROL_IR_SCHEMA,
+                "project": {
+                    "name": "Browser compiler",
+                    "version": "1",
+                    "buildTime": "2026-08-29"
+                },
+                "elements": [
+                    { "id": "di", "type": "INP_PIN", "params": [1] },
+                    { "id": "do", "type": "OUT_PIN", "inputs": ["di"], "params": [1] }
+                ]
+            }
+        });
+        let response = dispatch(&request.to_string()).expect("compile Saturn ControlIR");
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["artifact"]["format"], "fbdbin");
+        assert_eq!(response["artifact"]["encoding"], "hex");
+        assert_eq!(response["artifact"]["elements"], 2);
+        assert_eq!(response["listing"].as_array().expect("listing").len(), 2);
+        assert!(
+            response["artifact"]["data"]
+                .as_str()
+                .expect("artifact hex")
+                .len()
+                > 8
+        );
     }
 }
