@@ -7,6 +7,8 @@
 use crate::board::{self, require_phy6252, BoardKind};
 use crate::chip::{format_mac, mac_from_id, Chip};
 use crate::cmd::ChipCmd;
+use crate::controller;
+use crate::controller::saturn::{INPUT_TERMINALS, OUTPUT_TERMINALS};
 use crate::soc;
 use crate::soc::phy6252::pins;
 use crate::world::World;
@@ -315,6 +317,43 @@ pub fn registry() -> Value {
             })
         })
         .collect::<Vec<_>>();
+    let controllers = controller::PROFILES
+        .iter()
+        .map(|profile| {
+            json!({
+                "id": profile.id,
+                "name": profile.name,
+                "manufacturer": profile.manufacturer,
+                "runtime": profile.runtime.id(),
+                "artifact": profile.artifact,
+                "nativeExecution": profile.native_execution,
+                "browserExecution": profile.browser_execution,
+                "description": profile.description,
+            })
+        })
+        .collect::<Vec<_>>();
+    let saturn_inputs = INPUT_TERMINALS
+        .iter()
+        .map(|terminal| {
+            json!({
+                "name": terminal.name,
+                "runtimeIndex": terminal.runtime_index,
+                "direction": "input",
+                "kind": format!("{:?}", terminal.kind).to_lowercase(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let saturn_outputs = OUTPUT_TERMINALS
+        .iter()
+        .map(|terminal| {
+            json!({
+                "name": terminal.name,
+                "runtimeIndex": terminal.runtime_index,
+                "direction": "output",
+                "kind": format!("{:?}", terminal.kind).to_lowercase(),
+            })
+        })
+        .collect::<Vec<_>>();
     let worlds = World::list()
         .iter()
         .map(|(id, description)| json!({ "id": id, "description": description }))
@@ -323,8 +362,15 @@ pub fn registry() -> Value {
     json!({
         "boards": boards,
         "socs": socs,
+        "controllers": controllers,
         "pins": {
             "phy6252": phy6252_pins,
+        },
+        "terminals": {
+            "saturn-plc": {
+                "inputs": saturn_inputs,
+                "outputs": saturn_outputs,
+            },
         },
         "worlds": worlds,
     })
