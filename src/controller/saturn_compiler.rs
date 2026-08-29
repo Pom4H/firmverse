@@ -259,7 +259,7 @@ pub fn build_schema(elements: &[ElementSpec], meta: &SchemaMeta) -> Result<Compi
     let mut bytes = Vec::<u8>::new();
 
     for element in elements {
-        bytes.push((element.kind & ELEMENT_MASK) | u8::from(element.invert) * INVERT_FLAG);
+        bytes.push((element.kind & ELEMENT_MASK) | (u8::from(element.invert) * INVERT_FLAG));
     }
     bytes.push(END_MARK);
 
@@ -307,7 +307,7 @@ pub fn build_schema(elements: &[ElementSpec], meta: &SchemaMeta) -> Result<Compi
         bytes.push(0);
     }
 
-    while bytes.len() % 4 != 0 {
+    while !bytes.len().is_multiple_of(4) {
         bytes.push(0);
     }
 
