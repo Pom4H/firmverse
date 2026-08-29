@@ -34,15 +34,11 @@ all = { level = "deny", priority = -1 }
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-encoding_rs = "0.8"
 serde_json = "1"
 # zmu selects the Cortex-M architecture at compile time. The public Action
 # builds the default ARMv6-M profile for PHY6252 and an isolated ARMv7E-M
 # profile for generic hardware probes such as the reference hardware wallet.
 zmu_cortex_m = { path = "third_party/zmu/zmu_cortex_m", default-features = false }
-
-[build-dependencies]
-cc = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 crossterm = "0.29"
