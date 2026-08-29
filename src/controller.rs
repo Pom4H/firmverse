@@ -49,7 +49,7 @@ pub const SATURN_PLC: ControllerProfile = ControllerProfile {
     runtime: ControllerRuntime::FbdV11,
     artifact: ".fbdbin",
     description: "Saturn-PLC managed target executing the upstream FBD runtime v11",
-    native_execution: true,
+    native_execution: cfg!(firmverse_saturn_native),
     browser_execution: false,
 };
 
@@ -70,6 +70,6 @@ mod tests {
         let profile = profile(ControllerKind::SaturnPlc);
         assert_eq!(profile.runtime, ControllerRuntime::FbdV11);
         assert_eq!(profile.artifact, ".fbdbin");
-        assert!(profile.native_execution);
+        assert_eq!(profile.native_execution, saturn::native_runtime_available());
     }
 }
