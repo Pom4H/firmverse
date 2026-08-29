@@ -19,57 +19,20 @@ const OPT_SCHEMA_SIZE: usize = 5;
 const OPT_HINTS_COUNT: usize = 6;
 
 pub const ELEMENT_NAMES: [&str; 41] = [
-    "OUT_PIN",
-    "CONST",
-    "NOT",
-    "AND",
-    "OR",
-    "XOR",
-    "RSTRG",
-    "DTRG",
-    "ADD",
-    "SUB",
-    "MUL",
-    "DIV",
-    "TON",
-    "CMP",
-    "OUT_VAR",
-    "INP_PIN",
-    "INP_VAR",
-    "PID",
-    "SUM",
-    "COUNTER",
-    "MUX",
-    "ABS",
-    "WP",
-    "SP",
-    "TP",
-    "MIN",
-    "MAX",
-    "LIM",
-    "EQ",
-    "BAND",
-    "BOR",
-    "BXOR",
-    "GEN",
-    "INP_MDBS",
-    "OUT_MDBS",
-    "MOD",
-    "MFUN",
-    "EVENT",
-    "LUT",
-    "NLUT",
-    "SUMM",
+    "OUT_PIN", "CONST", "NOT", "AND", "OR", "XOR", "RSTRG", "DTRG", "ADD", "SUB", "MUL", "DIV",
+    "TON", "CMP", "OUT_VAR", "INP_PIN", "INP_VAR", "PID", "SUM", "COUNTER", "MUX", "ABS", "WP",
+    "SP", "TP", "MIN", "MAX", "LIM", "EQ", "BAND", "BOR", "BXOR", "GEN", "INP_MDBS", "OUT_MDBS",
+    "MOD", "MFUN", "EVENT", "LUT", "NLUT", "SUMM",
 ];
 
 const INPUT_COUNTS: [usize; 41] = [
-    1, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0, 4, 3, 3, 5, 1, 1, 0, 2, 2,
-    2, 3, 2, 2, 2, 2, 2, 0, 1, 2, 0, 1, 5, 1, 5,
+    1, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0, 4, 3, 3, 5, 1, 1, 0, 2, 2, 2, 3, 2, 2, 2, 2,
+    2, 0, 1, 2, 0, 1, 5, 1, 5,
 ];
 
 const PARAM_COUNTS: [usize; 41] = [
-    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 0, 0, 0, 0, 0, 1, 5, 0, 0,
-    0, 0, 0, 0, 0, 0, 1, 3, 2, 0, 4, 2, 1, 66, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 0, 0, 0, 0, 0, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 3, 2, 0, 4, 2, 1, 66, 0,
 ];
 
 pub const ELEM_OUT_PIN: u8 = 0;
@@ -287,7 +250,10 @@ pub fn build_schema(elements: &[ElementSpec], meta: &SchemaMeta) -> Result<Compi
     }
 
     let required_rtl = required_rtl_version(
-        &elements.iter().map(|element| element.kind).collect::<Vec<_>>(),
+        &elements
+            .iter()
+            .map(|element| element.kind)
+            .collect::<Vec<_>>(),
         meta.screens.len(),
     );
     let mut bytes = Vec::<u8>::new();
@@ -326,7 +292,9 @@ pub fn build_schema(elements: &[ElementSpec], meta: &SchemaMeta) -> Result<Compi
 
     for element in elements {
         if matches!(element.kind, ELEM_WP | ELEM_SP) {
-            bytes.extend_from_slice(&encode_cp1251(element.caption.as_deref().unwrap_or_default()));
+            bytes.extend_from_slice(&encode_cp1251(
+                element.caption.as_deref().unwrap_or_default(),
+            ));
             bytes.push(0);
         }
     }
@@ -358,7 +326,8 @@ pub fn build_schema(elements: &[ElementSpec], meta: &SchemaMeta) -> Result<Compi
         .len()
         .checked_add(4)
         .ok_or_else(|| "Saturn FBD schema size overflow".to_string())?;
-    let total_size_i32 = i32::try_from(total_size).map_err(|_| "Saturn FBD schema exceeds int32")?;
+    let total_size_i32 =
+        i32::try_from(total_size).map_err(|_| "Saturn FBD schema exceeds int32")?;
     write_i32(
         &mut bytes,
         options_offset + OPT_SCHEMA_SIZE * 4,
@@ -404,7 +373,8 @@ pub fn build_schema(elements: &[ElementSpec], meta: &SchemaMeta) -> Result<Compi
 }
 
 pub fn parse_control_ir_json(source: &str) -> Result<ControlIr, String> {
-    let value: Value = serde_json::from_str(source).map_err(|error| format!("invalid ControlIR JSON: {error}"))?;
+    let value: Value =
+        serde_json::from_str(source).map_err(|error| format!("invalid ControlIR JSON: {error}"))?;
     let root = value
         .as_object()
         .ok_or_else(|| "ControlIR root must be an object".to_string())?;
@@ -439,7 +409,8 @@ pub fn parse_control_ir_json(source: &str) -> Result<ControlIr, String> {
         let kind = if let Some(name) = kind_value.as_str() {
             element_code(name).ok_or_else(|| format!("unknown FBD element type {name:?}"))?
         } else if let Some(code) = kind_value.as_u64() {
-            let code = u8::try_from(code).map_err(|_| format!("invalid FBD element type {code}"))?;
+            let code =
+                u8::try_from(code).map_err(|_| format!("invalid FBD element type {code}"))?;
             element_name(code).ok_or_else(|| format!("unknown FBD element type {code}"))?;
             code
         } else {
@@ -447,9 +418,14 @@ pub fn parse_control_ir_json(source: &str) -> Result<ControlIr, String> {
         };
         let inputs = string_array(object.get("inputs"), &format!("elements[{index}].inputs"))?;
         let params = i32_array(object.get("params"), &format!("elements[{index}].params"))?;
-        let caption = optional_string(object.get("caption"), &format!("elements[{index}].caption"))?;
-        let comment = optional_string(object.get("comment"), &format!("elements[{index}].comment"))?;
-        let invert = object.get("invert").and_then(Value::as_bool).unwrap_or(false);
+        let caption =
+            optional_string(object.get("caption"), &format!("elements[{index}].caption"))?;
+        let comment =
+            optional_string(object.get("comment"), &format!("elements[{index}].comment"))?;
+        let invert = object
+            .get("invert")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         elements.push(ElementSpec {
             id,
             kind,
@@ -483,7 +459,8 @@ pub fn parse_control_ir_json(source: &str) -> Result<ControlIr, String> {
                 .ok_or_else(|| format!("hints[{index}].index must be an unsigned integer"))?;
             let hint_index = u8::try_from(raw_index)
                 .map_err(|_| format!("hints[{index}].index exceeds uint8"))?;
-            let text = required_string(object.get("text"), &format!("hints[{index}].text"))?.to_string();
+            let text =
+                required_string(object.get("text"), &format!("hints[{index}].text"))?.to_string();
             hints.push(IoHint {
                 kind,
                 index: hint_index,
@@ -506,9 +483,10 @@ pub fn parse_control_ir_json(source: &str) -> Result<ControlIr, String> {
                 let raw = value.as_u64().ok_or_else(|| {
                     format!("screens[{index}][{byte_index}] must be an unsigned integer")
                 })?;
-                bytes.push(u8::try_from(raw).map_err(|_| {
-                    format!("screens[{index}][{byte_index}] exceeds uint8")
-                })?);
+                bytes.push(
+                    u8::try_from(raw)
+                        .map_err(|_| format!("screens[{index}][{byte_index}] exceeds uint8"))?,
+                );
             }
             screens.push(bytes);
         }
@@ -658,7 +636,11 @@ mod tests {
                     screens: Vec::new(),
                 },
             );
-            assert!(result.is_ok(), "kind {kind} ({:?}) failed: {result:?}", element_name(kind));
+            assert!(
+                result.is_ok(),
+                "kind {kind} ({:?}) failed: {result:?}",
+                element_name(kind)
+            );
         }
     }
 
@@ -681,7 +663,10 @@ mod tests {
 
     #[test]
     fn cp1251_matches_saturn_strings_and_normalizes_typographic_minus() {
-        assert_eq!(encode_cp1251("Ёё № °"), vec![0xa8, 0xb8, 0x20, 0xb9, 0x20, 0xb0]);
+        assert_eq!(
+            encode_cp1251("Ёё № °"),
+            vec![0xa8, 0xb8, 0x20, 0xb9, 0x20, 0xb0]
+        );
         assert_eq!(encode_cp1251("2.0–3.5"), b"2.0-3.5".to_vec());
     }
 

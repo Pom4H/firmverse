@@ -16,20 +16,18 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let mut args = env::args_os().skip(1);
-    let input = PathBuf::from(
-        args.next()
-            .ok_or_else(|| "usage: saturn-fbd-compile <control-ir.json> <program.fbdbin>".to_string())?,
-    );
-    let output = PathBuf::from(
-        args.next()
-            .ok_or_else(|| "usage: saturn-fbd-compile <control-ir.json> <program.fbdbin>".to_string())?,
-    );
+    let input = PathBuf::from(args.next().ok_or_else(|| {
+        "usage: saturn-fbd-compile <control-ir.json> <program.fbdbin>".to_string()
+    })?);
+    let output = PathBuf::from(args.next().ok_or_else(|| {
+        "usage: saturn-fbd-compile <control-ir.json> <program.fbdbin>".to_string()
+    })?);
     if args.next().is_some() {
         return Err("usage: saturn-fbd-compile <control-ir.json> <program.fbdbin>".into());
     }
 
-    let source = fs::read_to_string(&input)
-        .map_err(|error| format!("{}: {error}", input.display()))?;
+    let source =
+        fs::read_to_string(&input).map_err(|error| format!("{}: {error}", input.display()))?;
     let ir = parse_control_ir_json(&source)?;
     let compiled = compile_control_ir(&ir)?;
     fs::write(&output, &compiled.fbdbin)
