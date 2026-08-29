@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
 use firmverse::ble_host::{self, BleHostOpts};
 use firmverse::board::{profile as board_profile, require_phy6252, BoardKind, PROFILES};
-use firmverse::controller::{self, ControllerKind};
 #[cfg(firmverse_saturn_native)]
 use firmverse::controller::saturn::SaturnPlc;
+use firmverse::controller::{self, ControllerKind};
 use firmverse::cortex_m::{self, ProbeOpts};
 use firmverse::emu::{default_hex, run, RunOpts};
 use firmverse::soc::SocKind;
@@ -268,7 +268,10 @@ fn parse_assignment(spec: &str) -> Result<(&str, i32), String> {
 fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
     let profile = controller::profile(cli.controller);
     if !profile.native_execution {
-        return Err(format!("controller {} has no native runtime in this build", profile.id));
+        return Err(format!(
+            "controller {} has no native runtime in this build",
+            profile.id
+        ));
     }
     let bytes = std::fs::read(&cli.program)
         .map_err(|error| format!("{}: {error}", cli.program.display()))?;
@@ -308,11 +311,20 @@ fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
             plc.info().screen_count,
             u8::from(plc.info().uses_modbus)
         );
-        println!("PROJECT {:?} {:?} {:?}", project.name, project.version, project.build_time);
+        println!(
+            "PROJECT {:?} {:?} {:?}",
+            project.name, project.version, project.build_time
+        );
         for point in plc.setpoints() {
             println!(
                 "SP {} value={} low={} high={} divider={} step={} {:?}",
-                point.index, point.value, point.low, point.high, point.divider, point.step, point.caption
+                point.index,
+                point.value,
+                point.low,
+                point.high,
+                point.divider,
+                point.step,
+                point.caption
             );
         }
         for point in plc.watchpoints() {
@@ -327,7 +339,10 @@ fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
     } else {
         println!("{} · {}", profile.name, profile.runtime.id());
         println!("  program: {}", cli.program.display());
-        println!("  project: {} · {} · {}", project.name, project.version, project.build_time);
+        println!(
+            "  project: {} · {} · {}",
+            project.name, project.version, project.build_time
+        );
         println!(
             "  FBD: {} elements · {} B RAM · RTL {} · {} screens · {} SP · {} WP{}",
             plc.info().element_count,
@@ -336,7 +351,11 @@ fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
             plc.info().screen_count,
             plc.info().setpoint_count,
             plc.info().watchpoint_count,
-            if plc.info().uses_modbus { " · Modbus" } else { "" }
+            if plc.info().uses_modbus {
+                " · Modbus"
+            } else {
+                ""
+            }
         );
         println!("  setpoints:");
         for point in plc.setpoints() {

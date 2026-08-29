@@ -14,12 +14,12 @@ const ELEM_OUT_MDBS: u8 = 34;
 const ELEM_WP: u8 = 22;
 const ELEM_SP: u8 = 23;
 const INPUT_COUNTS: [usize; 41] = [
-    1, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0, 4, 3, 3, 5, 1, 1, 0, 2, 2,
-    2, 3, 2, 2, 2, 2, 2, 0, 1, 2, 0, 1, 5, 1, 5,
+    1, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0, 4, 3, 3, 5, 1, 1, 0, 2, 2, 2, 3, 2, 2, 2, 2,
+    2, 0, 1, 2, 0, 1, 5, 1, 5,
 ];
 const PARAM_COUNTS: [usize; 41] = [
-    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 0, 0, 0, 0, 0, 1, 5, 0, 0,
-    0, 0, 0, 0, 0, 0, 1, 3, 2, 0, 4, 2, 1, 66, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 0, 0, 0, 0, 0, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 3, 2, 0, 4, 2, 1, 66, 0,
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,39 +44,189 @@ pub struct TerminalProfile {
 }
 
 pub const INPUT_TERMINALS: &[TerminalProfile] = &[
-    TerminalProfile { name: "DI1", runtime_index: 1, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI2", runtime_index: 2, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI3", runtime_index: 3, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI4", runtime_index: 4, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI5", runtime_index: 5, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI6", runtime_index: 6, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI7", runtime_index: 7, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI8", runtime_index: 8, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI9", runtime_index: 9, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DI10", runtime_index: 10, direction: TerminalDirection::Input, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "AI1", runtime_index: 11, direction: TerminalDirection::Input, kind: TerminalKind::Analog },
-    TerminalProfile { name: "AI2", runtime_index: 12, direction: TerminalDirection::Input, kind: TerminalKind::Analog },
-    TerminalProfile { name: "T1", runtime_index: 13, direction: TerminalDirection::Input, kind: TerminalKind::Temperature },
-    TerminalProfile { name: "T2", runtime_index: 14, direction: TerminalDirection::Input, kind: TerminalKind::Temperature },
-    TerminalProfile { name: "T3", runtime_index: 15, direction: TerminalDirection::Input, kind: TerminalKind::Temperature },
-    TerminalProfile { name: "T4", runtime_index: 16, direction: TerminalDirection::Input, kind: TerminalKind::Temperature },
-    TerminalProfile { name: "T5", runtime_index: 17, direction: TerminalDirection::Input, kind: TerminalKind::Temperature },
+    TerminalProfile {
+        name: "DI1",
+        runtime_index: 1,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI2",
+        runtime_index: 2,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI3",
+        runtime_index: 3,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI4",
+        runtime_index: 4,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI5",
+        runtime_index: 5,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI6",
+        runtime_index: 6,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI7",
+        runtime_index: 7,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI8",
+        runtime_index: 8,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI9",
+        runtime_index: 9,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DI10",
+        runtime_index: 10,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "AI1",
+        runtime_index: 11,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Analog,
+    },
+    TerminalProfile {
+        name: "AI2",
+        runtime_index: 12,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Analog,
+    },
+    TerminalProfile {
+        name: "T1",
+        runtime_index: 13,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Temperature,
+    },
+    TerminalProfile {
+        name: "T2",
+        runtime_index: 14,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Temperature,
+    },
+    TerminalProfile {
+        name: "T3",
+        runtime_index: 15,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Temperature,
+    },
+    TerminalProfile {
+        name: "T4",
+        runtime_index: 16,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Temperature,
+    },
+    TerminalProfile {
+        name: "T5",
+        runtime_index: 17,
+        direction: TerminalDirection::Input,
+        kind: TerminalKind::Temperature,
+    },
 ];
 
 pub const OUTPUT_TERMINALS: &[TerminalProfile] = &[
-    TerminalProfile { name: "DO1", runtime_index: 1, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO2", runtime_index: 2, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO3", runtime_index: 3, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO4", runtime_index: 4, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO5", runtime_index: 5, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO6", runtime_index: 6, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO7", runtime_index: 7, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO8", runtime_index: 8, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO9", runtime_index: 9, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO10", runtime_index: 10, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "DO11", runtime_index: 11, direction: TerminalDirection::Output, kind: TerminalKind::Discrete },
-    TerminalProfile { name: "AO1", runtime_index: 12, direction: TerminalDirection::Output, kind: TerminalKind::Analog },
-    TerminalProfile { name: "AO2", runtime_index: 13, direction: TerminalDirection::Output, kind: TerminalKind::Analog },
+    TerminalProfile {
+        name: "DO1",
+        runtime_index: 1,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO2",
+        runtime_index: 2,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO3",
+        runtime_index: 3,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO4",
+        runtime_index: 4,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO5",
+        runtime_index: 5,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO6",
+        runtime_index: 6,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO7",
+        runtime_index: 7,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO8",
+        runtime_index: 8,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO9",
+        runtime_index: 9,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO10",
+        runtime_index: 10,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "DO11",
+        runtime_index: 11,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Discrete,
+    },
+    TerminalProfile {
+        name: "AO1",
+        runtime_index: 12,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Analog,
+    },
+    TerminalProfile {
+        name: "AO2",
+        runtime_index: 13,
+        direction: TerminalDirection::Output,
+        kind: TerminalKind::Analog,
+    },
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,7 +281,9 @@ pub fn inspect_fbdbin(bytes: &[u8]) -> Result<FbdbinInfo, String> {
         cursor += 1;
         if raw & 0x80 != 0 {
             if raw != END_MARK {
-                return Err(format!("invalid FBD END_MARK 0x{raw:02x}, expected 0x{END_MARK:02x}"));
+                return Err(format!(
+                    "invalid FBD END_MARK 0x{raw:02x}, expected 0x{END_MARK:02x}"
+                ));
             }
             break;
         }
@@ -400,7 +552,9 @@ impl SaturnPlc {
             .iter()
             .map(|terminal| {
                 // SAFETY: terminal indexes are bounded by the bridge profile.
-                (terminal.name, unsafe { fv_fbd_get_output(terminal.runtime_index) })
+                (terminal.name, unsafe {
+                    fv_fbd_get_output(terminal.runtime_index)
+                })
             })
             .collect()
     }
@@ -411,7 +565,8 @@ impl SaturnPlc {
     }
 
     pub fn step(&mut self, period_ms: u32) -> Result<(), String> {
-        let period = c_int::try_from(period_ms).map_err(|_| "FBD period exceeds int32".to_string())?;
+        let period =
+            c_int::try_from(period_ms).map_err(|_| "FBD period exceeds int32".to_string())?;
         // SAFETY: runtime is initialized and exclusively locked by self.
         unsafe { fv_fbd_step(period) };
         Ok(())
@@ -420,7 +575,9 @@ impl SaturnPlc {
     pub fn setpoints(&self) -> Vec<Setpoint> {
         // SAFETY: runtime is initialized and exclusively locked by self.
         let count = unsafe { fv_fbd_sp_count() }.max(0) as usize;
-        (0..count).filter_map(|index| self.setpoint(index)).collect()
+        (0..count)
+            .filter_map(|index| self.setpoint(index))
+            .collect()
     }
 
     pub fn setpoint(&self, index: usize) -> Option<Setpoint> {
@@ -463,7 +620,9 @@ impl SaturnPlc {
     pub fn watchpoints(&self) -> Vec<Watchpoint> {
         // SAFETY: runtime is initialized and exclusively locked by self.
         let count = unsafe { fv_fbd_wp_count() }.max(0) as usize;
-        (0..count).filter_map(|index| self.watchpoint(index)).collect()
+        (0..count)
+            .filter_map(|index| self.watchpoint(index))
+            .collect()
     }
 
     pub fn watchpoint(&self, index: usize) -> Option<Watchpoint> {
@@ -589,7 +748,10 @@ mod tests {
         assert!(plc.memory_bytes() > 0);
         assert_eq!(plc.project().name, "Saturn test");
         assert_eq!(plc.setpoint(0).map(|point| point.value), Some(50));
-        assert_eq!(plc.io_hint(TerminalDirection::Input, "DI1").unwrap(), "Input DI1");
+        assert_eq!(
+            plc.io_hint(TerminalDirection::Input, "DI1").unwrap(),
+            "Input DI1"
+        );
 
         plc.set_input("DI1", 1).unwrap();
         plc.step(0).unwrap();
