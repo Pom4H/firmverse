@@ -233,6 +233,12 @@ impl BrowserLab {
             "y": node.chip.y,
             "insns": node.chip.insn,
             "stopped": node.chip.stopped(),
+            "power": {
+                "sleeping": node.chip.sleeping(),
+                "sleepEntries": node.chip.sleep_entries(),
+                "wakeCount": node.chip.wake_count(),
+                "lastWakePin": node.chip.last_wake_pin(),
+            },
             "gpio": {
                 "dr": bank.dr,
                 "ddr": bank.ddr,

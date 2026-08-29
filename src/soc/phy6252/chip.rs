@@ -58,6 +58,9 @@ pub struct Chip {
     adc_mv: Rc<RefCell<[u16; ADC_CH_COUNT]>>,
     adc_irq_pending: Rc<Cell<bool>>,
     ext_in: Arc<AtomicU32>,
+    sleep_entries: u32,
+    wake_count: u32,
+    last_wake_pin: Option<u32>,
     pending_rx: VecDeque<Vec<u8>>,
     last_tx_seq: u32,
     uart_line: String,
@@ -180,6 +183,9 @@ impl Chip {
             adc_mv,
             adc_irq_pending,
             ext_in: Arc::new(AtomicU32::new(0)),
+            sleep_entries: 0,
+            wake_count: 0,
+            last_wake_pin: None,
             pending_rx: VecDeque::new(),
             last_tx_seq: 0,
             uart_line: String::new(),
@@ -201,19 +207,51 @@ impl Chip {
         Rc::clone(&self.gpio)
     }
 
+    pub fn sleeping(&self) -> bool {
+        self.processor.sleeping
+    }
+
+    pub fn sleep_entries(&self) -> u32 {
+        self.sleep_entries
+    }
+
+    pub fn wake_count(&self) -> u32 {
+        self.wake_count
+    }
+
+    pub fn last_wake_pin(&self) -> Option<u32> {
+        self.last_wake_pin
+    }
+
+    fn set_external_inputs(&mut self, next: u32) {
+        let next = next & GPIO_PIN_MASK;
+        let current = self.ext_in.load(Ordering::Relaxed);
+        let rising = next & !current;
+        self.ext_in.store(next, Ordering::Relaxed);
+        if rising != 0 && self.processor.sleeping {
+            self.processor.sleeping = false;
+            self.wake_count = self.wake_count.saturating_add(1);
+            self.last_wake_pin = Some(rising.trailing_zeros());
+        }
+    }
+
     pub fn apply(&mut self, cmd: ChipCmd) -> Result<Apply, String> {
         match cmd {
             ChipCmd::Quit => Ok(Apply::Quit),
             ChipCmd::Help => Ok(Apply::Help),
             ChipCmd::In(value) => {
-                self.ext_in.store(value & GPIO_PIN_MASK, Ordering::Relaxed);
+                self.set_external_inputs(value);
                 Ok(Apply::Continue)
             }
             ChipCmd::Pin { bit, high } => {
                 let mask = 1u32 << bit;
-                let cur = self.ext_in.load(Ordering::Relaxed);
-                let next = if high { cur | mask } else { cur & !mask };
-                self.ext_in.store(next & GPIO_PIN_MASK, Ordering::Relaxed);
+                let current = self.ext_in.load(Ordering::Relaxed);
+                let next = if high {
+                    current | mask
+                } else {
+                    current & !mask
+                };
+                self.set_external_inputs(next);
                 Ok(Apply::Continue)
             }
             ChipCmd::Write(bytes) => {
@@ -296,7 +334,13 @@ impl Chip {
             return delta;
         }
         if self.processor.sleeping {
-            self.processor.sleeping = false;
+            self.collect(&mut delta);
+            self.collect_bootrom(&mut delta);
+            if live_clock && !self.bootrom.active() {
+                self.clock_ms = self.clock_ms.wrapping_add(1);
+                let _ = mailbox::set_tick(&mut self.processor, self.clock_ms);
+            }
+            return delta;
         }
         if let Some(pkt) = self.pending_rx.pop_front() {
             if let Err(fault) = mailbox::write_rx(&mut self.processor, &pkt) {
@@ -320,6 +364,10 @@ impl Chip {
             let r3 = self.processor.get_r(Reg::R3);
             self.processor.step();
             self.insn += 1;
+            if self.processor.sleeping {
+                self.sleep_entries = self.sleep_entries.saturating_add(1);
+                break;
+            }
             if self.reset_requested.replace(false) {
                 match self.enter_bootrom_after_system_reset() {
                     Ok(()) => delta
