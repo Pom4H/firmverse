@@ -1,3 +1,6 @@
 [submodule "third_party/zmu"]
 	path = third_party/zmu
 	url = https://github.com/jjkt/zmu.git
+[submodule "third_party/fbd-runtime"]
+	path = third_party/fbd-runtime
+	url = https://github.com/crossrw/fbd-runtime.git
