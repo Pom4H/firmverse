@@ -24,6 +24,18 @@ fn main() {
         return;
     }
 
+    let runtime_header = PathBuf::from("third_party/fbd-runtime/fbdrt.h");
+    if !runtime_header.is_file() {
+        // The public MCU GitHub Action intentionally checks Firmverse out
+        // without recursive submodules and prepares only its CPU backend.
+        // Saturn is therefore a package capability, not a new hard dependency
+        // of every MCU build. A recursive checkout enables the exact runtime.
+        println!(
+            "cargo:warning=Saturn-PLC native runtime disabled: third_party/fbd-runtime is not initialized"
+        );
+        return;
+    }
+
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     let cc = env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let ar = env::var("AR").unwrap_or_else(|_| "ar".to_string());
