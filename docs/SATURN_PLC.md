@@ -93,6 +93,17 @@ Outputs:
 Raw numeric pin indexes are an implementation detail of the package. Studio/project languages
 should refer to symbolic terminals.
 
+## Browser / Studio registry
+
+The existing Browser Lab registry now exposes managed controllers next to boards and SoCs. For
+Saturn-PLC it also publishes the symbolic input/output terminal profile. This lets Studio build
+Run Destination pickers and I/O inspectors from the Rust source of truth instead of maintaining
+a second pin map in JavaScript.
+
+`browserExecution` remains `false` until the exact upstream runtime is packaged as an isolated
+WASM runtime instance. Metadata is available in the browser today; Firmverse does not pretend a
+second FBD interpreter is equivalent to the device runtime.
+
 ## HMI / debugger surface
 
 The runtime bridge already exposes:
