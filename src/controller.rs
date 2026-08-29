@@ -6,6 +6,10 @@
 
 use clap::ValueEnum;
 
+// Browser builds expose the Saturn target metadata and `.fbdbin` inspector, but
+// deliberately do not link the process-global native C runtime yet. Keep the
+// native-only FFI imports inside the module from becoming browser build noise.
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 pub mod saturn;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
