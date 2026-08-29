@@ -4,7 +4,9 @@
 //! v11. Rust owns validation, terminal metadata and the safe frontend API; C owns
 //! FBD execution semantics.
 
+#[cfg(firmverse_saturn_native)]
 use std::ffi::CStr;
+#[cfg(firmverse_saturn_native)]
 use std::os::raw::{c_char, c_int};
 
 const END_MARK: u8 = 0x94;
