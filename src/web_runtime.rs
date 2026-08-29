@@ -113,6 +113,12 @@ impl BrowserLab {
         Ok(())
     }
 
+    pub fn inputs(&mut self, id: &str, mask: u32) -> Result<(), String> {
+        let index = self.node_index(id)?;
+        self.nodes[index].chip.apply(ChipCmd::In(mask))?;
+        Ok(())
+    }
+
     pub fn adc(&mut self, id: &str, values: [u16; 4]) -> Result<(), String> {
         let index = self.node_index(id)?;
         self.nodes[index].chip.apply(ChipCmd::Adc(values))?;
@@ -440,6 +446,15 @@ fn dispatch(raw: &str) -> Result<Value, String> {
                             .and_then(Value::as_bool)
                             .ok_or_else(|| "field high must be boolean".to_string())?,
                     )?;
+                    Ok(json!({ "ok": true, "snapshot": lab.snapshot() }))
+                }
+                "inputs" => {
+                    let mask = request
+                        .get("mask")
+                        .and_then(Value::as_u64)
+                        .filter(|value| *value <= u64::from(u32::MAX))
+                        .ok_or_else(|| "field mask must fit u32".to_string())?;
+                    lab.inputs(string(&request, "id")?, mask as u32)?;
                     Ok(json!({ "ok": true, "snapshot": lab.snapshot() }))
                 }
                 "adc" => {

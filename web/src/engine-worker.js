@@ -140,6 +140,9 @@ self.onmessage = async (event) => {
       case 'pin':
         publishSnapshot(call({ op: 'pin', id: message.id, pin: message.pin, high: Boolean(message.high) }));
         return;
+      case 'inputs':
+        publishSnapshot(call({ op: 'inputs', id: message.id, mask: Number(message.mask ?? 0) >>> 0 }));
+        return;
       case 'adc':
         publishSnapshot(call({ op: 'adc', id: message.id, values: message.values }));
         return;
