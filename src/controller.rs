@@ -7,6 +7,7 @@
 use clap::ValueEnum;
 
 pub mod saturn;
+pub mod saturn_compiler;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub enum ControllerKind {
