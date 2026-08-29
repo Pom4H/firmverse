@@ -57,6 +57,64 @@ fbdInit
   -> fbdDoStep
 ```
 
+## Compiler and ControlIR
+
+Application code, Studio and AI agents must not construct `.fbdbin` bytes directly. Firmverse now
+owns the Saturn FBD v11 compiler in `controller::saturn_compiler`. It is the only layer that needs
+to know about element byte codes, `uint16` graph references, `int32` parameters, CP1251 strings,
+global options, alignment and CRC32.
+
+The compiler input is a versioned machine boundary:
+
+```text
+firmverse/saturn-control-ir@1
+```
+
+The intended stack is therefore:
+
+```text
+engineering model / SPL / another domain language
+  -> Saturn ControlIR
+  -> exact FBD v11 compiler
+  -> .fbdbin
+  -> exact upstream fbd-runtime
+  -> I/O / SP / WP / trace
+```
+
+This is deliberately not a policy that every controller must use the same language. Firmverse
+standardizes the properties of the toolchain and its target boundary; each domain can have the
+language that matches the problem.
+
+A minimal ControlIR example is stored at `examples/saturn-plc/basic.control.json` and can be
+compiled headlessly:
+
+```bash
+cargo run --bin saturn-fbd-compile -- \
+  examples/saturn-plc/basic.control.json \
+  /tmp/basic.fbdbin
+```
+
+The result can immediately be executed by the exact runtime:
+
+```bash
+cargo run --bin firmverse -- plc /tmp/basic.fbdbin \
+  --input DI1=1 \
+  --raw
+```
+
+The compiler emits an audit listing in addition to the binary artifact. Its tests also build a
+valid schema for every one of the 41 FBD v11 element types and cross-check the result with the
+independent runtime-side `.fbdbin` inspector. With the native Saturn package enabled, a generated
+artifact is loaded and executed through the upstream C runtime as a regression test.
+
+`ControlIR` is intentionally lower-level than the final human-facing Saturn language. The next
+compiler layer should translate engineering concepts such as pump interlocks, limits, delays,
+alarms and equipment roles into ControlIR. That layer may be SPL or another purpose-built DSL;
+it should never need to know the `.fbdbin` byte layout.
+
+HMI `screens` in ControlIR v1 are exact encoded `tScreen` records. A separate HMI DSL/compiler
+should own their structure instead of spreading the binary HMI layout through Studio code.
+
 ## CLI
 
 List managed targets:
@@ -147,6 +205,8 @@ The next layer should expose the same target through the Studio runtime API:
 
 ```text
 Target: Saturn-PLC
+Source: engineering model / SPL
+IR: firmverse/saturn-control-ir@1
 Artifact: .fbdbin
 Run Destination: Simulator / real PLC
 Inspectors: I/O / SP / WP / HMI / trace
