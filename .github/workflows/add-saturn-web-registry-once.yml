@@ -1,0 +1,36 @@
+name: Add Saturn Browser registry once
+
+on:
+  push:
+    branches: [feat/saturn-plc]
+    paths:
+      - .github/workflows/add-saturn-web-registry-once.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/saturn-plc
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Add controller registry metadata
+        run: |
+          python3 tools/add_saturn_web_registry_once.py
+          cargo fmt --all
+      - name: Commit registry and remove one-shot files
+        run: |
+          rm .github/workflows/add-saturn-web-registry-once.yml tools/add_saturn_web_registry_once.py
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Expose Saturn PLC in Browser registry"
+          git push origin HEAD:feat/saturn-plc
