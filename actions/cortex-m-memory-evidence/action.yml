@@ -1,0 +1,118 @@
+name: Firmverse Cortex-M memory evidence
+description: Capture RAM/Flash at deterministic data-lifetime checkpoints and scan a public canary
+
+inputs:
+  elf:
+    description: Path to linked Cortex-M ELF
+    required: true
+  machine:
+    description: QEMU Cortex-M board
+    required: false
+    default: mps2-an505
+  cpu:
+    description: QEMU CPU model
+    required: false
+    default: cortex-m33
+  ram-origin:
+    required: false
+    default: "0x38000000"
+  ram-length:
+    required: false
+    default: "262144"
+  flash-origin:
+    required: false
+    default: "0x10000000"
+  flash-length:
+    required: false
+    default: "1048576"
+  live-symbol:
+    description: Non-inlined firmware checkpoint reached while the public canary-backed data is live
+    required: true
+  done-symbol:
+    required: false
+    default: firmverse_done
+  canary-hex:
+    description: Public deterministic test pattern to search for
+    required: true
+  output-dir:
+    required: false
+    default: reports/memory-evidence
+  timeout-seconds:
+    required: false
+    default: "120"
+
+outputs:
+  report-json:
+    value: ${{ steps.probe.outputs.report-json }}
+  report-markdown:
+    value: ${{ steps.probe.outputs.report-markdown }}
+  live-present:
+    value: ${{ steps.probe.outputs.live-present }}
+  after-present:
+    value: ${{ steps.probe.outputs.after-present }}
+  live-ram-matches:
+    value: ${{ steps.probe.outputs.live-ram-matches }}
+  after-ram-matches:
+    value: ${{ steps.probe.outputs.after-ram-matches }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Cortex-M debug backend
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends qemu-system-arm gdb-multiarch
+
+    - name: Capture memory evidence
+      id: probe
+      shell: bash
+      env:
+        INPUT_ELF: ${{ inputs.elf }}
+        INPUT_MACHINE: ${{ inputs.machine }}
+        INPUT_CPU: ${{ inputs.cpu }}
+        INPUT_RAM_ORIGIN: ${{ inputs.ram-origin }}
+        INPUT_RAM_LENGTH: ${{ inputs.ram-length }}
+        INPUT_FLASH_ORIGIN: ${{ inputs.flash-origin }}
+        INPUT_FLASH_LENGTH: ${{ inputs.flash-length }}
+        INPUT_LIVE_SYMBOL: ${{ inputs.live-symbol }}
+        INPUT_DONE_SYMBOL: ${{ inputs.done-symbol }}
+        INPUT_CANARY: ${{ inputs.canary-hex }}
+        INPUT_OUTPUT: ${{ inputs.output-dir }}
+        INPUT_TIMEOUT: ${{ inputs.timeout-seconds }}
+      run: |
+        set -euo pipefail
+        host="$(rustc -vV | sed -n 's/^host: //p')"
+        llvm_root="$(rustc --print sysroot)/lib/rustlib/${host}/bin"
+        script="$GITHUB_ACTION_PATH/../../tools/cortex_m_memory_evidence.py"
+        python3 "$script" \
+          --elf "$INPUT_ELF" \
+          --machine "$INPUT_MACHINE" \
+          --cpu "$INPUT_CPU" \
+          --ram-origin "$INPUT_RAM_ORIGIN" \
+          --ram-length "$INPUT_RAM_LENGTH" \
+          --flash-origin "$INPUT_FLASH_ORIGIN" \
+          --flash-length "$INPUT_FLASH_LENGTH" \
+          --live-symbol "$INPUT_LIVE_SYMBOL" \
+          --done-symbol "$INPUT_DONE_SYMBOL" \
+          --canary-hex "$INPUT_CANARY" \
+          --timeout-seconds "$INPUT_TIMEOUT" \
+          --output-dir "$INPUT_OUTPUT" \
+          --llvm-nm "$llvm_root/llvm-nm"
+
+        report="$INPUT_OUTPUT/memory-evidence.json"
+        markdown="$INPUT_OUTPUT/memory-evidence.md"
+        python3 - "$report" "$GITHUB_OUTPUT" <<'PY'
+        import json
+        import sys
+        report = json.load(open(sys.argv[1], encoding='utf-8'))
+        with open(sys.argv[2], 'a', encoding='utf-8') as out:
+            out.write(f"report-json={sys.argv[1]}\n")
+            out.write(f"report-markdown={sys.argv[1].removesuffix('memory-evidence.json')}memory-evidence.md\n")
+            out.write(f"live-present={str(report['live_present']).lower()}\n")
+            out.write(f"after-present={str(report['after_present']).lower()}\n")
+            out.write(f"live-ram-matches={len(report['live_ram_matches'])}\n")
+            out.write(f"after-ram-matches={len(report['after_ram_matches'])}\n")
+        PY
+        cat "$markdown" >> "$GITHUB_STEP_SUMMARY"
