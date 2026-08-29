@@ -693,7 +693,7 @@ mod tests {
             push_i32(&mut bytes, option);
         }
 
-        bytes.extend_from_slice(b"RUN\0SP\0Saturn test\0v1\02026-08-29\0");
+        bytes.extend_from_slice(b"RUN\0SP\0Saturn test\0v1\x002026-08-29\0");
         while bytes.len() % 4 != 0 {
             bytes.push(0);
         }
@@ -727,7 +727,11 @@ mod tests {
     #[test]
     fn rejects_size_or_crc_drift() {
         let mut program = test_program();
-        program[1] ^= 1;
+        let marker = program
+            .windows(b"Saturn test".len())
+            .position(|window| window == b"Saturn test")
+            .expect("project caption");
+        program[marker] ^= 1;
         assert!(inspect_fbdbin(&program).unwrap_err().contains("CRC32"));
     }
 
