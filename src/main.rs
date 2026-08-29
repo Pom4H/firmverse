@@ -250,6 +250,7 @@ fn run_generic_cortex_m4(cli: Cli) -> Result<ExitCode, String> {
     })
 }
 
+#[cfg(firmverse_saturn_native)]
 fn parse_assignment(spec: &str) -> Result<(&str, i32), String> {
     let (name, raw) = spec
         .split_once('=')
