@@ -33,147 +33,121 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           path = Path('src/soc/phy6252/chip.rs')
           source = path.read_text()
 
-          source = source.replace(
-              '    ext_in: Arc<AtomicU32>,\n    pending_rx: VecDeque<Vec<u8>>,\n',
-              '    ext_in: Arc<AtomicU32>,\n    sleep_entries: u32,\n    wake_count: u32,\n    last_wake_pin: Option<u32>,\n    pending_rx: VecDeque<Vec<u8>>,\n',
-              1,
+          source, count = re.subn(
+              r'(\n\s*ext_in: Arc<AtomicU32>,\n)',
+              r'\1    sleep_entries: u32,\n    wake_count: u32,\n    last_wake_pin: Option<u32>,\n',
+              source,
+              count=1,
           )
-          source = source.replace(
-              '            ext_in: Arc::new(AtomicU32::new(0)),\n            pending_rx: VecDeque::new(),\n',
-              '            ext_in: Arc::new(AtomicU32::new(0)),\n            sleep_entries: 0,\n            wake_count: 0,\n            last_wake_pin: None,\n            pending_rx: VecDeque::new(),\n',
-              1,
+          assert count == 1, count
+          source, count = re.subn(
+              r'(\n\s*ext_in: Arc::new\(AtomicU32::new\(0\)\),\n)',
+              r'\1            sleep_entries: 0,\n            wake_count: 0,\n            last_wake_pin: None,\n',
+              source,
+              count=1,
           )
+          assert count == 1, count
 
-          anchor = '''    pub fn gpio_bank(&self) -> Rc<RefCell<GpioBank>> {
-              Rc::clone(&self.gpio)
-          }
+          method_pattern = r'(    pub fn gpio_bank\(&self\) -> Rc<RefCell<GpioBank>> \{\n        Rc::clone\(&self\.gpio\)\n    \}\n)'
+          methods = r'''\1
+    pub fn sleeping(&self) -> bool {
+        self.processor.sleeping
+    }
 
-          '''
-          addition = '''    pub fn gpio_bank(&self) -> Rc<RefCell<GpioBank>> {
-              Rc::clone(&self.gpio)
-          }
+    pub fn sleep_entries(&self) -> u32 {
+        self.sleep_entries
+    }
 
-          pub fn sleeping(&self) -> bool {
-              self.processor.sleeping
-          }
+    pub fn wake_count(&self) -> u32 {
+        self.wake_count
+    }
 
-          pub fn sleep_entries(&self) -> u32 {
-              self.sleep_entries
-          }
+    pub fn last_wake_pin(&self) -> Option<u32> {
+        self.last_wake_pin
+    }
 
-          pub fn wake_count(&self) -> u32 {
-              self.wake_count
-          }
+    fn set_external_inputs(&mut self, next: u32) {
+        let next = next & GPIO_PIN_MASK;
+        let current = self.ext_in.load(Ordering::Relaxed);
+        let rising = next & !current;
+        self.ext_in.store(next, Ordering::Relaxed);
+        if rising != 0 && self.processor.sleeping {
+            self.processor.sleeping = false;
+            self.wake_count = self.wake_count.saturating_add(1);
+            self.last_wake_pin = Some(rising.trailing_zeros());
+        }
+    }
+'''
+          source, count = re.subn(method_pattern, methods, source, count=1)
+          assert count == 1, count
 
-          pub fn last_wake_pin(&self) -> Option<u32> {
-              self.last_wake_pin
-          }
+          command_pattern = re.compile(
+              r'            ChipCmd::In\(value\) => \{.*?            ChipCmd::Write\(bytes\) => \{',
+              re.S,
+          )
+          commands = '''            ChipCmd::In(value) => {
+                self.set_external_inputs(value);
+                Ok(Apply::Continue)
+            }
+            ChipCmd::Pin { bit, high } => {
+                let mask = 1u32 << bit;
+                let current = self.ext_in.load(Ordering::Relaxed);
+                let next = if high { current | mask } else { current & !mask };
+                self.set_external_inputs(next);
+                Ok(Apply::Continue)
+            }
+            ChipCmd::Write(bytes) => {'''
+          source, count = command_pattern.subn(commands, source, count=1)
+          assert count == 1, count
 
-          fn set_external_inputs(&mut self, next: u32) {
-              let next = next & GPIO_PIN_MASK;
-              let current = self.ext_in.load(Ordering::Relaxed);
-              let rising = next & !current;
-              self.ext_in.store(next, Ordering::Relaxed);
-              if rising != 0 && self.processor.sleeping {
-                  self.processor.sleeping = false;
-                  self.wake_count = self.wake_count.saturating_add(1);
-                  self.last_wake_pin = Some(rising.trailing_zeros());
-              }
-          }
-
-          '''
-          if anchor not in source:
-              raise SystemExit('gpio_bank anchor changed')
-          source = source.replace(anchor, addition, 1)
-
-          old_commands = '''            ChipCmd::In(value) => {
-                  self.ext_in.store(value & GPIO_PIN_MASK, Ordering::Relaxed);
-                  Ok(Apply::Continue)
-              }
-              ChipCmd::Pin { bit, high } => {
-                  let mask = 1u32 << bit;
-                  let cur = self.ext_in.load(Ordering::Relaxed);
-                  let next = if high { cur | mask } else { cur & !mask };
-                  self.ext_in.store(next & GPIO_PIN_MASK, Ordering::Relaxed);
-                  Ok(Apply::Continue)
-              }
-          '''
-          new_commands = '''            ChipCmd::In(value) => {
-                  self.set_external_inputs(value);
-                  Ok(Apply::Continue)
-              }
-              ChipCmd::Pin { bit, high } => {
-                  let mask = 1u32 << bit;
-                  let current = self.ext_in.load(Ordering::Relaxed);
-                  let next = if high { current | mask } else { current & !mask };
-                  self.set_external_inputs(next);
-                  Ok(Apply::Continue)
-              }
-          '''
-          if old_commands not in source:
-              raise SystemExit('external input command anchor changed')
-          source = source.replace(old_commands, new_commands, 1)
-
-          old_sleep = '''        if self.processor.sleeping {
-              self.processor.sleeping = false;
-          }
-          '''
+          old_sleep = '        if self.processor.sleeping {\n            self.processor.sleeping = false;\n        }\n'
           new_sleep = '''        if self.processor.sleeping {
-              self.collect(&mut delta);
-              self.collect_bootrom(&mut delta);
-              if live_clock && !self.bootrom.active() {
-                  self.clock_ms = self.clock_ms.wrapping_add(1);
-                  let _ = mailbox::set_tick(&mut self.processor, self.clock_ms);
-              }
-              return delta;
-          }
-          '''
-          if old_sleep not in source:
-              raise SystemExit('legacy unconditional wake anchor changed')
+            self.collect(&mut delta);
+            self.collect_bootrom(&mut delta);
+            if live_clock && !self.bootrom.active() {
+                self.clock_ms = self.clock_ms.wrapping_add(1);
+                let _ = mailbox::set_tick(&mut self.processor, self.clock_ms);
+            }
+            return delta;
+        }
+'''
+          assert old_sleep in source
           source = source.replace(old_sleep, new_sleep, 1)
 
-          step_anchor = '''            self.processor.step();
-              self.insn += 1;
-              if self.reset_requested.replace(false) {
-          '''
-          step_replacement = '''            self.processor.step();
-              self.insn += 1;
-              if self.processor.sleeping {
-                  self.sleep_entries = self.sleep_entries.saturating_add(1);
-                  break;
-              }
-              if self.reset_requested.replace(false) {
-          '''
-          if step_anchor not in source:
-              raise SystemExit('processor step anchor changed')
-          source = source.replace(step_anchor, step_replacement, 1)
-
+          old_step = '            self.processor.step();\n            self.insn += 1;\n            if self.reset_requested.replace(false) {\n'
+          new_step = '''            self.processor.step();
+            self.insn += 1;
+            if self.processor.sleeping {
+                self.sleep_entries = self.sleep_entries.saturating_add(1);
+                break;
+            }
+            if self.reset_requested.replace(false) {
+'''
+          assert old_step in source
+          source = source.replace(old_step, new_step, 1)
           path.write_text(source)
 
           path = Path('src/web_runtime.rs')
           source = path.read_text()
-          anchor = '''            "insns": node.chip.insn,
-              "stopped": node.chip.stopped(),
-              "gpio": {
-          '''
-          replacement = '''            "insns": node.chip.insn,
-              "stopped": node.chip.stopped(),
-              "power": {
-                  "sleeping": node.chip.sleeping(),
-                  "sleepEntries": node.chip.sleep_entries(),
-                  "wakeCount": node.chip.wake_count(),
-                  "lastWakePin": node.chip.last_wake_pin(),
-              },
-              "gpio": {
-          '''
-          if anchor not in source:
-              raise SystemExit('browser snapshot anchor changed')
-          path.write_text(source.replace(anchor, replacement, 1))
+          old_snapshot = '            "insns": node.chip.insn,\n            "stopped": node.chip.stopped(),\n            "gpio": {\n'
+          new_snapshot = '''            "insns": node.chip.insn,
+            "stopped": node.chip.stopped(),
+            "power": {
+                "sleeping": node.chip.sleeping(),
+                "sleepEntries": node.chip.sleep_entries(),
+                "wakeCount": node.chip.wake_count(),
+                "lastWakePin": node.chip.last_wake_pin(),
+            },
+            "gpio": {
+'''
+          assert old_snapshot in source
+          path.write_text(source.replace(old_snapshot, new_snapshot, 1))
           PY
 
       - name: Verify native and browser runtimes
