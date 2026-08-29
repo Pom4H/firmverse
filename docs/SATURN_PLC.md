@@ -21,6 +21,19 @@ For Saturn-PLC the program artifact is `.fbdbin` and the runtime is the exact up
 [`crossrw/fbd-runtime`](https://github.com/crossrw/fbd-runtime) v11 pinned in
 `third_party/fbd-runtime`.
 
+## Runtime package
+
+Clone recursively when Saturn execution is needed:
+
+```bash
+git clone --recurse-submodules https://github.com/Pom4H/firmverse.git
+```
+
+The FBD runtime is an optional target package rather than a dependency of every Firmverse build.
+Existing MCU-only consumers (including the public GitHub Action, which prepares only its pinned
+CPU backend) continue to build without the Saturn submodule and report `nativeExecution=false`
+for Saturn-PLC. A recursive checkout enables exact native Saturn execution.
+
 ## Why the exact runtime
 
 Firmverse must not maintain a second interpretation of FBD semantics. A program that passes in
