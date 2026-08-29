@@ -35,6 +35,29 @@ assert.ok(registry.boards.some((board) => board.id === 'pb03f-kit' && board.soc 
 assert.ok(registry.socs.some((soc) => soc.id === 'phy6252' && soc.implemented));
 assert.ok(registry.worlds.some((world) => world.id === 'mesh'));
 assert.ok(registry.pins.phy6252.some((pin) => pin.label === 'P15' && pin.adcChannel === 1));
+assert.equal(registry.compilerSchemas['saturn-plc'], 'firmverse/saturn-control-ir@1');
+
+const saturnArtifact = call({
+  op: 'compileSaturnControlIr',
+  controlIr: {
+    schema: 'firmverse/saturn-control-ir@1',
+    project: {
+      name: 'WASM compiler smoke',
+      version: '1',
+      buildTime: '2026-08-29',
+    },
+    elements: [
+      { id: 'di', type: 'INP_PIN', params: [1] },
+      { id: 'do', type: 'OUT_PIN', inputs: ['di'], params: [1] },
+    ],
+  },
+});
+assert.equal(saturnArtifact.artifact.format, 'fbdbin');
+assert.equal(saturnArtifact.artifact.encoding, 'hex');
+assert.equal(saturnArtifact.artifact.elements, 2);
+assert.equal(saturnArtifact.listing.length, 2);
+assert.match(saturnArtifact.artifact.data, /^[0-9A-F]+$/);
+assert.equal(saturnArtifact.artifact.data.length, saturnArtifact.artifact.bytes * 2);
 
 call({ op: 'new', world: 'mesh', looping: true, strict: true, maxInsns: 10000 });
 
@@ -82,4 +105,6 @@ call({ op: 'moveNode', id: 'web1', x: 80, y: 0 });
 result = call({ op: 'tick', ticks: 1, burst: 4 });
 assert.ok(!result.snapshot.nodes.find((node) => node.id === 'web0').heard.some((heard) => heard.nodeId === 'web1'));
 
-console.log(`Firmverse WASM smoke OK: ${bytes.length} bytes, zmu + two-node World executed`);
+console.log(
+  `Firmverse WASM smoke OK: ${bytes.length} bytes, Saturn compiler + zmu + two-node World executed`,
+);
