@@ -1,0 +1,58 @@
+{
+  "schema": "firmverse/saturn-control-ir@1",
+  "project": {
+    "name": "Firmverse Saturn-PLC example",
+    "version": "1",
+    "buildTime": "2026-08-29"
+  },
+  "elements": [
+    {
+      "id": "di1",
+      "type": "INP_PIN",
+      "params": [1],
+      "comment": "Read DI1"
+    },
+    {
+      "id": "one",
+      "type": "CONST",
+      "params": [1]
+    },
+    {
+      "id": "enabled",
+      "type": "AND",
+      "inputs": ["di1", "one"]
+    },
+    {
+      "id": "do1",
+      "type": "OUT_PIN",
+      "inputs": ["enabled"],
+      "params": [1],
+      "comment": "Drive DO1"
+    },
+    {
+      "id": "state",
+      "type": "WP",
+      "inputs": ["enabled"],
+      "params": [0],
+      "caption": "Состояние"
+    },
+    {
+      "id": "setpoint",
+      "type": "SP",
+      "params": [0, 100, 50, 0, 1],
+      "caption": "Уставка"
+    }
+  ],
+  "hints": [
+    {
+      "type": "input",
+      "index": 1,
+      "text": "Вход DI1"
+    },
+    {
+      "type": "output",
+      "index": 1,
+      "text": "Выход DO1"
+    }
+  ]
+}

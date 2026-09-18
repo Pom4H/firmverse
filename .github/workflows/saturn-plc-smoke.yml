@@ -1,0 +1,52 @@
+name: saturn-plc-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  control-ir-to-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile ControlIR to exact Saturn artifact
+        run: |
+          cargo run --quiet --locked --bin saturn-fbd-compile -- \
+            examples/saturn-plc/basic.control.json \
+            /tmp/basic.fbdbin \
+            | tee /tmp/compiler.log
+          grep -q '^COMPILED .* elements=6 screens=0 rtl=7$' /tmp/compiler.log
+          test -s /tmp/basic.fbdbin
+      - name: Execute generated artifact in upstream FBD runtime
+        run: |
+          cargo run --quiet --locked --bin firmverse -- \
+            plc /tmp/basic.fbdbin \
+            --input DI1=1 \
+            --raw \
+            | tee /tmp/runtime.log
+          grep -q '^READY$' /tmp/runtime.log
+          grep -q '^CONTROLLER saturn-plc runtime=fbd-runtime-v11 artifact=.fbdbin$' /tmp/runtime.log
+          grep -q '^WP 0 value=1 ' /tmp/runtime.log
+          grep -q '^OUT DO1 1$' /tmp/runtime.log
+      - name: Reject corrupted artifact
+        run: |
+          cp /tmp/basic.fbdbin /tmp/corrupt.fbdbin
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/corrupt.fbdbin')
+          data = bytearray(path.read_bytes())
+          data[-5] ^= 1
+          path.write_bytes(data)
+          PY
+          if cargo run --quiet --locked --bin firmverse -- plc /tmp/corrupt.fbdbin --raw 2>/tmp/corrupt.err; then
+            echo 'corrupt Saturn artifact was accepted'
+            exit 1
+          fi
+          grep -q 'CRC32 mismatch' /tmp/corrupt.err

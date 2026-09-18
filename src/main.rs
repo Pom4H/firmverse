@@ -1,6 +1,9 @@
 use clap::{Parser, Subcommand};
 use firmverse::ble_host::{self, BleHostOpts};
 use firmverse::board::{profile as board_profile, require_phy6252, BoardKind, PROFILES};
+#[cfg(firmverse_saturn_native)]
+use firmverse::controller::saturn::SaturnPlc;
+use firmverse::controller::{self, ControllerKind};
 use firmverse::cortex_m::{self, ProbeOpts};
 use firmverse::emu::{default_hex, run, RunOpts};
 use firmverse::soc::SocKind;
@@ -17,8 +20,8 @@ const DEFAULT_BLE_TX: &str = "6B1D0003-7C8E-4A91-9F2B-E3A14C5B0001";
 #[command(
     name = "firmverse",
     version,
-    about = "Virtual embedded systems lab for real firmware, SoCs, boards and multi-node worlds",
-    after_help = "Live REPL is the default for PHY6252. Generic Cortex-M probe boards require --once. `firmverse sim` runs PHY6252 nodes in a shared World.",
+    about = "Virtual embedded systems lab for real firmware and managed controllers",
+    after_help = "MCU targets execute CPU -> SoC -> Board -> World. Managed targets such as Saturn-PLC execute their exact program runtime through `firmverse plc`.",
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
 )]
@@ -65,12 +68,43 @@ struct Cli {
 enum Command {
     /// Shared World with one or more PHY6252 firmware nodes
     Sim(SimCli),
+    /// Execute a managed PLC artifact in its native runtime
+    Plc(PlcCli),
     /// List built-in Worlds
     Worlds,
     /// List board profiles and the SoC each one requires
     Boards,
     /// List SoC models and CPU backends
     Socs,
+    /// List managed controller targets
+    Controllers,
+}
+
+#[derive(Parser)]
+struct PlcCli {
+    /// Controller program artifact, e.g. Saturn `.fbdbin`
+    program: PathBuf,
+    /// Managed controller target
+    #[arg(long, value_enum, default_value_t = ControllerKind::SaturnPlc)]
+    controller: ControllerKind,
+    /// Input assignment, e.g. AI1=450 or DI1=1 (repeat)
+    #[arg(long = "input", value_name = "TERMINAL=VALUE")]
+    inputs: Vec<String>,
+    /// Setpoint assignment by HMI index, e.g. 0=450 (repeat)
+    #[arg(long = "setpoint", value_name = "INDEX=VALUE")]
+    setpoints: Vec<String>,
+    /// Runtime cycle period in milliseconds
+    #[arg(long, default_value_t = 10)]
+    period_ms: u32,
+    /// Number of timed cycles after the initial zero-time evaluation
+    #[arg(long, default_value_t = 1)]
+    steps: u32,
+    /// Keep emulated NVRAM when reloading inside the same process
+    #[arg(long)]
+    preserve_nvram: bool,
+    /// Machine-readable line protocol
+    #[arg(long)]
+    raw: bool,
 }
 
 #[derive(Parser)]
@@ -133,6 +167,11 @@ fn run_cli() -> Result<ExitCode, String> {
             print_socs();
             return Ok(ExitCode::SUCCESS);
         }
+        Some(Command::Controllers) => {
+            print_controllers();
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(Command::Plc(plc_cli)) => return run_plc(plc_cli),
         Some(Command::Sim(sim_cli)) => return run_sim(sim_cli),
         None => {}
     }
@@ -211,6 +250,143 @@ fn run_generic_cortex_m4(cli: Cli) -> Result<ExitCode, String> {
     })
 }
 
+#[cfg(firmverse_saturn_native)]
+fn parse_assignment(spec: &str) -> Result<(&str, i32), String> {
+    let (name, raw) = spec
+        .split_once('=')
+        .ok_or_else(|| format!("expected NAME=VALUE, got {spec:?}"))?;
+    if name.trim().is_empty() {
+        return Err("assignment name must not be empty".into());
+    }
+    let value = raw
+        .trim()
+        .parse::<i32>()
+        .map_err(|error| format!("invalid value in {spec:?}: {error}"))?;
+    Ok((name.trim(), value))
+}
+
+#[cfg(firmverse_saturn_native)]
+fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
+    let profile = controller::profile(cli.controller);
+    if !profile.native_execution {
+        return Err(format!(
+            "controller {} has no native runtime in this build",
+            profile.id
+        ));
+    }
+    let bytes = std::fs::read(&cli.program)
+        .map_err(|error| format!("{}: {error}", cli.program.display()))?;
+    let mut plc = SaturnPlc::load(&bytes, !cli.preserve_nvram)?;
+
+    for assignment in &cli.inputs {
+        let (terminal, value) = parse_assignment(assignment)?;
+        plc.set_input(terminal, value)?;
+    }
+    for assignment in &cli.setpoints {
+        let (index, value) = parse_assignment(assignment)?;
+        let index = index
+            .parse::<usize>()
+            .map_err(|error| format!("invalid setpoint index {index:?}: {error}"))?;
+        plc.set_setpoint(index, value)?;
+    }
+
+    plc.step(0)?;
+    for _ in 0..cli.steps {
+        plc.step(cli.period_ms)?;
+    }
+
+    let project = plc.project();
+    if cli.raw {
+        println!("READY");
+        println!(
+            "CONTROLLER {} runtime={} artifact={}",
+            profile.id,
+            profile.runtime.id(),
+            profile.artifact
+        );
+        println!(
+            "PROGRAM elements={} ram={} rtl={} screens={} modbus={}",
+            plc.info().element_count,
+            plc.memory_bytes(),
+            plc.info().required_rtl,
+            plc.info().screen_count,
+            u8::from(plc.info().uses_modbus)
+        );
+        println!(
+            "PROJECT {:?} {:?} {:?}",
+            project.name, project.version, project.build_time
+        );
+        for point in plc.setpoints() {
+            println!(
+                "SP {} value={} low={} high={} divider={} step={} {:?}",
+                point.index,
+                point.value,
+                point.low,
+                point.high,
+                point.divider,
+                point.step,
+                point.caption
+            );
+        }
+        for point in plc.watchpoints() {
+            println!(
+                "WP {} value={} divider={} {:?}",
+                point.index, point.value, point.divider, point.caption
+            );
+        }
+        for (terminal, value) in plc.outputs() {
+            println!("OUT {terminal} {value}");
+        }
+    } else {
+        println!("{} · {}", profile.name, profile.runtime.id());
+        println!("  program: {}", cli.program.display());
+        println!(
+            "  project: {} · {} · {}",
+            project.name, project.version, project.build_time
+        );
+        println!(
+            "  FBD: {} elements · {} B RAM · RTL {} · {} screens · {} SP · {} WP{}",
+            plc.info().element_count,
+            plc.memory_bytes(),
+            plc.info().required_rtl,
+            plc.info().screen_count,
+            plc.info().setpoint_count,
+            plc.info().watchpoint_count,
+            if plc.info().uses_modbus {
+                " · Modbus"
+            } else {
+                ""
+            }
+        );
+        println!("  setpoints:");
+        for point in plc.setpoints() {
+            println!(
+                "    [{}] {} = {} ({}..{}, step {})",
+                point.index, point.caption, point.value, point.low, point.high, point.step
+            );
+        }
+        println!("  watchpoints:");
+        for point in plc.watchpoints() {
+            println!("    [{}] {} = {}", point.index, point.caption, point.value);
+        }
+        println!("  outputs:");
+        for (terminal, value) in plc.outputs() {
+            println!("    {terminal:<4} {value}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(not(firmverse_saturn_native))]
+fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
+    let profile = controller::profile(cli.controller);
+    Err(format!(
+        "controller {} uses {} but native execution is unavailable in this build",
+        profile.id,
+        profile.runtime.id()
+    ))
+}
+
 fn print_boards() {
     for board in PROFILES {
         let soc = soc::profile(board.soc);
@@ -250,6 +426,24 @@ fn print_socs() {
         .collect::<Vec<_>>()
         .join(", ");
     println!("zmu Cortex-M profiles: {zmu}");
+}
+
+fn print_controllers() {
+    for profile in controller::PROFILES {
+        println!(
+            "{:<18} runtime={:<18} artifact={:<8} {}{}",
+            profile.id,
+            profile.runtime.id(),
+            profile.artifact,
+            profile.name,
+            if profile.native_execution {
+                ""
+            } else {
+                " [native runtime unavailable in this build]"
+            }
+        );
+        println!("  {}", profile.description);
+    }
 }
 
 fn run_sim(cli: SimCli) -> Result<ExitCode, String> {

@@ -214,13 +214,13 @@ jobs:
         run: |
           rm -f /tmp/phy6252-cap.flash /tmp/flash-first.log /tmp/flash-second.log
           PHY6252_FLASH_STATE=/tmp/phy6252-cap.flash \
-            ./target/debug/firmverse --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
+            timeout 15 ./target/debug/firmverse --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
             > /tmp/flash-first.log 2>&1 || true
           test -s /tmp/phy6252-cap.flash
           grep -q 'dma-probe pass' /tmp/flash-first.log
           grep -q 'selftest osal=1 queue=1 flash=1 aes=1 ctrl=1' /tmp/flash-first.log
           PHY6252_FLASH_STATE=/tmp/phy6252-cap.flash \
-            ./target/debug/firmverse --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
+            timeout 15 ./target/debug/firmverse --strict-mmio --once --max-insns 1000000 firmware/build/capability-demo.hex \
             > /tmp/flash-second.log 2>&1 || true
           grep -q 'FLASH state: restored 262144 bytes' /tmp/flash-second.log
           grep -q 'dma-probe pass' /tmp/flash-second.log

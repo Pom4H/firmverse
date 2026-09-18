@@ -64,6 +64,7 @@ mod reset_bus;
 mod silicon_regs;
 
 pub mod board;
+pub mod controller;
 pub mod hex;
 pub mod programmer;
 pub mod soc;
