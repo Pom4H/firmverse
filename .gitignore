@@ -8,3 +8,6 @@ __pycache__/
 !/firmware/build/.gitkeep
 /firmware/silicon/build/
 /web/dist/
+/packages/*/target/
+/packages/saturn/dist/
+/packages/saturn/exports.json

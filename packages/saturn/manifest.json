@@ -1,0 +1,14 @@
+{
+  "schema": "firmverse/saturn-package@1",
+  "upstream": "d09d459c68286fb4f84fa074b0b7a0f27371406d",
+  "assets": {
+    "compiler": {
+      "bytes": 116982,
+      "sha256": "ab628c4b74b72dfde91f6fa247a46a2f960ee0a3f5217a7a2eb016a7f90f31f8"
+    },
+    "runtime": {
+      "bytes": 55795,
+      "sha256": "4e606fc0bd8cd850889f82cc3ad5c1a7e73ab1be56e4a914db1f3cbdffcece52"
+    }
+  }
+}

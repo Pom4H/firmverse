@@ -12,6 +12,8 @@ fn run(mut command: Command, label: &str) {
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(firmverse_saturn_native)");
     println!("cargo:rerun-if-changed=src/controller/saturn_bridge.c");
+    println!("cargo:rerun-if-changed=src/controller/saturn_state.inc");
+    println!("cargo:rerun-if-changed=src/controller/saturn_unit.c");
     println!("cargo:rerun-if-changed=third_party/fbd-runtime/fbdrt.c");
     println!("cargo:rerun-if-changed=third_party/fbd-runtime/fbdrt.h");
     println!("cargo:rerun-if-changed=third_party/fbd-runtime/fbdsun.c");
@@ -40,8 +42,7 @@ fn main() {
     let cc = env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let ar = env::var("AR").unwrap_or_else(|_| "ar".to_string());
     let sources = [
-        "src/controller/saturn_bridge.c",
-        "third_party/fbd-runtime/fbdrt.c",
+        "src/controller/saturn_unit.c",
         "third_party/fbd-runtime/fbdsun.c",
     ];
     let mut objects = Vec::new();
@@ -57,6 +58,7 @@ fn main() {
         command.args([
             "-std=c11",
             "-O2",
+            "-fwrapv",
             "-Uunix",
             "-Wno-implicit-fallthrough",
             "-Ithird_party/fbd-runtime",

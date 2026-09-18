@@ -215,3 +215,10 @@ Scenario: input changes + time + expected outputs
 
 That API is shared conceptually with MCU targets even though their execution backends are
 fundamentally different.
+
+## Portable integration update
+
+See `SATURN_PORTABLE.md` and `packages/saturn/README.md` for the new standalone
+compiler/runtime package, observation-only HMI and saved-state API. The earlier
+`browserExecution=false` statement remains about the monolithic BrowserLab RPC;
+the separate portable package executes the exact C runtime in isolated WASM.

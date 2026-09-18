@@ -312,6 +312,15 @@ pub fn inspect_fbdbin(bytes: &[u8]) -> Result<FbdbinInfo, String> {
     let parameters_bytes = parameter_total
         .checked_mul(4)
         .ok_or_else(|| "FBD parameter byte count overflow".to_string())?;
+    let input_start = cursor;
+    for offset in (0..inputs_bytes).step_by(2) {
+        let pair = bytes
+            .get(input_start + offset..input_start + offset + 2)
+            .ok_or_else(|| "truncated FBD input reference".to_string())?;
+        if usize::from(u16::from_le_bytes([pair[0], pair[1]])) >= element_count {
+            return Err("FBD input reference is outside the element graph".into());
+        }
+    }
     cursor = cursor
         .checked_add(inputs_bytes)
         .and_then(|value| value.checked_add(parameters_bytes))
@@ -357,6 +366,127 @@ pub fn inspect_fbdbin(bytes: &[u8]) -> Result<FbdbinInfo, String> {
         }
     }
 
+    let data_end = if crc_checked {
+        bytes.len().saturating_sub(4)
+    } else {
+        bytes.len()
+    };
+    let mut tail = cursor + options_bytes;
+    // HMI reads captions with strlen; establish terminators before crossing FFI.
+    for _ in 0..watchpoint_count + setpoint_count + 3 {
+        let end = bytes
+            .get(tail..data_end)
+            .and_then(|v| v.iter().position(|b| *b == 0))
+            .ok_or_else(|| "unterminated FBD caption".to_string())?;
+        tail += end + 1;
+    }
+    tail = (tail + 3) & !3;
+    for _ in 0..screen_count {
+        let header = bytes.get(tail..tail + 8).ok_or("truncated HMI screen")?;
+        let length = usize::from(u16::from_le_bytes([header[0], header[1]]));
+        let count = usize::from(u16::from_le_bytes([header[6], header[7]]));
+        if length < 8 || length % 4 != 0 || tail + length > data_end || count > 256 {
+            return Err("invalid HMI screen size/count".into());
+        }
+        let end = tail + length;
+        let mut item = tail + 8;
+        for _ in 0..count {
+            let record = bytes.get(item..end).ok_or("truncated HMI element")?;
+            if record.len() < 12 {
+                return Err("truncated HMI element".into());
+            }
+            let size = usize::from(u16::from_le_bytes([record[0], record[1]]));
+            let kind = u16::from_le_bytes([record[2], record[3]]);
+            if size < [32, 24, 28, 20, 32, 24][usize::from(kind.min(5))]
+                || size % 4 != 0
+                || item + size > end
+                || kind > 5
+            {
+                return Err("invalid HMI element size/type".into());
+            }
+            let visible = u16::from_le_bytes([record[6], record[7]]);
+            if visible != u16::MAX && usize::from(visible) >= element_count {
+                return Err("invalid HMI visibility reference".into());
+            }
+            if kind == 4 {
+                let value = u16::from_le_bytes([record[28], record[29]]);
+                if usize::from(value) >= element_count || read_i32(record, 24)? <= 0 {
+                    return Err("invalid HMI gauge".into());
+                }
+            }
+            if kind == 0 {
+                let width = u16::from_le_bytes([record[22], record[23]]);
+                if width > 32 {
+                    return Err("HMI line width exceeds capture budget".into());
+                }
+                for offset in [24, 28] {
+                    let v = f32::from_le_bytes(record[offset..offset + 4].try_into().unwrap());
+                    if !v.is_finite() || v.abs() > 1.0 {
+                        return Err("invalid HMI line geometry".into());
+                    }
+                }
+            }
+            if kind == 2 {
+                let value = u16::from_le_bytes([record[20], record[21]]);
+                if value != u16::MAX && usize::from(value) >= element_count {
+                    return Err("invalid HMI value reference".into());
+                }
+                let text_end = record[24..size]
+                    .iter()
+                    .position(|b| *b == 0)
+                    .ok_or("unterminated HMI text")?;
+                let text = &record[24..24 + text_end];
+                if text.len() > 31 {
+                    return Err("HMI text exceeds upstream format buffer".into());
+                }
+                let mut pos = 0;
+                let mut substitutions = 0;
+                while pos < text.len() {
+                    if text[pos] != b'%' {
+                        pos += 1;
+                        continue;
+                    }
+                    pos += 1;
+                    if text.get(pos) == Some(&b'%') {
+                        pos += 1;
+                        continue;
+                    }
+                    if text.get(pos) == Some(&b'.') {
+                        pos += 1;
+                        if !text.get(pos).is_some_and(|b| (b'0'..=b'6').contains(b)) {
+                            return Err("unsupported HMI numeric precision".into());
+                        }
+                        pos += 1;
+                    }
+                    if text.get(pos) != Some(&b'f') {
+                        return Err(
+                            "HMI format requires escaped literals or one floating-point value"
+                                .into(),
+                        );
+                    }
+                    substitutions += 1;
+                    if substitutions > 1 {
+                        return Err("multiple HMI substitutions are not supported".into());
+                    }
+                    pos += 1;
+                }
+            }
+            item += size;
+        }
+        if item != end {
+            return Err("HMI screen size does not match its elements".into());
+        }
+        tail = end;
+    }
+    for _ in 0..hint_count {
+        tail = tail.checked_add(2).ok_or("hint overflow")?;
+        let end = bytes
+            .get(tail..data_end)
+            .and_then(|v| v.iter().position(|b| *b == 0))
+            .ok_or_else(|| "unterminated FBD hint".to_string())?;
+        tail += end + 1;
+    }
+
     Ok(FbdbinInfo {
         element_count,
         watchpoint_count,
@@ -395,6 +525,13 @@ pub struct ProjectDescription {
     pub name: String,
     pub version: String,
     pub build_time: String,
+}
+
+/// Capture fields: kind, x1, y1, x2, y2, color, background, font, transparent, image.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DrawCommand {
+    pub fields: [i32; 10],
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -453,6 +590,12 @@ unsafe extern "C" {
     fn fv_fbd_unload();
     fn fv_fbd_memory_size() -> c_int;
     fn fv_fbd_step(period: c_int);
+    fn fv_fbd_snapshot_size() -> c_int;
+    fn fv_fbd_snapshot(data: *mut u8, capacity: c_int) -> c_int;
+    fn fv_fbd_restore(data: *const u8, length: c_int) -> c_int;
+    fn fv_fbd_render(screen: c_int) -> c_int;
+    fn fv_fbd_draw_field(index: c_int, field: c_int) -> c_int;
+    fn fv_fbd_draw_text(index: c_int) -> *const c_char;
     fn fv_fbd_set_input(pin: c_int, value: c_int);
     fn fv_fbd_get_input(pin: c_int) -> c_int;
     fn fv_fbd_get_output(pin: c_int) -> c_int;
@@ -481,6 +624,7 @@ static RUNTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub struct SaturnPlc {
     info: FbdbinInfo,
     memory_bytes: usize,
+    snapshot_supported: bool,
     _runtime: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -504,6 +648,10 @@ impl SaturnPlc {
         Ok(Self {
             info,
             memory_bytes,
+            snapshot_supported: bytes
+                .iter()
+                .take_while(|b| **b != END_MARK)
+                .all(|b| !matches!(*b & ELEMENT_MASK, 14 | 16 | 33 | 34 | 36 | 37)),
             _runtime: runtime,
         })
     }
@@ -572,6 +720,58 @@ impl SaturnPlc {
         // SAFETY: runtime is initialized and exclusively locked by self.
         unsafe { fv_fbd_step(period) };
         Ok(())
+    }
+
+    /// Snapshot only deterministic local-block programs. External transports, RTC
+    /// and RNG need an explicit environment-state contract before they can replay.
+    pub fn snapshot(&self) -> Result<Vec<u8>, String> {
+        if !self.snapshot_supported {
+            return Err("program needs an unavailable environment snapshot capability".into());
+        }
+        // SAFETY: self owns the runtime lock. The bridge reports its exact bounded size.
+        let length = unsafe { fv_fbd_snapshot_size() };
+        if !(16..=65536).contains(&length) {
+            return Err("invalid snapshot size".into());
+        }
+        let mut bytes = vec![0; length as usize];
+        // SAFETY: the output allocation has exactly length writable bytes.
+        if unsafe { fv_fbd_snapshot(bytes.as_mut_ptr(), length) } != length {
+            return Err("snapshot failed".into());
+        }
+        Ok(bytes)
+    }
+
+    pub fn restore(&mut self, bytes: &[u8]) -> Result<(), String> {
+        if !self.snapshot_supported || bytes.len() > 65536 {
+            return Err("incompatible snapshot capability/size".into());
+        }
+        // SAFETY: bridge checks length, program identity and payload before writes;
+        // it restores dynamic values, never pointers, into this locked runtime.
+        if unsafe { fv_fbd_restore(bytes.as_ptr(), bytes.len() as c_int) } != 1 {
+            return Err("incompatible or corrupted Saturn snapshot".into());
+        }
+        Ok(())
+    }
+
+    /// Returns drawing observations, without advancing any controller timer.
+    pub fn render(&self, screen: u16) -> Result<Vec<DrawCommand>, String> {
+        // SAFETY: initialized runtime is locked for self's lifetime; capture is bounded.
+        let count = unsafe { fv_fbd_render(c_int::from(screen)) };
+        if !(0..=256).contains(&count) {
+            return Err("HMI capture limit exceeded".into());
+        }
+        let mut commands = Vec::new();
+        for index in 0..count {
+            let mut fields = [0; 10];
+            for (field, value) in fields.iter_mut().enumerate() {
+                // SAFETY: index and field are bounded by capture capacity and schema.
+                *value = unsafe { fv_fbd_draw_field(index, field as c_int) };
+            }
+            // SAFETY: the bridge owns a NUL-terminated per-command capture buffer.
+            let text = unsafe { c_text(fv_fbd_draw_text(index)) };
+            commands.push(DrawCommand { fields, text });
+        }
+        Ok(commands)
     }
 
     pub fn setpoints(&self) -> Vec<Setpoint> {

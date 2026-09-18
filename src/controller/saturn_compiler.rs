@@ -683,4 +683,71 @@ mod tests {
         assert_eq!(plc.watchpoints()[0].value, 1);
         assert_eq!(plc.setpoints()[0].value, 50);
     }
+
+    #[cfg(firmverse_saturn_native)]
+    #[test]
+    fn native_snapshot_restores_timer_and_hmi_is_observation_only() {
+        use super::super::saturn::SaturnPlc;
+        let mut input = ElementSpec::new("input", ELEM_INP_PIN);
+        input.params = vec![1];
+        let mut delay = ElementSpec::new("delay", ELEM_CONST);
+        delay.params = vec![500];
+        let mut timer = ElementSpec::new("timer", 12);
+        timer.inputs = vec!["input".into(), "delay".into()];
+        let mut output = ElementSpec::new("output", ELEM_OUT_PIN);
+        output.inputs = vec!["timer".into()];
+        output.params = vec![1];
+        let mut ir = exact_runtime_program();
+        ir.elements = vec![input, delay, timer, output];
+        let mut screen = Vec::new();
+        for v in [
+            40u16, 0, 0, 1, 32, 2, 0, 65535, 0, 0, 8, 8, 65535, 0, 2, 128,
+        ] {
+            screen.extend_from_slice(&v.to_le_bytes());
+        }
+        screen.extend_from_slice(b"%.0f\0\0\0\0");
+        ir.meta.screens = vec![screen];
+        let compiled = compile_control_ir(&ir).expect("timer with screen");
+        let mut plc = SaturnPlc::load(&compiled.fbdbin, true).unwrap();
+        plc.set_input("DI1", 0).unwrap();
+        plc.step(100).unwrap();
+        plc.set_input("DI1", 1).unwrap();
+        plc.step(100).unwrap();
+        plc.step(100).unwrap();
+        let saved = plc.snapshot().unwrap();
+        for _ in 0..10 {
+            assert!(plc.render(0).unwrap().iter().any(|c| c.text == "0"));
+        }
+        assert_eq!(plc.snapshot().unwrap(), saved);
+        let mut expected = Vec::new();
+        for _ in 0..5 {
+            plc.step(100).unwrap();
+            expected.push((plc.output("DO1").unwrap(), plc.snapshot().unwrap()));
+        }
+        drop(plc);
+        let mut resumed = SaturnPlc::load(&compiled.fbdbin, true).unwrap();
+        resumed.restore(&saved).unwrap();
+        for (value, state) in expected {
+            resumed.step(100).unwrap();
+            assert_eq!(resumed.output("DO1").unwrap(), value);
+            assert_eq!(resumed.snapshot().unwrap(), state);
+        }
+        let before = resumed.snapshot().unwrap();
+        let mut corrupt = before.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        assert!(resumed.restore(&corrupt).is_err());
+        assert_eq!(resumed.snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn inspector_rejects_out_of_range_graph_reference_even_with_valid_crc() {
+        let mut data = compile_control_ir(&exact_runtime_program()).unwrap().fbdbin;
+        let marker = data.iter().position(|b| *b == 0x94).unwrap();
+        data[marker + 1] = 255;
+        data[marker + 2] = 255;
+        let end = data.len() - 4;
+        let crc = fbd_crc32(&data[..end]);
+        data[end..].copy_from_slice(&crc.to_le_bytes());
+        assert!(inspect_fbdbin(&data).unwrap_err().contains("reference"));
+    }
 }
