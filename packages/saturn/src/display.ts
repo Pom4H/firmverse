@@ -136,7 +136,7 @@ export interface SaturnDisplayScene {
   nodes:readonly DisplayNode[];
 }
 
-interface DrawBase { opacity?:number }
+interface DrawBase { opacity?:number; source?:string }
 export type DisplayDrawCommand =
  | (DrawBase&{type:'rect';x:number;y:number;width:number;height:number;fill:DisplayColor;stroke?:DisplayColor;strokeWidth?:number;radius?:number})
  | (DrawBase&{type:'circle';cx:number;cy:number;r:number;fill:DisplayColor;stroke?:DisplayColor;strokeWidth?:number})
@@ -221,12 +221,12 @@ export class SaturnDisplayEmulator {
     if(scene.height!==undefined&&scene.height!==240)throw new Error('Saturn display height must be 240');
     if(scene.nodes.length>256)throw new Error('Saturn display scene exceeds 256 nodes');
     const commands:DisplayDrawCommand[]=[{type:'rect',x:0,y:0,width:320,height:240,fill:scene.background}];
-
-    const push=(command:DisplayDrawCommand)=>{if(commands.length>=1024)throw new Error('Saturn display frame exceeds 1024 draw commands');commands.push(command);};
+    let activeSource:string|undefined;
+    const push=(command:DisplayDrawCommand)=>{if(commands.length>=1024)throw new Error('Saturn display frame exceeds 1024 draw commands');commands.push(activeSource?{...command,source:activeSource}:command);};
 
     for(let index=0;index<scene.nodes.length;index++){
       const node=scene.nodes[index]!;if(!visible(node,signals))continue;
-      const id=node.id??node.kind+':'+index;
+      const id=node.id??node.kind+':'+index;activeSource=id;
       switch(node.kind){
         case'rect':push({type:'rect',x:node.x,y:node.y,width:node.width,height:node.height,fill:node.fill,...(node.stroke===undefined?{}:{stroke:node.stroke}),...(node.strokeWidth===undefined?{}:{strokeWidth:node.strokeWidth}),...(node.radius===undefined?{}:{radius:node.radius}),opacity:opacity(node.opacity)});break;
         case'circle':push({type:'circle',cx:node.cx,cy:node.cy,r:node.r,fill:node.fill,...(node.stroke===undefined?{}:{stroke:node.stroke}),...(node.strokeWidth===undefined?{}:{strokeWidth:node.strokeWidth}),opacity:opacity(node.opacity)});break;
