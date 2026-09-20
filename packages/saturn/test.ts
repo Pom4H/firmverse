@@ -6,6 +6,10 @@ const program=()=>compileControlIR(ir([
  {id:'di',type:'INP_PIN',params:[1]}, {id:'time',type:'CONST',params:[500]},
  {id:'timer',type:'TON',inputs:['di','time']}, {id:'out',type:'OUT_PIN',inputs:['timer'],params:[1]},
 ])).fbdbin;
+const directProgram=()=>compileControlIR(ir([
+ {id:'start',type:'INP_PIN',params:[1]},
+ {id:'motor',type:'OUT_PIN',inputs:['start'],params:[1]},
+])).fbdbin;
 const load=(p=program())=>{const vm=SaturnRuntime.createSync();assert.equal(vm.load(p).ok,true);return vm;};
 test('compiler and inspector share the versioned native Rust implementation',()=>{assert.equal(inspectProgram(program()).elements,4);assert.deepEqual(program(),program());});
 test('timer and independent WASM instances resume exactly, including hidden state',()=>{
@@ -14,6 +18,21 @@ test('timer and independent WASM instances resume exactly, including hidden stat
  for(let i=0;i<10;i++){a.renderScreen();assert.deepEqual(a.snapshot(),snapshot);}
  const values=[];for(let i=0;i<4;i++){a.step(100);b.step(100);assert.deepEqual(a.snapshot(),b.snapshot());values.push(a.getOutput(1));}
  assert.deepEqual(values,[0,0,1,1]);
+});
+test('SCADA semantic start/stop commands drive the exact Saturn runtime boundary',()=>{
+ const vm=load(directProgram());
+ type HmiCommand={equipmentId:string;command:string};
+ const dispatch=(action:HmiCommand)=>{
+  assert.equal(action.equipmentId,'P101');
+  if(action.command==='start')vm.setInput(1,1);
+  else if(action.command==='stop')vm.setInput(1,0);
+  else throw new Error('Unsupported pump command');
+  vm.step(10);
+ };
+ dispatch({equipmentId:'P101',command:'start'});
+ assert.equal(vm.getOutput(1),1,'HMI start reaches the emulated controller output');
+ dispatch({equipmentId:'P101',command:'stop'});
+ assert.equal(vm.getOutput(1),0,'HMI stop reaches the emulated controller output');
 });
 test('corrupted, wrong-program and wrong-ABI snapshots preserve the running state',()=>{
  const a=load();a.step(10);const saved=a.snapshot();

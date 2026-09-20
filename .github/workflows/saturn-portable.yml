@@ -1,0 +1,26 @@
+name: saturn-portable
+
+on:
+  pull_request:
+    paths:
+      - 'packages/saturn/**'
+      - '.github/workflows/saturn-portable.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/saturn/**'
+      - '.github/workflows/saturn-portable.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Exact Saturn WASM runtime tests
+        run: node --experimental-strip-types packages/saturn/test.ts
