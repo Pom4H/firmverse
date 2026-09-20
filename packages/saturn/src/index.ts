@@ -1,3 +1,4 @@
+export * from './display.ts';
 /** Portable Saturn toolchain: one Rust compiler, one upstream C execution engine.
  * Each runtime gets its own WebAssembly instance; no shared process-global PLC.
  */
