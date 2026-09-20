@@ -16,6 +16,11 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Test portable Saturn runtime and display emulator
+        run: node --experimental-strip-types packages/saturn/test.ts
       - name: Compile ControlIR to exact Saturn artifact
         run: |
           cargo run --quiet --locked --bin saturn-fbd-compile -- \
