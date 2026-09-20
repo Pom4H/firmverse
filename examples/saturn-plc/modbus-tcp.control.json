@@ -1,0 +1,30 @@
+{
+  "schema": "firmverse/saturn-control-ir@1",
+  "project": {
+    "name": "Firmverse Saturn Modbus TCP",
+    "version": "1",
+    "buildTime": "reproducible"
+  },
+  "elements": [
+    {
+      "id": "remote",
+      "type": "INP_MDBS",
+      "params": [170524674, 100728932, 0],
+      "comment": "10.42.0.2 slave 1 holding register 100, uint16, native byte order"
+    },
+    {
+      "id": "mirror",
+      "type": "OUT_PIN",
+      "inputs": ["remote"],
+      "params": [12],
+      "comment": "Mirror remote value to AO1"
+    },
+    {
+      "id": "remote_wp",
+      "type": "WP",
+      "inputs": ["remote"],
+      "params": [0],
+      "caption": "Remote register"
+    }
+  ]
+}

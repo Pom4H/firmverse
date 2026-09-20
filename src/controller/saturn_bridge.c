@@ -122,6 +122,8 @@ void fv_fbd_unload(void)
     fv_memory_size = 0;
     fv_schema_size = 0;
     fv_draw_count = 0;
+    fv_modbus_tcp_pending = 0;
+    memset(&fv_modbus_tcp_request, 0, sizeof(fv_modbus_tcp_request));
     memset(fv_inputs, 0, sizeof(fv_inputs));
     memset(fv_outputs, 0, sizeof(fv_outputs));
     memset(fv_hardware, 0, sizeof(fv_hardware));
@@ -160,6 +162,55 @@ int fv_fbd_load(const unsigned char *data, int length, int reset_nvram)
 
 int fv_fbd_memory_size(void) { return fv_memory_size; }
 void fv_fbd_step(int period) { if (fv_memory != NULL) fbdDoStep((tSignal)period); }
+
+/* Explicit Modbus/TCP environment boundary. The upstream runtime owns request
+ * scheduling/retries and value conversion; Firmverse only transports the
+ * request to a virtual device and feeds the exact response back. */
+static tModbusReq fv_modbus_tcp_request;
+static int fv_modbus_tcp_pending = 0;
+
+int fv_fbd_modbus_usage(void)
+{
+    if (fv_memory == NULL) return FBD_MODBUS_NONE;
+    return (int)fbdModbusUsage();
+}
+
+int fv_fbd_modbus_tcp_next(void)
+{
+    if (fv_memory == NULL || fv_modbus_tcp_pending) return 0;
+    memset(&fv_modbus_tcp_request, 0, sizeof(fv_modbus_tcp_request));
+    if (!fbdGetNextModbusTCPRequest(&fv_modbus_tcp_request)) return 0;
+    fv_modbus_tcp_pending = 1;
+    return 1;
+}
+
+int fv_fbd_modbus_tcp_field(int field)
+{
+    if (!fv_modbus_tcp_pending) return 0;
+    switch (field) {
+    case 0: return fv_modbus_tcp_request.ip;
+    case 1: return (int)fv_modbus_tcp_request.slaveAddr;
+    case 2: return (int)fv_modbus_tcp_request.funcCode;
+    case 3: return (int)fv_modbus_tcp_request.regAddr;
+    case 4: return (int)fv_modbus_tcp_request.regCount;
+    case 5: return fv_modbus_tcp_request.data.intData;
+    default: return 0;
+    }
+}
+
+void fv_fbd_modbus_tcp_response(int response)
+{
+    if (!fv_modbus_tcp_pending) return;
+    fbdSetModbusTCPResponse((tSignal)response);
+    fv_modbus_tcp_pending = 0;
+}
+
+void fv_fbd_modbus_tcp_no_response(int error_code)
+{
+    if (!fv_modbus_tcp_pending) return;
+    fbdSetModbusTCPNoResponse(error_code);
+    fv_modbus_tcp_pending = 0;
+}
 
 void fv_fbd_set_input(int pin, int value)
 {

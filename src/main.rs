@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use firmverse::ble_host::{self, BleHostOpts};
 use firmverse::board::{profile as board_profile, require_phy6252, BoardKind, PROFILES};
 #[cfg(firmverse_saturn_native)]
-use firmverse::controller::saturn::SaturnPlc;
+use firmverse::controller::saturn::{SaturnPlc, VirtualModbusTcp};
 use firmverse::controller::{self, ControllerKind};
 use firmverse::cortex_m::{self, ProbeOpts};
 use firmverse::emu::{default_hex, run, RunOpts};
@@ -93,6 +93,9 @@ struct PlcCli {
     /// Setpoint assignment by HMI index, e.g. 0=450 (repeat)
     #[arg(long = "setpoint", value_name = "INDEX=VALUE")]
     setpoints: Vec<String>,
+    /// Seed deterministic virtual Modbus/TCP register: IP/SLAVE/REGISTER=RAW_VALUE
+    #[arg(long = "modbus-register", value_name = "IP/SLAVE/REGISTER=VALUE")]
+    modbus_registers: Vec<String>,
     /// Runtime cycle period in milliseconds
     #[arg(long, default_value_t = 10)]
     period_ms: u32,
@@ -266,6 +269,25 @@ fn parse_assignment(spec: &str) -> Result<(&str, i32), String> {
 }
 
 #[cfg(firmverse_saturn_native)]
+fn parse_ipv4(raw:&str)->Result<u32,String>{
+    if let Ok(value)=raw.parse::<u32>() { return Ok(value); }
+    let octets=raw.split('.').map(|part|part.parse::<u8>().map_err(|e|format!("invalid IPv4 {raw:?}: {e}"))).collect::<Result<Vec<_>,_>>()?;
+    if octets.len()!=4 { return Err(format!("invalid IPv4 {raw:?}")); }
+    Ok(u32::from_be_bytes([octets[0],octets[1],octets[2],octets[3]]))
+}
+#[cfg(firmverse_saturn_native)]
+fn parse_modbus_register(spec:&str)->Result<(u32,u8,u16,i32),String>{
+    let (endpoint,value)=spec.split_once('=').ok_or_else(||format!("expected IP/SLAVE/REGISTER=VALUE, got {spec:?}"))?;
+    let parts=endpoint.split('/').collect::<Vec<_>>();
+    if parts.len()!=3 { return Err(format!("expected IP/SLAVE/REGISTER in {spec:?}")); }
+    let ip=parse_ipv4(parts[0])?;
+    let slave=parts[1].parse::<u8>().map_err(|e|format!("invalid Modbus slave: {e}"))?;
+    let register=parts[2].parse::<u16>().map_err(|e|format!("invalid Modbus register: {e}"))?;
+    let value=value.parse::<i32>().map_err(|e|format!("invalid Modbus value: {e}"))?;
+    Ok((ip,slave,register,value))
+}
+
+#[cfg(firmverse_saturn_native)]
 fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
     let profile = controller::profile(cli.controller);
     if !profile.native_execution {
@@ -277,6 +299,11 @@ fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
     let bytes = std::fs::read(&cli.program)
         .map_err(|error| format!("{}: {error}", cli.program.display()))?;
     let mut plc = SaturnPlc::load(&bytes, !cli.preserve_nvram)?;
+    let mut modbus = VirtualModbusTcp::default();
+    for spec in &cli.modbus_registers {
+        let (ip,slave,register,value)=parse_modbus_register(spec)?;
+        modbus.set_register(ip,slave,register,value);
+    }
 
     for assignment in &cli.inputs {
         let (terminal, value) = parse_assignment(assignment)?;
@@ -291,8 +318,10 @@ fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
     }
 
     plc.step(0)?;
+    if !cli.modbus_registers.is_empty() { plc.service_modbus_tcp(&mut modbus,64); plc.step(0)?; }
     for _ in 0..cli.steps {
         plc.step(cli.period_ms)?;
+        if !cli.modbus_registers.is_empty() { plc.service_modbus_tcp(&mut modbus,64); plc.step(0)?; }
     }
 
     let project = plc.project();
@@ -336,6 +365,9 @@ fn run_plc(cli: PlcCli) -> Result<ExitCode, String> {
         }
         for (terminal, value) in plc.outputs() {
             println!("OUT {terminal} {value}");
+        }
+        if !cli.modbus_registers.is_empty() {
+            println!("NET modbus-tcp requests={} responses={} failures={}",modbus.requests,modbus.responses,modbus.failures);
         }
     } else {
         println!("{} · {}", profile.name, profile.runtime.id());
