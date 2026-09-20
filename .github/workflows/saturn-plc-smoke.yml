@@ -35,6 +35,59 @@ jobs:
           grep -q '^CONTROLLER saturn-plc runtime=fbd-runtime-v11 artifact=.fbdbin$' /tmp/runtime.log
           grep -q '^WP 0 value=1 ' /tmp/runtime.log
           grep -q '^OUT DO1 1$' /tmp/runtime.log
+      - name: Emulate upstream Modbus TCP requests on deterministic virtual LAN
+        run: |
+          cargo run --quiet --locked --bin saturn-fbd-compile --             examples/saturn-plc/modbus-tcp.control.json             /tmp/modbus.fbdbin
+          cargo run --quiet --locked --bin firmverse -- plc /tmp/modbus.fbdbin             --modbus-register 10.42.0.2/1/100=1234             --steps 2             --raw             | tee /tmp/modbus.log
+          grep -q '^PROGRAM .* modbus=1
+        run: |
+          cp /tmp/basic.fbdbin /tmp/corrupt.fbdbin
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/corrupt.fbdbin')
+          data = bytearray(path.read_bytes())
+          data[-5] ^= 1
+          path.write_bytes(data)
+          PY
+          if cargo run --quiet --locked --bin firmverse -- plc /tmp/corrupt.fbdbin --raw 2>/tmp/corrupt.err; then
+            echo 'corrupt Saturn artifact was accepted'
+            exit 1
+          fi
+          grep -q 'CRC32 mismatch' /tmp/corrupt.err
+ /tmp/modbus.log
+          grep -q '^WP 0 value=1234 ' /tmp/modbus.log
+          grep -q '^OUT AO1 1234
+        run: |
+          cp /tmp/basic.fbdbin /tmp/corrupt.fbdbin
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/corrupt.fbdbin')
+          data = bytearray(path.read_bytes())
+          data[-5] ^= 1
+          path.write_bytes(data)
+          PY
+          if cargo run --quiet --locked --bin firmverse -- plc /tmp/corrupt.fbdbin --raw 2>/tmp/corrupt.err; then
+            echo 'corrupt Saturn artifact was accepted'
+            exit 1
+          fi
+          grep -q 'CRC32 mismatch' /tmp/corrupt.err
+ /tmp/modbus.log
+          grep -Eq '^NET modbus-tcp requests=[1-9][0-9]* responses=[1-9][0-9]* failures=0
+        run: |
+          cp /tmp/basic.fbdbin /tmp/corrupt.fbdbin
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/corrupt.fbdbin')
+          data = bytearray(path.read_bytes())
+          data[-5] ^= 1
+          path.write_bytes(data)
+          PY
+          if cargo run --quiet --locked --bin firmverse -- plc /tmp/corrupt.fbdbin --raw 2>/tmp/corrupt.err; then
+            echo 'corrupt Saturn artifact was accepted'
+            exit 1
+          fi
+          grep -q 'CRC32 mismatch' /tmp/corrupt.err
+ /tmp/modbus.log
       - name: Reject corrupted artifact
         run: |
           cp /tmp/basic.fbdbin /tmp/corrupt.fbdbin
