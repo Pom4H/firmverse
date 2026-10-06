@@ -1045,6 +1045,27 @@ mod tests {
     }
 
     #[test]
+    fn swd_gpio_pad_control_supports_sdk_read_modify_write_in_strict_mode() {
+        let mut bus = bus(true);
+        let addr = silicon_regs::IOMUX_GPIO_PAD_EN;
+        assert_eq!(bus.read32(addr).unwrap(), 0); // P2/P3 start in SWD mode.
+        for bit in [0, 1] {
+            let value = bus.read32(addr).unwrap() | (1 << bit);
+            bus.write32(addr, value).unwrap();
+        }
+        assert_eq!(bus.read32(addr).unwrap(), 3);
+        for bit in [0, 1] {
+            let value = bus.read32(addr).unwrap() & !(1 << bit);
+            bus.write32(addr, value).unwrap();
+        }
+        assert_eq!(bus.read32(addr).unwrap(), 0); // Restore SWD ownership.
+
+        // One exact register does not grant access to adjacent MMIO holes.
+        assert!(matches!(bus.read32(0x4000_3810), Err(Fault::DAccViol)));
+        assert!(matches!(bus.write32(0x4000_3810, 1), Err(Fault::DAccViol)));
+    }
+
+    #[test]
     fn exact_cache_controller_storage_is_visible_to_strict_mode() {
         let mut bus = bus(true);
         assert_eq!(bus.read32(silicon_regs::AP_CACHE_CTRL0).unwrap(), 0);

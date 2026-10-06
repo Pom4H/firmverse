@@ -13,6 +13,9 @@ pub struct StorageReg {
 
 pub const IOMUX_ANALOG_IO_EN: u32 = 0x4000_3800;
 pub const IOMUX_FULL_MUX0_EN: u32 = 0x4000_380C;
+// SDK 3.1.5 IOMUX_TypeDef: gpio_pad_en is at base + 0x14.
+// Bits 0/1 switch P2/P3 from their reset SWD function to GPIO.
+pub const IOMUX_GPIO_PAD_EN: u32 = 0x4000_3814;
 pub const IOMUX_GPIO_SEL0: u32 = 0x4000_3818;
 pub const IOMUX_GPIO_SEL1: u32 = 0x4000_381C;
 pub const IOMUX_GPIO_SEL2: u32 = 0x4000_3820;
@@ -64,6 +67,11 @@ const STORAGE_REGS: &[StorageReg] = &[
     StorageReg {
         addr: IOMUX_FULL_MUX0_EN,
         name: "IOMUX.full_mux0_en",
+        reset: 0,
+    },
+    StorageReg {
+        addr: IOMUX_GPIO_PAD_EN,
+        name: "IOMUX.gpio_pad_en",
         reset: 0,
     },
     StorageReg {
@@ -401,6 +409,7 @@ mod tests {
     fn observed_iomux_registers_are_exact() {
         assert_eq!(storage_reg(IOMUX_ANALOG_IO_EN).unwrap().reset, 0);
         assert_eq!(storage_reg(IOMUX_FULL_MUX0_EN).unwrap().reset, 0);
+        assert_eq!(storage_reg(IOMUX_GPIO_PAD_EN).unwrap().reset, 0);
         for addr in [
             IOMUX_GPIO_SEL0,
             IOMUX_GPIO_SEL1,
