@@ -8,6 +8,7 @@
 use std::ffi::CStr;
 #[cfg(firmverse_saturn_native)]
 use std::os::raw::{c_char, c_int};
+use std::collections::{BTreeMap, BTreeSet};
 
 const END_MARK: u8 = 0x94;
 const ELEMENT_MASK: u8 = 0x3f;
@@ -554,6 +555,67 @@ pub struct Watchpoint {
     pub divider: i32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ModbusTcpRequest {
+    pub ip: u32,
+    pub slave: u8,
+    pub function: u8,
+    pub register: u16,
+    pub count: u16,
+    /// Raw 32-bit wire image used for write requests.
+    pub data: i32,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VirtualModbusTcp {
+    registers: BTreeMap<(u32, u8, u16), i32>,
+    online: BTreeSet<(u32, u8)>,
+    dropped: BTreeSet<(u32, u8)>,
+    pub requests: u64,
+    pub responses: u64,
+    pub failures: u64,
+}
+
+impl VirtualModbusTcp {
+    pub fn add_device(&mut self, ip: u32, slave: u8) {
+        self.online.insert((ip, slave));
+        self.dropped.remove(&(ip, slave));
+    }
+    pub fn set_online(&mut self, ip: u32, slave: u8, online: bool) {
+        if online { self.add_device(ip, slave); } else { self.online.remove(&(ip, slave)); }
+    }
+    pub fn drop_device(&mut self, ip: u32, slave: u8, drop: bool) {
+        if drop { self.dropped.insert((ip, slave)); } else { self.dropped.remove(&(ip, slave)); }
+    }
+    pub fn set_register(&mut self, ip: u32, slave: u8, register: u16, raw: i32) {
+        self.add_device(ip, slave);
+        self.registers.insert((ip, slave, register), raw);
+    }
+    pub fn register(&self, ip: u32, slave: u8, register: u16) -> Option<i32> {
+        self.registers.get(&(ip, slave, register)).copied()
+    }
+    /// Deterministic transport model: no wall clock, DNS or host sockets.
+    /// Function codes and request scheduling come from the exact upstream FBD runtime.
+    pub fn transact(&mut self, request: ModbusTcpRequest) -> Result<i32, i32> {
+        self.requests += 1;
+        let endpoint=(request.ip, request.slave);
+        if !self.online.contains(&endpoint) || self.dropped.contains(&endpoint) {
+            self.failures += 1;
+            return Err(0);
+        }
+        let result=match request.function {
+            1 | 2 | 3 | 4 => self.registers.get(&(request.ip,request.slave,request.register)).copied().unwrap_or(0),
+            5 | 6 | 15 | 16 => {
+                self.registers.insert((request.ip,request.slave,request.register),request.data);
+                request.data
+            }
+            _ => { self.failures += 1; return Err(1); }
+        };
+        self.responses += 1;
+        Ok(result)
+    }
+}
+
 pub const fn native_runtime_available() -> bool {
     cfg!(firmverse_saturn_native)
 }
@@ -600,6 +662,11 @@ unsafe extern "C" {
     fn fv_fbd_get_input(pin: c_int) -> c_int;
     fn fv_fbd_get_output(pin: c_int) -> c_int;
     fn fv_fbd_set_hardware(index: c_int, value: c_int);
+    fn fv_fbd_modbus_usage() -> c_int;
+    fn fv_fbd_modbus_tcp_next() -> c_int;
+    fn fv_fbd_modbus_tcp_field(field: c_int) -> c_int;
+    fn fv_fbd_modbus_tcp_response(response: c_int);
+    fn fv_fbd_modbus_tcp_no_response(error_code: c_int);
     fn fv_fbd_sp_count() -> c_int;
     fn fv_fbd_sp_value(index: c_int) -> c_int;
     fn fv_fbd_sp_low(index: c_int) -> c_int;
@@ -720,6 +787,46 @@ impl SaturnPlc {
         // SAFETY: runtime is initialized and exclusively locked by self.
         unsafe { fv_fbd_step(period) };
         Ok(())
+    }
+
+    pub fn modbus_usage(&self) -> i32 {
+        // SAFETY: runtime is initialized and locked by self.
+        unsafe { fv_fbd_modbus_usage() }
+    }
+
+    pub fn next_modbus_tcp_request(&mut self) -> Option<ModbusTcpRequest> {
+        // SAFETY: bridge owns one bounded request slot and refuses a second outstanding request.
+        if unsafe { fv_fbd_modbus_tcp_next() } == 0 { return None; }
+        let field = |index| unsafe { fv_fbd_modbus_tcp_field(index) };
+        Some(ModbusTcpRequest {
+            ip: field(0) as u32,
+            slave: field(1) as u8,
+            function: field(2) as u8,
+            register: field(3) as u16,
+            count: field(4) as u16,
+            data: field(5),
+        })
+    }
+
+    pub fn finish_modbus_tcp(&mut self, response: Result<i32, i32>) {
+        // SAFETY: only the bridge's currently pending request is completed.
+        unsafe {
+            match response {
+                Ok(value) => fv_fbd_modbus_tcp_response(value),
+                Err(code) => fv_fbd_modbus_tcp_no_response(code),
+            }
+        }
+    }
+
+    pub fn service_modbus_tcp(&mut self, network: &mut VirtualModbusTcp, budget: usize) -> usize {
+        let mut served=0;
+        while served<budget {
+            let Some(request)=self.next_modbus_tcp_request() else { break };
+            let response=network.transact(request);
+            self.finish_modbus_tcp(response);
+            served+=1;
+        }
+        served
     }
 
     /// Snapshot only deterministic local-block programs. External transports, RTC
@@ -935,6 +1042,22 @@ mod tests {
             .expect("project caption");
         program[marker] ^= 1;
         assert!(inspect_fbdbin(&program).unwrap_err().contains("CRC32"));
+    }
+
+    #[test]
+    fn virtual_modbus_tcp_is_deterministic_and_fault_injectable() {
+        let mut lan=VirtualModbusTcp::default();
+        let ip=0x0a2a0002;
+        lan.set_register(ip,1,40001,1234);
+        let read=ModbusTcpRequest{ip,slave:1,function:3,register:40001,count:1,data:0};
+        assert_eq!(lan.transact(read),Ok(1234));
+        lan.drop_device(ip,1,true);
+        assert_eq!(lan.transact(read),Err(0));
+        lan.drop_device(ip,1,false);
+        let write=ModbusTcpRequest{ip,slave:1,function:6,register:40001,count:1,data:4321};
+        assert_eq!(lan.transact(write),Ok(4321));
+        assert_eq!(lan.register(ip,1,40001),Some(4321));
+        assert_eq!((lan.requests,lan.responses,lan.failures),(3,2,1));
     }
 
     #[test]
