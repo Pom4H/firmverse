@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -79,7 +79,7 @@ jobs:
 
   demo-smoke:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     env:
       ARM_TOOLCHAIN_VERSION: 13.2.rel1
       ARM_TOOLCHAIN_DIR: /home/runner/.cache/arm-gnu-toolchain-13.2.rel1
@@ -229,7 +229,7 @@ jobs:
   attest:
     if: always()
     needs: [test, demo-smoke]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Publish combined commit status
         uses: actions/github-script@v8
